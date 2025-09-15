@@ -37,6 +37,7 @@ import kotlin.math.min
  * @param knobColor 摇杆把手颜色
  * @param borderColor 边框颜色
  * @param onValueChange 值变化回调，当摇杆离开零位时以20Hz频率调用
+ * @param enhancedCallback 增强回调，包含释放事件
  */
 @Composable
 fun SquareVirtualJoystick(
@@ -47,7 +48,8 @@ fun SquareVirtualJoystick(
     backgroundColor: Color = MaterialTheme.colorScheme.surface,
     knobColor: Color = MaterialTheme.colorScheme.primary,
     borderColor: Color = MaterialTheme.colorScheme.outline,
-    onValueChange: JoystickCallback? = null
+    onValueChange: JoystickCallback? = null,
+    enhancedCallback: EnhancedJoystickCallback? = null
 ) {
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var currentValue by remember { mutableStateOf(JoystickValue.ZERO) }
@@ -58,10 +60,11 @@ fun SquareVirtualJoystick(
     val halfKnobSize = knobSizePx / 2f
     
     // 20Hz回调协程
-    LaunchedEffect(currentValue, isDragging, onValueChange) {
-        if (onValueChange != null && (!currentValue.isCenter || isDragging)) {
+    LaunchedEffect(currentValue, isDragging, onValueChange, enhancedCallback) {
+        if ((onValueChange != null || enhancedCallback != null) && (!currentValue.isCenter || isDragging)) {
             while (isActive && (!currentValue.isCenter || isDragging)) {
-                onValueChange.onValueChanged(currentValue)
+                onValueChange?.onValueChanged(currentValue)
+                enhancedCallback?.onValueChanged(currentValue)
                 delay(50) // 20Hz = 1000ms / 20 = 50ms
             }
         }
@@ -111,6 +114,8 @@ fun SquareVirtualJoystick(
                         onDragEnd = {
                             isDragging = false
                             currentValue = JoystickValue.ZERO
+                            // 触发释放回调
+                            enhancedCallback?.onReleased()
                             Timber.d("SquareJoystick drag end: $currentValue")
                         }
                     )

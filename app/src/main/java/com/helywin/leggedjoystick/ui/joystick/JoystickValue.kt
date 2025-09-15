@@ -42,6 +42,22 @@ fun interface JoystickCallback {
 }
 
 /**
+ * 增强的摇杆回调接口，包含释放事件
+ */
+interface EnhancedJoystickCallback {
+    /**
+     * 当摇杆值发生变化时调用
+     * @param value 当前摇杆值
+     */
+    fun onValueChanged(value: JoystickValue)
+    
+    /**
+     * 当摇杆释放时调用
+     */
+    fun onReleased() {}
+}
+
+/**
  * 将Offset转换为JoystickValue
  * @param center 中心点坐标
  * @param maxRadius 最大半径
