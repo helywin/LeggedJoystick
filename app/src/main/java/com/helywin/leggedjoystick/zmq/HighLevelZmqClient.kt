@@ -28,8 +28,8 @@ class HighLevelZmqClient {
     }
 
     private var clientType: ClientType = ClientType.REMOTE_CONTROLLER
-    private var context: ZContext? = null
-    private var socket: ZMQ.Socket? = null
+    private var context: ZContext = ZContext()
+    private var socket: ZMQ.Socket = context.createSocket(SocketType.DEALER)
     private var connected: Boolean = false
     private val gson = Gson()
 
@@ -46,34 +46,25 @@ class HighLevelZmqClient {
         }
         
         this.clientType = clientType
-        
+        context = ZContext()
+        socket = context.createSocket(SocketType.DEALER)
         try {
             Timber.i("[HighLevelZmqClient] 正在连接到: $tcpEndpoint")
-            
-            context = ZContext()
-            socket = context?.createSocket(SocketType.DEALER)
-
             // 设置接收超时（毫秒）
-            socket?.receiveTimeOut = 3000 // 3秒超时，更快的响应
+            socket.receiveTimeOut = 3000 // 3秒超时，更快的响应
             
             // 设置发送超时
-            socket?.sendTimeOut = 1000 // 1秒发送超时
+            socket.sendTimeOut = 1000 // 1秒发送超时
             
             // 设置立即模式，避免缓存延迟
-            socket?.setImmediate(true)
-            
-            // 设置心跳间隔（TCP keepalive）
-            socket?.setTCPKeepAlive(1) // 启用
-            socket?.setTCPKeepAliveIdle(1) // 1秒后开始keepalive
-            socket?.setTCPKeepAliveInterval(1) // 每1秒发送一次
-            socket?.setTCPKeepAliveCount(3) // 失败3次后断开
+            socket.isImmediate = true
 
             // 设置唯一的客户端标识
             val clientTypeStr = if (clientType == ClientType.REMOTE_CONTROLLER) "rc" else "nav"
             val identity = "${clientTypeStr}_${System.currentTimeMillis()}_${hashCode()}"
-            socket?.identity = identity.toByteArray(StandardCharsets.UTF_8)
+            socket.identity = identity.toByteArray(StandardCharsets.UTF_8)
 
-            socket?.connect(tcpEndpoint)
+            socket.connect(tcpEndpoint)
             connected = true
             Timber.d("[HighLevelZmqClient] Socket连接完成: $tcpEndpoint")
 
@@ -93,13 +84,11 @@ class HighLevelZmqClient {
             connected = false
             // 清理资源
             try {
-                socket?.close()
-                context?.close()
+                socket.close()
+                context.close()
             } catch (cleanupEx: Exception) {
                 Timber.w(cleanupEx, "[HighLevelZmqClient] 清理资源时出现异常")
             }
-            socket = null
-            context = null
             return false
         }
     }
@@ -146,43 +135,37 @@ class HighLevelZmqClient {
             
             // 发送断开连接通知（如果socket仍然有效）
             try {
-                if (socket != null) {
-                    val disconnectRequest = JsonObject().apply {
-                        addProperty("command", "disconnect")
-                    }
-                    // 设置短超时，避免断开时等待太久
-                    val originalTimeout = socket?.receiveTimeOut ?: 1000
-                    socket?.receiveTimeOut = 500 // 500ms超时
-                    sendRequest(disconnectRequest) // 尽力发送，但不要求必须成功
-                    socket?.receiveTimeOut = originalTimeout
+                val disconnectRequest = JsonObject().apply {
+                    addProperty("command", "disconnect")
                 }
+                // 设置短超时，避免断开时等待太久
+                val originalTimeout = socket.receiveTimeOut
+                socket.receiveTimeOut = 500 // 500ms超时
+                sendRequest(disconnectRequest) // 尽力发送，但不要求必须成功
+                socket.receiveTimeOut = originalTimeout
             } catch (e: Exception) {
                 Timber.d(e, "[HighLevelZmqClient] 发送断开通知时异常，但会继续断开")
             }
             
             // 关闭socket和context
             try {
-                socket?.close()
+                socket.close()
             } catch (e: Exception) {
                 Timber.w(e, "[HighLevelZmqClient] 关闭socket时异常")
             }
             
             try {
-                context?.close()
+                context.close()
             } catch (e: Exception) {
                 Timber.w(e, "[HighLevelZmqClient] 关闭context时异常")
             }
             
-            socket = null
-            context = null
             Timber.i("[HighLevelZmqClient] 已断开连接")
             
         } catch (e: Exception) {
             Timber.e(e, "[HighLevelZmqClient] 断开连接过程中出现异常")
             // 强制清理状态
             connected = false
-            socket = null
-            context = null
         }
     }
 
@@ -252,32 +235,25 @@ class HighLevelZmqClient {
             Timber.v("[HighLevelZmqClient] 尝试发送请求但连接已断开")
             return ZmqResponse(success = false, message = "Not connected to service")
         }
-
-        if (socket == null || context == null) {
-            Timber.w("[HighLevelZmqClient] Socket或Context为null，连接已无效")
-            connected = false
-            return ZmqResponse(success = false, message = "Connection is invalid")
-        }
-
-        return try {
+        try {
             val requestStr = gson.toJson(request)
             val commandName = request.get("command")?.asString ?: "unknown"
-            
+
             Timber.v("[HighLevelZmqClient] 发送请求: $commandName")
-            
+
             // 发送请求
-            val success = socket?.send(requestStr.toByteArray(StandardCharsets.UTF_8))
-            if (success != true) {
+            val success = socket.send(requestStr.toByteArray(StandardCharsets.UTF_8))
+            if (!success) {
                 Timber.w("[HighLevelZmqClient] 发送请求失败: $commandName")
                 connected = false
                 return ZmqResponse(success = false, message = "Failed to send request")
             }
 
             // 接收响应
-            val replyBytes = socket?.recv()
+            val replyBytes = socket.recv()
             if (replyBytes != null) {
                 val replyStr = String(replyBytes, StandardCharsets.UTF_8)
-                
+
                 try {
                     val response = gson.fromJson(replyStr, ZmqResponse::class.java)
                     Timber.v("[HighLevelZmqClient] 收到响应: $commandName, success=${response.success}")
@@ -348,12 +324,12 @@ class HighLevelZmqClient {
 
         return try {
             // 保存原始超时设置
-            val originalReceiveTimeout = socket?.receiveTimeOut ?: 3000
-            val originalSendTimeout = socket?.sendTimeOut ?: 1000
+            val originalReceiveTimeout = socket.receiveTimeOut ?: 3000
+            val originalSendTimeout = socket.sendTimeOut ?: 1000
             
             // 设置健康检查的较短超时
-            socket?.receiveTimeOut = 1500 // 1.5秒接收超时
-            socket?.sendTimeOut = 500 // 0.5秒发送超时
+            socket.receiveTimeOut = 1500 // 1.5秒接收超时
+            socket.sendTimeOut = 500 // 0.5秒发送超时
             
             val result = try {
                 // 尝试发送一个轻量级的检查请求
@@ -377,8 +353,8 @@ class HighLevelZmqClient {
             } finally {
                 // 恢复原来的超时设置
                 try {
-                    socket?.receiveTimeOut = originalReceiveTimeout
-                    socket?.sendTimeOut = originalSendTimeout
+                    socket.receiveTimeOut = originalReceiveTimeout
+                    socket.sendTimeOut = originalSendTimeout
                 } catch (e: Exception) {
                     Timber.d(e, "[HighLevelZmqClient] 恢复超时设置时出现异常")
                 }
@@ -900,7 +876,7 @@ class HighLevelZmqClient {
             return null
         }
 
-        return when (response?.value?.toUInt()) {
+        return when (response.value?.toUInt()) {
             0U, 10U -> RobotCtrlMode.PASSIVE
             18U -> RobotCtrlMode.STAND
             51U -> RobotCtrlMode.LIE_DOWN
@@ -924,11 +900,11 @@ class HighLevelZmqClient {
             addProperty("command", "getBatteryPower")
         }
         val response = sendRequest(request)
-        if (response?.success != true && response?.value == null) {
+        if (response?.success != true || response.value == null) {
             Timber.w("[HighLevelZmqClient] 获取电池电量失败: ${response?.message}")
             return null
         }
 
-        return response?.value?.toUInt()
+        return response.value.toUInt()
     }
 }
