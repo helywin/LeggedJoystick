@@ -21,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.RobotController
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.ControlMode
 import com.helywin.leggedjoystick.data.RobotMode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.joystick.*
@@ -45,9 +47,11 @@ fun MainControlScreen(
 ) {
     val settingsState = robotController.settingsState
     val currentMode = settingsState.robotMode
+    val controlMode = settingsState.controlMode
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val isRageModeEnabled = settingsState.settings.isRageModeEnabled
+    val isRobotModeChanging = settingsState.isRobotModeChanging
 
     // 连接状态对话框
     ConnectionDialog(
@@ -72,6 +76,7 @@ fun MainControlScreen(
         TopStatusBar(
             batteryLevel = batteryLevel,
             connectionState = connectionState,
+            controlMode = controlMode,
             isRageModeEnabled = isRageModeEnabled,
             onConnectClick = {
                 if (connectionState == ConnectionState.CONNECTED) {
@@ -82,6 +87,9 @@ fun MainControlScreen(
                     robotController.connectAsync(settingsState.settings)
                 }
             },
+            onControlModeClick = { mode ->
+                robotController.setControlMode(mode)
+            },
             onSettingsClick = onSettingsClick
         )
 
@@ -90,6 +98,8 @@ fun MainControlScreen(
         // 模式选择按钮组
         ModeSelectionRow(
             currentMode = currentMode,
+            isRobotModeChanging = isRobotModeChanging,
+            isConnected = connectionState == ConnectionState.CONNECTED,
             onModeSelected = { mode ->
                 robotController.setRobotMode(mode)
             }
@@ -157,8 +167,10 @@ fun MainControlScreen(
 private fun TopStatusBar(
     batteryLevel: Int,
     connectionState: ConnectionState,
+    controlMode: ControlMode,
     isRageModeEnabled: Boolean,
     onConnectClick: () -> Unit,
+    onControlModeClick: (ControlMode) -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -174,6 +186,13 @@ private fun TopStatusBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 控制模式切换按钮
+            ControlModeToggle(
+                currentMode = controlMode,
+                isConnected = connectionState == ConnectionState.CONNECTED,
+                onModeClick = onControlModeClick
+            )
+            
             // 连接状态按钮
             Button(
                 onClick = onConnectClick,
@@ -210,37 +229,71 @@ private fun TopStatusBar(
  */
 @Composable
 private fun BatteryIndicator(batteryLevel: Int) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    // 电池图标与百分比显示
+    Box(
+        modifier = Modifier
+            .width(80.dp)
+            .height(30.dp)
+            .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "$batteryLevel%",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
-        )
-
-        // 简单的电量条
+        // 电量背景
         Box(
             modifier = Modifier
-                .width(60.dp)
-                .height(20.dp)
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-                .clip(RoundedCornerShape(4.dp))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(batteryLevel / 100f)
-                    .background(
-                        when {
-                            batteryLevel > 50 -> Color.Green
-                            batteryLevel > 20 -> Color.Yellow
-                            else -> Color.Red
-                        }
-                    )
-            )
-        }
+                .fillMaxHeight()
+                .fillMaxWidth(batteryLevel / 100f)
+                .background(
+                    when {
+                        batteryLevel > 50 -> Color.Green
+                        batteryLevel > 20 -> Color.Yellow
+                        else -> Color.Red
+                    }
+                )
+                .align(Alignment.CenterStart)
+        )
+        
+        // 百分比文本（白色）
+        Text(
+            text = "$batteryLevel%",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+        )
+    }
+}
+
+/**
+ * 控制模式切换按钮
+ */
+@Composable
+private fun ControlModeToggle(
+    currentMode: ControlMode,
+    isConnected: Boolean,
+    onModeClick: (ControlMode) -> Unit
+) {
+    Button(
+        onClick = {
+            val newMode = if (currentMode == ControlMode.MANUAL) {
+                ControlMode.AUTO
+            } else {
+                ControlMode.MANUAL
+            }
+            onModeClick(newMode)
+        },
+        enabled = isConnected,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (currentMode == ControlMode.AUTO) {
+                MaterialTheme.colorScheme.secondary
+            } else {
+                MaterialTheme.colorScheme.primary
+            }
+        )
+    ) {
+        Text(
+            text = currentMode.displayName,
+            fontSize = 12.sp
+        )
     }
 }
 
@@ -250,6 +303,8 @@ private fun BatteryIndicator(batteryLevel: Int) {
 @Composable
 private fun ModeSelectionRow(
     currentMode: RobotMode,
+    isRobotModeChanging: Boolean,
+    isConnected: Boolean,
     onModeSelected: (RobotMode) -> Unit
 ) {
     Row(
@@ -260,6 +315,8 @@ private fun ModeSelectionRow(
             ModeButton(
                 mode = mode,
                 isSelected = currentMode == mode,
+                isEnabled = isConnected && !isRobotModeChanging,
+                isChanging = isRobotModeChanging && currentMode != mode,
                 onClick = { onModeSelected(mode) }
             )
         }
@@ -273,33 +330,51 @@ private fun ModeSelectionRow(
 private fun ModeButton(
     mode: RobotMode,
     isSelected: Boolean,
+    isEnabled: Boolean,
+    isChanging: Boolean,
     onClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .selectable(
                 selected = isSelected,
-                onClick = onClick
+                onClick = { if (isEnabled) onClick() }
             )
-            .padding(4.dp),
+            .padding(4.dp)
+            .alpha(if (isEnabled) 1f else 0.6f),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primary
-            else
-                MaterialTheme.colorScheme.surface
+            containerColor = when {
+                isSelected -> MaterialTheme.colorScheme.primary
+                isChanging -> MaterialTheme.colorScheme.tertiary
+                else -> MaterialTheme.colorScheme.surface
+            }
         ),
         elevation = CardDefaults.cardElevation(
             defaultElevation = if (isSelected) 8.dp else 2.dp
         )
     ) {
-        Text(
-            text = mode.displayName,
+        Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            color = if (isSelected)
-                MaterialTheme.colorScheme.onPrimary
-            else
-                MaterialTheme.colorScheme.onSurface
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (isChanging) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            
+            Text(
+                text = mode.displayName,
+                color = when {
+                    isSelected -> MaterialTheme.colorScheme.onPrimary
+                    isChanging -> MaterialTheme.colorScheme.onTertiary
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
+            )
+        }
     }
 }
 
@@ -350,6 +425,8 @@ private fun RageModeButton(
 @Preview(showBackground = true, widthDp = 800, heightDp = 480)
 @Composable
 fun MainControlScreenPreview() {
+    // 在预览中注释掉，避免需要Context
+    /*
     val dummyController = remember {
         RobotController().apply {
             settingsState.updateBatteryLevel(75)
@@ -364,4 +441,5 @@ fun MainControlScreenPreview() {
         robotController = dummyController,
         onSettingsClick = {}
     )
+    */
 }

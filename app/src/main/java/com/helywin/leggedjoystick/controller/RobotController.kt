@@ -9,10 +9,13 @@
 
 package com.helywin.leggedjoystick.controller
 
+import android.content.Context
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.ControlMode
 import com.helywin.leggedjoystick.data.RobotMode
 import com.helywin.leggedjoystick.data.SettingsState
+import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
 import com.helywin.leggedjoystick.zmq.ClientType
 import com.helywin.leggedjoystick.zmq.HighLevelZmqClient
@@ -23,19 +26,28 @@ import kotlin.math.abs
 /**
  * 机器人控制器
  */
-class RobotController {
+class RobotController(private val context: Context) {
     private var zmqClient: HighLevelZmqClient? = null
     private var controllerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var heartbeatJob: Job? = null
     private var batteryUpdateJob: Job? = null
     private var zeroSpeedJob: Job? = null
     private var connectionJob: Job? = null
+    private var statusUpdateJob: Job? = null
+    
+    // 设置管理器
+    private val settingsManager = SettingsManager(context)
     
     val settingsState = SettingsState()
     
     // 当前运动状态
     private var lastMovementTime = 0L
     private var isCurrentlyMoving = false
+    
+    init {
+        // 初始化时加载保存的设置
+        loadSettings()
+    }
     
     /**
      * 异步连接到机器人，支持超时和中断
@@ -67,6 +79,7 @@ class RobotController {
                     settingsState.updateConnectionState(ConnectionState.CONNECTED)
                     startHeartbeat()
                     startBatteryUpdate()
+                    startStatusUpdate()
                     Timber.i("成功连接到机器人: $endpoint")
                 } else {
                     settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
@@ -105,6 +118,7 @@ class RobotController {
         cancelConnection() // 取消正在进行的连接
         stopHeartbeat()
         stopBatteryUpdate()
+        stopStatusUpdate()
         stopZeroSpeedSending()
         
         zmqClient?.disconnect()
@@ -124,17 +138,52 @@ class RobotController {
      * 设置机器人模式
      */
     fun setRobotMode(mode: RobotMode) {
+        if (!settingsState.isConnected || settingsState.isRobotModeChanging) return
+        
+        settingsState.updateRobotModeChangingState(true)
         controllerScope.launch {
             try {
-                when (mode) {
-                    RobotMode.PASSIVE -> zmqClient?.passive()
-                    RobotMode.LIE_DOWN -> zmqClient?.lieDown()
-                    RobotMode.STAND -> zmqClient?.standUp()
+                val success = when (mode) {
+                    RobotMode.PASSIVE -> zmqClient?.passive() != 0u
+                    RobotMode.LIE_DOWN -> zmqClient?.lieDown() != 0u
+                    RobotMode.STAND -> zmqClient?.standUp() != 0u
                 }
-                settingsState.updateRobotMode(mode)
-                Timber.i("机器人模式已切换到: ${mode.displayName}")
+                
+                if (success) {
+                    Timber.i("机器人模式切换请求已发送: ${mode.displayName}")
+                    // 保存模式到文件
+                    saveRobotMode(mode)
+                    // 不立即更新状态，等待状态查询确认
+                } else {
+                    settingsState.updateRobotModeChangingState(false)
+                    Timber.e("机器人模式切换失败: ${mode.displayName}")
+                }
             } catch (e: Exception) {
+                settingsState.updateRobotModeChangingState(false)
                 Timber.e(e, "切换机器人模式失败")
+            }
+        }
+    }
+    
+    /**
+     * 设置控制模式
+     */
+    fun setControlMode(mode: ControlMode) {
+        if (!settingsState.isConnected) return
+        
+        controllerScope.launch {
+            try {
+                val success = zmqClient?.setMode(mode.value) ?: false
+                if (success) {
+                    settingsState.updateControlMode(mode)
+                    // 保存控制模式到文件
+                    saveControlMode(mode)
+                    Timber.i("控制模式已切换到: ${mode.displayName}")
+                } else {
+                    Timber.e("切换控制模式失败: ${mode.displayName}")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "切换控制模式失败")
             }
         }
     }
@@ -205,7 +254,7 @@ class RobotController {
                         settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
                         break
                     }
-                    delay(5000) // 5秒心跳间隔
+                    delay(1000) // 1秒心跳间隔
                 } catch (e: Exception) {
                     Timber.e(e, "心跳异常")
                     settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
@@ -251,6 +300,54 @@ class RobotController {
     }
     
     /**
+     * 开始状态更新（每1秒获取当前模式和控制模式）
+     */
+    private fun startStatusUpdate() {
+        statusUpdateJob?.cancel()
+        statusUpdateJob = controllerScope.launch {
+            while (isActive) {
+                try {
+                    // 获取当前控制模式
+                    val currentControlMode = zmqClient?.getCurrentMode() ?: "remote_controller"
+                    val controlMode = when (currentControlMode) {
+                        "navigation" -> ControlMode.AUTO      // 导航模式（自动）
+                        "remote_controller" -> ControlMode.MANUAL  // 遥控器模式（手动）
+                        else -> ControlMode.MANUAL             // 默认为手动模式
+                    }
+                    settingsState.updateControlMode(controlMode)
+                    
+                    // 获取当前机器人控制模式
+                    val currentCtrlMode = zmqClient?.getCurrentCtrlmode()?.toInt() ?: 0
+                    val robotMode = when (currentCtrlMode) {
+                        0 -> RobotMode.PASSIVE    // 阻尼模式
+                        1 -> RobotMode.LIE_DOWN   // 趴下模式
+                        2 -> RobotMode.STAND      // 站立模式
+                        else -> settingsState.robotMode // 保持当前状态
+                    }
+                    
+                    // 只有在状态真正改变时才更新，这样可以清除changing状态
+                    if (robotMode != settingsState.robotMode || settingsState.isRobotModeChanging) {
+                        settingsState.updateRobotMode(robotMode)
+                    }
+                    
+                    delay(1000) // 1秒更新一次
+                } catch (e: Exception) {
+                    Timber.e(e, "更新状态失败")
+                    delay(1000)
+                }
+            }
+        }
+    }
+    
+    /**
+     * 停止状态更新
+     */
+    private fun stopStatusUpdate() {
+        statusUpdateJob?.cancel()
+        statusUpdateJob = null
+    }
+    
+    /**
      * 开始发送零速度（持续0.5秒）
      */
     private fun startZeroSpeedSending() {
@@ -290,6 +387,77 @@ class RobotController {
     fun cleanup() {
         disconnect()
         controllerScope.cancel()
+    }
+    
+    /**
+     * 从文件加载设置
+     */
+    private fun loadSettings() {
+        try {
+            val settings = settingsManager.loadSettings()
+            settingsState.updateSettings(settings)
+            
+            val robotMode = settingsManager.loadRobotMode()
+            settingsState.updateRobotMode(robotMode)
+            
+            val controlMode = settingsManager.loadControlMode()
+            settingsState.updateControlMode(controlMode)
+            
+            Timber.d("配置加载完成: IP=${settings.zmqIp}, Port=${settings.zmqPort}")
+        } catch (e: Exception) {
+            Timber.e(e, "加载配置失败")
+        }
+    }
+    
+    /**
+     * 保存应用设置到文件
+     */
+    fun saveAppSettings(settings: AppSettings) {
+        try {
+            settingsManager.saveSettings(settings)
+            settingsState.updateSettings(settings)
+            Timber.d("应用设置已保存")
+        } catch (e: Exception) {
+            Timber.e(e, "保存应用设置失败")
+        }
+    }
+    
+    /**
+     * 保存机器人模式到文件
+     */
+    fun saveRobotMode(mode: RobotMode) {
+        try {
+            settingsManager.saveRobotMode(mode)
+            Timber.d("机器人模式已保存: ${mode.displayName}")
+        } catch (e: Exception) {
+            Timber.e(e, "保存机器人模式失败")
+        }
+    }
+    
+    /**
+     * 保存控制模式到文件
+     */
+    fun saveControlMode(mode: ControlMode) {
+        try {
+            settingsManager.saveControlMode(mode)
+            Timber.d("控制模式已保存: ${mode.displayName}")
+        } catch (e: Exception) {
+            Timber.e(e, "保存控制模式失败")
+        }
+    }
+    
+    /**
+     * 获取当前设置
+     */
+    fun getCurrentSettings(): AppSettings {
+        return settingsState.settings
+    }
+    
+    /**
+     * 检查是否是首次启动
+     */
+    fun isFirstLaunch(): Boolean {
+        return settingsManager.isFirstLaunch()
     }
     
     /**

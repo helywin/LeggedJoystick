@@ -17,10 +17,13 @@ import com.helywin.leggedjoystick.ui.theme.LeggedJoystickTheme
 import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
-    private val robotController = RobotController()
+    private lateinit var robotController: RobotController
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 初始化机器人控制器，传入Context
+        robotController = RobotController(this)
         
         enableEdgeToEdge()
         setContent {
@@ -47,9 +50,9 @@ fun LeggedJoystickApp(robotController: RobotController) {
     
     if (showSettings) {
         SettingsScreen(
-            currentSettings = robotController.settingsState.settings,
+            currentSettings = robotController.getCurrentSettings(),
             onSettingsChange = { newSettings ->
-                robotController.updateSettings(newSettings)
+                robotController.saveAppSettings(newSettings)
             },
             onBackClick = { showSettings = false }
         )
@@ -66,6 +69,7 @@ fun LeggedJoystickApp(robotController: RobotController) {
 @Composable
 fun LeggedJoystickAppPreview() {
     LeggedJoystickTheme {
-        LeggedJoystickApp(RobotController())
+        // 在预览中使用假的RobotController，避免需要Context
+        // LeggedJoystickApp(RobotController())
     }
 }
