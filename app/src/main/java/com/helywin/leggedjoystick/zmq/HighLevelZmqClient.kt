@@ -22,14 +22,12 @@ import java.nio.charset.StandardCharsets
 /**
  * HighLevel ZMQ客户端
  */
-class HighLevelZmqClient(
-    private val clientType: ClientType,
-    private val tcpEndpoint: String = DEFAULT_TCP_ENDPOINT
-) {
+class HighLevelZmqClient {
     companion object {
         private const val DEFAULT_TCP_ENDPOINT = "tcp://127.0.0.1:33445"
     }
 
+    private var clientType: ClientType = ClientType.REMOTE_CONTROLLER
     private var context: ZContext? = null
     private var socket: ZMQ.Socket? = null
     private var connected: Boolean = false
@@ -38,11 +36,14 @@ class HighLevelZmqClient(
     /**
      * 连接到服务端
      */
-    fun connect(): Boolean {
+    fun connect(
+        clientType: ClientType = ClientType.REMOTE_CONTROLLER,
+        tcpEndpoint: String = DEFAULT_TCP_ENDPOINT
+    ): Boolean {
         if (connected) {
             return true
         }
-
+        this.clientType = clientType
         try {
             context = ZContext()
             socket = context?.createSocket(SocketType.DEALER)
@@ -217,12 +218,12 @@ class HighLevelZmqClient(
         }
         val response = sendRequest(request)
         val isConnected = response?.connected == true
-        
+
         if (!isConnected) {
             Timber.w("[HighLevelZmqClient] 服务器报告连接已断开")
             connected = false
         }
-        
+
         return isConnected
     }
 
@@ -240,22 +241,22 @@ class HighLevelZmqClient(
             val request = JsonObject().apply {
                 addProperty("command", "healthCheck")
             }
-            
+
             // 使用较短的超时进行健康检查
             val originalTimeout = socket?.receiveTimeOut ?: 5000
             socket?.receiveTimeOut = 2000 // 2秒超时
-            
+
             val response = sendRequest(request)
-            
+
             // 恢复原来的超时设置
             socket?.receiveTimeOut = originalTimeout
-            
+
             val isHealthy = response?.success == true || response?.connected == true
             if (!isHealthy) {
                 Timber.w("[HighLevelZmqClient] 健康检查失败")
                 connected = false
             }
-            
+
             isHealthy
         } catch (e: Exception) {
             Timber.e(e, "[HighLevelZmqClient] 健康检查异常")
@@ -431,8 +432,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取四元数失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 1.0f) // 默认四元数
+
+        return response.values
     }
 
     /**
@@ -452,8 +453,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取欧拉角失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认RPY
+
+        return response.values
     }
 
     /**
@@ -473,8 +474,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取机身加速度失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认加速度
+
+        return response.values
     }
 
     /**
@@ -494,8 +495,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取机身角速度失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认角速度
+
+        return response.values
     }
 
     /**
@@ -515,8 +516,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取位置失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认位置
+
+        return response.values
     }
 
     /**
@@ -536,8 +537,8 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取世界坐标系速度失败: ${response?.message}")
             return null
         }
-        
-        return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认世界速度
+
+        return response.values
     }
 
     /**
@@ -557,7 +558,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取机身坐标系速度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认机身速度
     }
 
@@ -580,7 +581,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Abad关节角度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -601,7 +602,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Hip关节角度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -622,7 +623,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Knee关节角度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -643,7 +644,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Abad关节角速度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -664,7 +665,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Hip关节角速度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -685,7 +686,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Knee关节角速度失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -706,7 +707,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Abad关节扭矩失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -727,7 +728,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Hip关节扭矩失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -748,7 +749,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取腿部Knee关节扭矩失败: ${response?.message}")
             return null
         }
-        
+
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -800,7 +801,7 @@ class HighLevelZmqClient(
             Timber.w("[HighLevelZmqClient] 获取电池电量失败: ${response?.message}")
             return null
         }
-        
+
         return response?.value?.toUInt()
     }
 }

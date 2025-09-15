@@ -114,44 +114,39 @@ fun MainControlScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 左侧摇杆区域
+            // 左侧摇杆区域 - 用于移动控制 (vx, vy)
             SquareVirtualJoystick(
                 size = 200.dp,
                 maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
-                        robotController.moveRobot(value)
+                        robotController.updateLeftJoystick(value)
                     }
 
                     override fun onReleased() {
-                        robotController.onJoystickReleased()
+                        robotController.onLeftJoystickReleased()
                     }
                 }
             )
 
-
             // 中间狂暴模式按钮
-
             RageModeButton(
                 isEnabled = isRageModeEnabled,
                 onClick = { robotController.toggleRageMode() }
             )
 
-
-            // 右侧线性摇杆（可选，根据需要调整）
-
+            // 右侧线性摇杆 - 用于转向控制 (yawRate)
             LinearVirtualJoystick(
                 width = 200.dp,
                 height = 60.dp,
                 maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
-                        // 可以用于转向控制
-                        // robotController.moveRobot(JoystickValue(0f, value.x))
+                        robotController.updateRightJoystick(value)
                     }
 
                     override fun onReleased() {
-                        // robotController.onJoystickReleased()
+                        robotController.onRightJoystickReleased()
                     }
                 }
             )
@@ -297,7 +292,7 @@ private fun ControlModeToggle(
 }
 
 /**
- * 模式选择行
+ * 模式选择行·
  */
 @Composable
 private fun ModeSelectionRow(
