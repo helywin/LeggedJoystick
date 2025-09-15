@@ -34,6 +34,7 @@ class RobotController(private val context: Context) {
     private var zeroSpeedJob: Job? = null
     private var connectionJob: Job? = null
     private var statusUpdateJob: Job? = null
+    private var healthCheckJob: Job? = null
 
     // 设置管理器
     private val settingsManager = SettingsManager(context)
@@ -80,6 +81,7 @@ class RobotController(private val context: Context) {
                     startHeartbeat()
                     startBatteryUpdate()
                     startStatusUpdate()
+                    startHealthCheck() // 启动健康检查
                     Timber.i("成功连接到机器人: $endpoint")
                 } else {
                     settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
@@ -119,6 +121,7 @@ class RobotController(private val context: Context) {
         stopHeartbeat()
         stopBatteryUpdate()
         stopStatusUpdate()
+        stopHealthCheck() // 停止健康检查
         stopZeroSpeedSending()
 
         zmqClient?.disconnect()
@@ -246,23 +249,46 @@ class RobotController(private val context: Context) {
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = controllerScope.launch {
-            while (isActive) {
+            var consecutiveFailures = 0
+            val maxFailures = 3 // 连续失败3次后断开连接
+            
+            while (isActive && settingsState.isConnected) {
                 try {
+                    // 只有在连接状态下才发送心跳
+                    if (!settingsState.isConnected) {
+                        Timber.d("连接已断开，停止心跳")
+                        break
+                    }
+
                     val success = zmqClient?.sendHeartbeat() ?: false
                     if (!success) {
-                        Timber.w("心跳发送失败")
-                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                        break
+                        consecutiveFailures++
+                        Timber.w("心跳发送失败 ($consecutiveFailures/$maxFailures)")
+                        
+                        if (consecutiveFailures >= maxFailures) {
+                            Timber.e("心跳连续失败，断开连接")
+                            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                            break
+                        }
                     } else {
+                        consecutiveFailures = 0 // 重置失败计数
                         Timber.d("心跳发送成功")
                     }
+                    
                     delay(1000) // 1秒心跳间隔
                 } catch (e: Exception) {
-                    Timber.e(e, "心跳异常")
-                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                    break
+                    consecutiveFailures++
+                    Timber.e(e, "心跳异常 ($consecutiveFailures/$maxFailures)")
+                    
+                    if (consecutiveFailures >= maxFailures) {
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                        break
+                    }
+                    
+                    delay(1000)
                 }
             }
+            Timber.d("心跳任务已结束")
         }
     }
 
@@ -280,16 +306,35 @@ class RobotController(private val context: Context) {
     private fun startBatteryUpdate() {
         batteryUpdateJob?.cancel()
         batteryUpdateJob = controllerScope.launch {
-            while (isActive) {
+            while (isActive && settingsState.isConnected) {
                 try {
-                    val batteryLevel = zmqClient?.getBatteryPower()?.toInt() ?: 0
-                    settingsState.updateBatteryLevel(batteryLevel)
+                    // 只有在连接状态下才进行查询
+                    if (!settingsState.isConnected) {
+                        Timber.d("连接已断开，停止电量更新")
+                        break
+                    }
+
+                    val batteryLevel = zmqClient?.getBatteryPower()?.toInt()
+                    if (batteryLevel != null) {
+                        settingsState.updateBatteryLevel(batteryLevel)
+                    } else {
+                        Timber.w("获取电量失败，可能连接已断开")
+                        // 获取失败时检查连接状态
+                        if (zmqClient?.isConnected() != true) {
+                            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                            break
+                        }
+                    }
+                    
                     delay(10000) // 10秒更新一次电量
                 } catch (e: Exception) {
                     Timber.e(e, "更新电量失败")
-                    delay(10000)
+                    // 电量更新异常可能表示连接问题
+                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                    break
                 }
             }
+            Timber.d("电量更新任务已结束")
         }
     }
 
@@ -307,36 +352,59 @@ class RobotController(private val context: Context) {
     private fun startStatusUpdate() {
         statusUpdateJob?.cancel()
         statusUpdateJob = controllerScope.launch {
-            while (isActive) {
+            while (isActive && settingsState.isConnected) {
                 try {
+                    // 只有在连接状态下才进行查询
+                    if (!settingsState.isConnected) {
+                        Timber.d("连接已断开，停止状态更新")
+                        break
+                    }
+
                     // 获取当前控制模式 (导航模式 vs 遥控器模式)
                     zmqClient?.let { client ->
                         val controlMode = client.getCurrentMode()
-                        settingsState.updateMode(controlMode)
-                        Timber.v("控制模式更新: ${controlMode.displayName} (原始值: $controlMode)")
-                        // 只有在状态真正改变时才更新，这样可以清除changing状态
-                        if (controlMode != settingsState.robotMode || settingsState.isRobotModeChanging) {
-                            settingsState.updateMode(controlMode)
-                            Timber.v("控制模式更新: ${controlMode.displayName} (原始值: $controlMode)")
+                        if (controlMode != null) {
+                            // 只有在状态真正改变时才更新，这样可以清除changing状态
+                            if (controlMode != settingsState.robotMode || settingsState.isRobotModeChanging) {
+                                settingsState.updateMode(controlMode)
+                                Timber.v("控制模式更新: ${controlMode.displayName}")
+                            }
+                        } else {
+                            Timber.w("获取控制模式失败，可能连接已断开")
+                            // 获取失败时检查连接状态
+                            if (!client.isConnected()) {
+                                settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                                break
+                            }
                         }
-
 
                         // 获取当前机器人控制模式 (阻尼/趴下/站立)
                         val currentCtrlMode = client.getCurrentCtrlmode()
-                        // 只有在状态真正改变时才更新，这样可以清除changing状态
-                        if (currentCtrlMode != settingsState.robotCtrlMode || settingsState.isRobotCtrlModeChanging) {
-                            settingsState.updateRobotCtrlMode(currentCtrlMode)
-                            Timber.v("机器人模式更新: ${currentCtrlMode.displayName} (原始值: $currentCtrlMode)")
+                        if (currentCtrlMode != null) {
+                            // 只有在状态真正改变时才更新，这样可以清除changing状态
+                            if (currentCtrlMode != settingsState.robotCtrlMode || settingsState.isRobotCtrlModeChanging) {
+                                settingsState.updateRobotCtrlMode(currentCtrlMode)
+                                Timber.v("机器人模式更新: ${currentCtrlMode.displayName}")
+                            }
+                        } else {
+                            Timber.w("获取机器人控制模式失败，可能连接已断开")
+                            // 获取失败时检查连接状态
+                            if (!client.isConnected()) {
+                                settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                                break
+                            }
                         }
                     }
-
 
                     delay(1000) // 1秒更新一次
                 } catch (e: Exception) {
                     Timber.e(e, "更新状态失败")
-                    delay(1000)
+                    // 状态更新异常可能表示连接问题
+                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                    break
                 }
             }
+            Timber.d("状态更新任务已结束")
         }
     }
 
@@ -346,6 +414,48 @@ class RobotController(private val context: Context) {
     private fun stopStatusUpdate() {
         statusUpdateJob?.cancel()
         statusUpdateJob = null
+    }
+
+    /**
+     * 开始健康检查（每30秒进行一次连接状态检查）
+     */
+    private fun startHealthCheck() {
+        healthCheckJob?.cancel()
+        healthCheckJob = controllerScope.launch {
+            while (isActive && settingsState.isConnected) {
+                try {
+                    delay(30000) // 30秒检查一次
+                    
+                    // 只有在连接状态下才进行健康检查
+                    if (!settingsState.isConnected) {
+                        Timber.d("连接已断开，停止健康检查")
+                        break
+                    }
+
+                    val isHealthy = zmqClient?.performHealthCheck() ?: false
+                    if (!isHealthy) {
+                        Timber.w("健康检查失败，连接可能已断开")
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                        break
+                    } else {
+                        Timber.d("健康检查通过")
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "健康检查异常")
+                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                    break
+                }
+            }
+            Timber.d("健康检查任务已结束")
+        }
+    }
+
+    /**
+     * 停止健康检查
+     */
+    private fun stopHealthCheck() {
+        healthCheckJob?.cancel()
+        healthCheckJob = null
     }
 
     /**

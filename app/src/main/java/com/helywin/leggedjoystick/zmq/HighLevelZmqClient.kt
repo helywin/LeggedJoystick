@@ -129,15 +129,28 @@ class HighLevelZmqClient(
     /**
      * 获取当前模式
      */
-    fun getCurrentMode(): RobotMode {
+    fun getCurrentMode(): RobotMode? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取当前模式")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getCurrentMode")
         }
         val response = sendRequest(request)
-        return when (response?.mode) {
+        if (response?.success != true) {
+            Timber.w("[HighLevelZmqClient] 获取当前模式失败: ${response?.message}")
+            return null
+        }
+
+        return when (response.mode) {
             RobotMode.MANUAL.ordinal -> RobotMode.MANUAL
             RobotMode.AUTO.ordinal -> RobotMode.AUTO
-            else -> RobotMode.AUTO // 默认手动模式
+            else -> {
+                Timber.w("[HighLevelZmqClient] 未知的机器人模式: ${response.mode}")
+                null
+            }
         }
     }
 
@@ -146,7 +159,14 @@ class HighLevelZmqClient(
      */
     private fun sendRequest(request: JsonObject): ZmqResponse? {
         if (!connected) {
+            Timber.w("[HighLevelZmqClient] 尝试发送请求但连接已断开")
             return ZmqResponse(success = false, message = "Not connected to service")
+        }
+
+        if (socket == null || context == null) {
+            Timber.w("[HighLevelZmqClient] Socket或Context为null，连接已无效")
+            connected = false
+            return ZmqResponse(success = false, message = "Connection is invalid")
         }
 
         return try {
@@ -158,10 +178,15 @@ class HighLevelZmqClient(
                 val replyStr = String(replyBytes, StandardCharsets.UTF_8)
                 gson.fromJson(replyStr, ZmqResponse::class.java)
             } else {
+                Timber.w("[HighLevelZmqClient] 未收到响应，可能连接已断开")
+                // 未收到响应可能表示连接已断开
+                connected = false
                 ZmqResponse(success = false, message = "No response received")
             }
         } catch (e: Exception) {
-            Timber.e(e, "[HighLevelZmqClient] 请求失败")
+            Timber.e(e, "[HighLevelZmqClient] 请求失败，可能连接已断开")
+            // 请求异常时标记连接为断开状态
+            connected = false
             ZmqResponse(success = false, message = "Request failed: ${e.message}")
         }
     }
@@ -183,11 +208,60 @@ class HighLevelZmqClient(
      * 检查连接状态
      */
     fun checkConnect(): Boolean {
+        if (!connected || socket == null || context == null) {
+            return false
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "checkConnect")
         }
         val response = sendRequest(request)
-        return response?.connected == true
+        val isConnected = response?.connected == true
+        
+        if (!isConnected) {
+            Timber.w("[HighLevelZmqClient] 服务器报告连接已断开")
+            connected = false
+        }
+        
+        return isConnected
+    }
+
+    /**
+     * 执行连接状态检查（更强健的检查）
+     */
+    fun performHealthCheck(): Boolean {
+        if (!connected || socket == null || context == null) {
+            Timber.w("[HighLevelZmqClient] 本地连接状态检查失败")
+            return false
+        }
+
+        return try {
+            // 尝试发送一个轻量级的检查请求
+            val request = JsonObject().apply {
+                addProperty("command", "healthCheck")
+            }
+            
+            // 使用较短的超时进行健康检查
+            val originalTimeout = socket?.receiveTimeOut ?: 5000
+            socket?.receiveTimeOut = 2000 // 2秒超时
+            
+            val response = sendRequest(request)
+            
+            // 恢复原来的超时设置
+            socket?.receiveTimeOut = originalTimeout
+            
+            val isHealthy = response?.success == true || response?.connected == true
+            if (!isHealthy) {
+                Timber.w("[HighLevelZmqClient] 健康检查失败")
+                connected = false
+            }
+            
+            isHealthy
+        } catch (e: Exception) {
+            Timber.e(e, "[HighLevelZmqClient] 健康检查异常")
+            connected = false
+            false
+        }
     }
 
     /**
@@ -343,77 +417,147 @@ class HighLevelZmqClient(
     /**
      * 获取四元数
      */
-    fun getQuaternion(): List<Float> {
+    fun getQuaternion(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取四元数")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getQuaternion")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取四元数失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 1.0f) // 默认四元数
     }
 
     /**
      * 获取欧拉角（Roll, Pitch, Yaw）
      */
-    fun getRPY(): List<Float> {
+    fun getRPY(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取欧拉角")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getRPY")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取欧拉角失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认RPY
     }
 
     /**
      * 获取机身加速度
      */
-    fun getBodyAcc(): List<Float> {
+    fun getBodyAcc(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取机身加速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getBodyAcc")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取机身加速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认加速度
     }
 
     /**
      * 获取机身角速度
      */
-    fun getBodyGyro(): List<Float> {
+    fun getBodyGyro(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取机身角速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getBodyGyro")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取机身角速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认角速度
     }
 
     /**
      * 获取位置
      */
-    fun getPosition(): List<Float> {
+    fun getPosition(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取位置")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getPosition")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取位置失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认位置
     }
 
     /**
      * 获取世界坐标系速度
      */
-    fun getWorldVelocity(): List<Float> {
+    fun getWorldVelocity(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取世界坐标系速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getWorldVelocity")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取世界坐标系速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认世界速度
     }
 
     /**
      * 获取机身坐标系速度
      */
-    fun getBodyVelocity(): List<Float> {
+    fun getBodyVelocity(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取机身坐标系速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getBodyVelocity")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取机身坐标系速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f) // 默认机身速度
     }
 
@@ -422,99 +566,189 @@ class HighLevelZmqClient(
     /**
      * 获取腿部Abad关节角度
      */
-    fun getLegAbadJoint(): List<Float> {
+    fun getLegAbadJoint(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Abad关节角度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegAbadJoint")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Abad关节角度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Hip关节角度
      */
-    fun getLegHipJoint(): List<Float> {
+    fun getLegHipJoint(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Hip关节角度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegHipJoint")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Hip关节角度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Knee关节角度
      */
-    fun getLegKneeJoint(): List<Float> {
+    fun getLegKneeJoint(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Knee关节角度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegKneeJoint")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Knee关节角度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Abad关节角速度
      */
-    fun getLegAbadJointVel(): List<Float> {
+    fun getLegAbadJointVel(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Abad关节角速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegAbadJointVel")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Abad关节角速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Hip关节角速度
      */
-    fun getLegHipJointVel(): List<Float> {
+    fun getLegHipJointVel(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Hip关节角速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegHipJointVel")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Hip关节角速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Knee关节角速度
      */
-    fun getLegKneeJointVel(): List<Float> {
+    fun getLegKneeJointVel(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Knee关节角速度")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegKneeJointVel")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Knee关节角速度失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Abad关节扭矩
      */
-    fun getLegAbadJointTorque(): List<Float> {
+    fun getLegAbadJointTorque(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Abad关节扭矩")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegAbadJointTorque")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Abad关节扭矩失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Hip关节扭矩
      */
-    fun getLegHipJointTorque(): List<Float> {
+    fun getLegHipJointTorque(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Hip关节扭矩")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegHipJointTorque")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Hip关节扭矩失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
     /**
      * 获取腿部Knee关节扭矩
      */
-    fun getLegKneeJointTorque(): List<Float> {
+    fun getLegKneeJointTorque(): List<Float>? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取腿部Knee关节扭矩")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getLegKneeJointTorque")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.values == null) {
+            Timber.w("[HighLevelZmqClient] 获取腿部Knee关节扭矩失败: ${response?.message}")
+            return null
+        }
+        
         return response?.values ?: listOf(0.0f, 0.0f, 0.0f, 0.0f) // 4条腿默认值
     }
 
@@ -523,27 +757,50 @@ class HighLevelZmqClient(
     /**
      * 获取当前控制模式
      */
-    fun getCurrentCtrlmode(): RobotCtrlMode {
+    fun getCurrentCtrlmode(): RobotCtrlMode? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取当前控制模式")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getCurrentCtrlmode")
         }
         val response = sendRequest(request)
+        if (response?.success != true && response?.value == null) {
+            Timber.w("[HighLevelZmqClient] 获取当前控制模式失败: ${response?.message}")
+            return null
+        }
+
         return when (response?.value?.toUInt()) {
             0U, 10U -> RobotCtrlMode.PASSIVE
             18U -> RobotCtrlMode.STAND
             51U -> RobotCtrlMode.LIE_DOWN
-            else -> RobotCtrlMode.STAND // 默认站立模式
+            else -> {
+                Timber.w("[HighLevelZmqClient] 未知的机器人控制模式: ${response?.value}")
+                null
+            }
         }
     }
 
     /**
      * 获取电池电量
      */
-    fun getBatteryPower(): UInt {
+    fun getBatteryPower(): UInt? {
+        if (!connected) {
+            Timber.w("[HighLevelZmqClient] 连接已断开，无法获取电池电量")
+            return null
+        }
+
         val request = JsonObject().apply {
             addProperty("command", "getBatteryPower")
         }
         val response = sendRequest(request)
-        return response?.value?.toUInt() ?: 0u
+        if (response?.success != true && response?.value == null) {
+            Timber.w("[HighLevelZmqClient] 获取电池电量失败: ${response?.message}")
+            return null
+        }
+        
+        return response?.value?.toUInt()
     }
 }
