@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -76,7 +77,6 @@ fun LinearVirtualJoystick(
     Box(
         modifier = modifier
             .size(width, height)
-            .clip(RoundedCornerShape(height / 2))
             .background(backgroundColor)
     ) {
         Canvas(
@@ -140,18 +140,16 @@ private fun DrawScope.drawLinearJoystick(
     val halfKnobSize = knobSize / 2f
     val maxRange = (size.width / 2f) - halfKnobSize
     
-    // 绘制外边框（圆角矩形）
-    val cornerRadius = size.height / 2f
-    drawRoundRect(
+    // 绘制外边框
+    drawRect(
         color = borderColor,
         topLeft = Offset.Zero,
         size = Size(size.width.toFloat(), size.height.toFloat()),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerRadius),
         style = Stroke(width = 2.dp.toPx())
     )
-    
+
     // 绘制内部轨道
-    val trackHeight = size.height * 0.3f
+    val trackHeight = size.height * 0.15f
     val trackTop = center.y - trackHeight / 2f
     drawRoundRect(
         color = trackColor,
@@ -194,5 +192,27 @@ private fun DrawScope.drawLinearJoystick(
         ),
         size = Size(knobSize, knobSize),
         style = Stroke(width = 1.dp.toPx())
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LinearVirtualJoystickPreview() {
+    LinearVirtualJoystick(
+        modifier = Modifier.padding(16.dp),
+        onValueChange = object : JoystickCallback {
+            override fun onValueChanged(value: JoystickValue) {
+                Timber.d("LinearJoystick Value: $value")
+            }
+        },
+        enhancedCallback = object : EnhancedJoystickCallback {
+            override fun onValueChanged(value: JoystickValue) {
+                // 额外处理
+            }
+
+            override fun onReleased() {
+                Timber.d("LinearJoystick Released")
+            }
+        }
     )
 }

@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -44,9 +45,10 @@ fun ConnectionDialog(
             )
         }
     } else if (connectionState in listOf(
-        ConnectionState.CONNECTION_FAILED,
-        ConnectionState.CONNECTION_TIMEOUT
-    )) {
+            ConnectionState.CONNECTION_FAILED,
+            ConnectionState.CONNECTION_TIMEOUT
+        )
+    ) {
         Dialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(
@@ -78,7 +80,9 @@ private fun ConnectionDialogContent(
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -88,19 +92,19 @@ private fun ConnectionDialogContent(
                         modifier = Modifier.size(48.dp),
                         color = MaterialTheme.colorScheme.primary
                     )
-                    
+
                     Text(
                         text = "连接中...",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    
+
                     Text(
                         text = "正在尝试连接到机器人",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
+
                     Button(
                         onClick = { onCancel?.invoke() },
                         colors = ButtonDefaults.buttonColors(
@@ -110,61 +114,78 @@ private fun ConnectionDialogContent(
                         Text("取消连接")
                     }
                 }
-                
+
                 ConnectionState.CONNECTION_FAILED -> {
                     Text(
                         text = "❌",
                         fontSize = 48.sp
                     )
-                    
+
                     Text(
                         text = "连接失败",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.error
                     )
-                    
+
                     Text(
                         text = "无法连接到指定的服务器，请检查网络设置",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
+
                     Button(
                         onClick = { onDismiss?.invoke() }
                     ) {
                         Text("确定")
                     }
                 }
-                
+
                 ConnectionState.CONNECTION_TIMEOUT -> {
                     Text(
                         text = "⏰",
                         fontSize = 48.sp
                     )
-                    
+
                     Text(
                         text = "连接超时",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.error
                     )
-                    
+
                     Text(
                         text = "连接服务器超时，请检查服务器是否正在运行",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
+
                     Button(
                         onClick = { onDismiss?.invoke() }
                     ) {
                         Text("确定")
                     }
                 }
-                
+
                 else -> {}
             }
         }
+    }
+}
+
+@Preview
+@Composable
+fun ConnectionDialogPreview() {
+    var showDialog by remember { mutableStateOf(true) }
+    var connectionState by remember { mutableStateOf(ConnectionState.CONNECTING) }
+
+    if (showDialog) {
+        ConnectionDialog(
+            connectionState = connectionState,
+            onDismiss = { showDialog = false },
+            onCancel = {
+                connectionState = ConnectionState.CONNECTION_FAILED
+            }
+        )
     }
 }

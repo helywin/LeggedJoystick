@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -73,7 +74,6 @@ fun SquareVirtualJoystick(
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
     ) {
         Canvas(
@@ -191,5 +191,27 @@ private fun DrawScope.drawSquareJoystick(
         ),
         size = Size(knobSize, knobSize),
         style = Stroke(width = 1.dp.toPx())
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+fun SquareVirtualJoystickPreview() {
+    SquareVirtualJoystick(
+        modifier = Modifier.padding(16.dp),
+        onValueChange = object : JoystickCallback {
+            override fun onValueChanged(value: JoystickValue) {
+                Timber.d("Preview Joystick Value: $value")
+            }
+        },
+        enhancedCallback = object : EnhancedJoystickCallback {
+            override fun onValueChanged(value: JoystickValue) {
+                // No-op
+            }
+
+            override fun onReleased() {
+                Timber.d("Preview Joystick Released")
+            }
+        }
     )
 }

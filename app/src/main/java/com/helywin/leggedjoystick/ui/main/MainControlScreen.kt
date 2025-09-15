@@ -12,6 +12,7 @@ package com.helywin.leggedjoystick.ui.main
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.RobotController
@@ -46,7 +48,7 @@ fun MainControlScreen(
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val isRageModeEnabled = settingsState.settings.isRageModeEnabled
-    
+
     // 连接状态对话框
     ConnectionDialog(
         connectionState = connectionState,
@@ -60,7 +62,7 @@ fun MainControlScreen(
             robotController.cancelConnection()
         }
     )
-    
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -82,9 +84,9 @@ fun MainControlScreen(
             },
             onSettingsClick = onSettingsClick
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         // 模式选择按钮组
         ModeSelectionRow(
             currentMode = currentMode,
@@ -92,69 +94,58 @@ fun MainControlScreen(
                 robotController.setRobotMode(mode)
             }
         )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
+
+        Spacer(modifier = Modifier.weight(1f))
+
         // 主控制区域
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             // 左侧摇杆区域
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(1f)
-            ) {
-                SquareVirtualJoystick(
-                    size = 200.dp,
-                    maxVelocity = if (isRageModeEnabled) 2f else 1f,
-                    enhancedCallback = object : EnhancedJoystickCallback {
-                        override fun onValueChanged(value: JoystickValue) {
-                            robotController.moveRobot(value)
-                        }
-                        
-                        override fun onReleased() {
-                            robotController.onJoystickReleased()
-                        }
+            SquareVirtualJoystick(
+                size = 200.dp,
+                maxVelocity = if (isRageModeEnabled) 2f else 1f,
+                enhancedCallback = object : EnhancedJoystickCallback {
+                    override fun onValueChanged(value: JoystickValue) {
+                        robotController.moveRobot(value)
                     }
-                )
-            }
-            
+
+                    override fun onReleased() {
+                        robotController.onJoystickReleased()
+                    }
+                }
+            )
+
+
             // 中间狂暴模式按钮
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(0.3f)
-            ) {
-                RageModeButton(
-                    isEnabled = isRageModeEnabled,
-                    onClick = { robotController.toggleRageMode() }
-                )
-            }
-            
+
+            RageModeButton(
+                isEnabled = isRageModeEnabled,
+                onClick = { robotController.toggleRageMode() }
+            )
+
+
             // 右侧线性摇杆（可选，根据需要调整）
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(1f)
-            ) {
-                LinearVirtualJoystick(
-                    width = 150.dp,
-                    height = 60.dp,
-                    maxVelocity = if (isRageModeEnabled) 2f else 1f,
-                    enhancedCallback = object : EnhancedJoystickCallback {
-                        override fun onValueChanged(value: JoystickValue) {
-                            // 可以用于转向控制
-                            // robotController.moveRobot(JoystickValue(0f, value.x))
-                        }
-                        
-                        override fun onReleased() {
-                            // robotController.onJoystickReleased()
-                        }
+
+            LinearVirtualJoystick(
+                width = 200.dp,
+                height = 60.dp,
+                maxVelocity = if (isRageModeEnabled) 2f else 1f,
+                enhancedCallback = object : EnhancedJoystickCallback {
+                    override fun onValueChanged(value: JoystickValue) {
+                        // 可以用于转向控制
+                        // robotController.moveRobot(JoystickValue(0f, value.x))
                     }
-                )
-            }
+
+                    override fun onReleased() {
+                        // robotController.onJoystickReleased()
+                    }
+                }
+            )
         }
     }
 }
@@ -177,7 +168,7 @@ private fun TopStatusBar(
     ) {
         // 左侧电量显示
         BatteryIndicator(batteryLevel = batteryLevel)
-        
+
         // 右侧控制按钮
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -205,7 +196,7 @@ private fun TopStatusBar(
                     }
                 )
             }
-            
+
             // 设置按钮
             IconButton(onClick = onSettingsClick) {
                 Icon(Icons.Filled.Settings, contentDescription = "设置")
@@ -228,7 +219,7 @@ private fun BatteryIndicator(batteryLevel: Int) {
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium
         )
-        
+
         // 简单的电量条
         Box(
             modifier = Modifier
@@ -292,9 +283,9 @@ private fun ModeButton(
             )
             .padding(4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) 
-                MaterialTheme.colorScheme.primary 
-            else 
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primary
+            else
                 MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(
@@ -304,9 +295,9 @@ private fun ModeButton(
         Text(
             text = mode.displayName,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            color = if (isSelected) 
-                MaterialTheme.colorScheme.onPrimary 
-            else 
+            color = if (isSelected)
+                MaterialTheme.colorScheme.onPrimary
+            else
                 MaterialTheme.colorScheme.onSurface
         )
     }
@@ -328,9 +319,9 @@ private fun RageModeButton(
             )
             .size(80.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isEnabled) 
-                Color.Red.copy(alpha = 0.8f) 
-            else 
+            containerColor = if (isEnabled)
+                Color.Red.copy(alpha = 0.8f)
+            else
                 MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(
@@ -354,4 +345,23 @@ private fun RageModeButton(
             )
         }
     }
+}
+
+@Preview(showBackground = true, widthDp = 800, heightDp = 480)
+@Composable
+fun MainControlScreenPreview() {
+    val dummyController = remember {
+        RobotController().apply {
+            settingsState.updateBatteryLevel(75)
+            settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+            setRobotMode(RobotMode.STAND)
+            settingsState.updateSettings(
+                settingsState.settings.copy(isRageModeEnabled = false)
+            )
+        }
+    }
+    MainControlScreen(
+        robotController = dummyController,
+        onSettingsClick = {}
+    )
 }

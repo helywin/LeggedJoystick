@@ -61,7 +61,8 @@ fun LeggedJoystickApp(robotController: RobotController) {
     }
 }
 
-@Preview(showBackground = true)
+// 横屏
+@Preview(showBackground = true, widthDp = 800, heightDp = 480)
 @Composable
 fun LeggedJoystickAppPreview() {
     LeggedJoystickTheme {
