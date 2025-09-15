@@ -41,25 +41,74 @@ class HighLevelZmqClient {
         tcpEndpoint: String = DEFAULT_TCP_ENDPOINT
     ): Boolean {
         if (connected) {
+            Timber.d("[HighLevelZmqClient] 客户端已连接，无需重复连接")
             return true
         }
+        
         this.clientType = clientType
+        
         try {
+            Timber.i("[HighLevelZmqClient] 正在连接到: $tcpEndpoint")
+            
             context = ZContext()
             socket = context?.createSocket(SocketType.DEALER)
 
             // 设置接收超时（毫秒）
-            socket?.receiveTimeOut = 5000 // 5秒超时
+            socket?.receiveTimeOut = 3000 // 3秒超时，更快的响应
+            
+            // 设置发送超时
+            socket?.sendTimeOut = 1000 // 1秒发送超时
+            
+            // 设置立即模式，避免缓存延迟
+            socket?.setImmediate(true)
+            
+            // 设置心跳间隔（TCP keepalive）
+            socket?.setTCPKeepAlive(1) // 启用
+            socket?.setTCPKeepAliveIdle(1) // 1秒后开始keepalive
+            socket?.setTCPKeepAliveInterval(1) // 每1秒发送一次
+            socket?.setTCPKeepAliveCount(3) // 失败3次后断开
 
             // 设置唯一的客户端标识
             val clientTypeStr = if (clientType == ClientType.REMOTE_CONTROLLER) "rc" else "nav"
-            val identity = "${clientTypeStr}_${System.currentTimeMillis()}"
+            val identity = "${clientTypeStr}_${System.currentTimeMillis()}_${hashCode()}"
             socket?.identity = identity.toByteArray(StandardCharsets.UTF_8)
 
             socket?.connect(tcpEndpoint)
             connected = true
+            Timber.d("[HighLevelZmqClient] Socket连接完成: $tcpEndpoint")
 
-            // 发送注册信息
+            // 执行客户端注册，确保服务端识别客户端类型
+            val success = performClientRegistration()
+            if (!success) {
+                Timber.e("[HighLevelZmqClient] 客户端注册失败，断开连接")
+                disconnect()
+                return false
+            }
+
+            Timber.i("[HighLevelZmqClient] 成功连接并注册到服务端: $tcpEndpoint")
+            return true
+            
+        } catch (e: Exception) {
+            Timber.e(e, "[HighLevelZmqClient] 连接失败: $tcpEndpoint")
+            connected = false
+            // 清理资源
+            try {
+                socket?.close()
+                context?.close()
+            } catch (cleanupEx: Exception) {
+                Timber.w(cleanupEx, "[HighLevelZmqClient] 清理资源时出现异常")
+            }
+            socket = null
+            context = null
+            return false
+        }
+    }
+
+    /**
+     * 执行客户端注册
+     */
+    private fun performClientRegistration(): Boolean {
+        return try {
             val registerRequest = JsonObject().apply {
                 addProperty("command", "register")
                 add("params", JsonObject().apply {
@@ -67,19 +116,19 @@ class HighLevelZmqClient {
                 })
             }
 
+            Timber.d("[HighLevelZmqClient] 发送客户端注册请求")
             val response = sendRequest(registerRequest)
-            if (response?.success != true) {
-                Timber.e("[HighLevelZmqClient] 客户端注册失败: ${response?.message ?: "unknown error"}")
-                disconnect()
-                return false
+            
+            if (response?.success == true) {
+                Timber.i("[HighLevelZmqClient] 客户端注册成功")
+                true
+            } else {
+                Timber.e("[HighLevelZmqClient] 客户端注册失败: ${response?.message ?: "No response received"}")
+                false
             }
-
-            Timber.i("[HighLevelZmqClient] 连接到服务端: $tcpEndpoint")
-            return true
         } catch (e: Exception) {
-            Timber.e(e, "[HighLevelZmqClient] 连接失败")
-            connected = false
-            return false
+            Timber.e(e, "[HighLevelZmqClient] 客户端注册过程中出现异常")
+            false
         }
     }
 
@@ -87,13 +136,53 @@ class HighLevelZmqClient {
      * 断开连接
      */
     fun disconnect() {
-        if (connected) {
+        if (!connected) {
+            return
+        }
+        
+        try {
             connected = false
-            socket?.close()
-            context?.close()
+            Timber.i("[HighLevelZmqClient] 正在断开连接...")
+            
+            // 发送断开连接通知（如果socket仍然有效）
+            try {
+                if (socket != null) {
+                    val disconnectRequest = JsonObject().apply {
+                        addProperty("command", "disconnect")
+                    }
+                    // 设置短超时，避免断开时等待太久
+                    val originalTimeout = socket?.receiveTimeOut ?: 1000
+                    socket?.receiveTimeOut = 500 // 500ms超时
+                    sendRequest(disconnectRequest) // 尽力发送，但不要求必须成功
+                    socket?.receiveTimeOut = originalTimeout
+                }
+            } catch (e: Exception) {
+                Timber.d(e, "[HighLevelZmqClient] 发送断开通知时异常，但会继续断开")
+            }
+            
+            // 关闭socket和context
+            try {
+                socket?.close()
+            } catch (e: Exception) {
+                Timber.w(e, "[HighLevelZmqClient] 关闭socket时异常")
+            }
+            
+            try {
+                context?.close()
+            } catch (e: Exception) {
+                Timber.w(e, "[HighLevelZmqClient] 关闭context时异常")
+            }
+            
             socket = null
             context = null
             Timber.i("[HighLevelZmqClient] 已断开连接")
+            
+        } catch (e: Exception) {
+            Timber.e(e, "[HighLevelZmqClient] 断开连接过程中出现异常")
+            // 强制清理状态
+            connected = false
+            socket = null
+            context = null
         }
     }
 
@@ -160,7 +249,7 @@ class HighLevelZmqClient {
      */
     private fun sendRequest(request: JsonObject): ZmqResponse? {
         if (!connected) {
-            Timber.w("[HighLevelZmqClient] 尝试发送请求但连接已断开")
+            Timber.v("[HighLevelZmqClient] 尝试发送请求但连接已断开")
             return ZmqResponse(success = false, message = "Not connected to service")
         }
 
@@ -172,23 +261,43 @@ class HighLevelZmqClient {
 
         return try {
             val requestStr = gson.toJson(request)
-            socket?.send(requestStr.toByteArray(StandardCharsets.UTF_8))
+            val commandName = request.get("command")?.asString ?: "unknown"
+            
+            Timber.v("[HighLevelZmqClient] 发送请求: $commandName")
+            
+            // 发送请求
+            val success = socket?.send(requestStr.toByteArray(StandardCharsets.UTF_8))
+            if (success != true) {
+                Timber.w("[HighLevelZmqClient] 发送请求失败: $commandName")
+                connected = false
+                return ZmqResponse(success = false, message = "Failed to send request")
+            }
 
+            // 接收响应
             val replyBytes = socket?.recv()
             if (replyBytes != null) {
                 val replyStr = String(replyBytes, StandardCharsets.UTF_8)
-                gson.fromJson(replyStr, ZmqResponse::class.java)
+                
+                try {
+                    val response = gson.fromJson(replyStr, ZmqResponse::class.java)
+                    Timber.v("[HighLevelZmqClient] 收到响应: $commandName, success=${response.success}")
+                    return response
+                } catch (e: Exception) {
+                    Timber.e(e, "[HighLevelZmqClient] 解析响应失败: $commandName, response=$replyStr")
+                    return ZmqResponse(success = false, message = "Failed to parse response: ${e.message}")
+                }
             } else {
-                Timber.w("[HighLevelZmqClient] 未收到响应，可能连接已断开")
+                Timber.w("[HighLevelZmqClient] 未收到响应，可能连接已断开: $commandName")
                 // 未收到响应可能表示连接已断开
                 connected = false
-                ZmqResponse(success = false, message = "No response received")
+                return ZmqResponse(success = false, message = "No response received")
             }
         } catch (e: Exception) {
-            Timber.e(e, "[HighLevelZmqClient] 请求失败，可能连接已断开")
+            val commandName = request.get("command")?.asString ?: "unknown"
+            Timber.e(e, "[HighLevelZmqClient] 请求失败，可能连接已断开: $commandName")
             // 请求异常时标记连接为断开状态
             connected = false
-            ZmqResponse(success = false, message = "Request failed: ${e.message}")
+            return ZmqResponse(success = false, message = "Request failed: ${e.message}")
         }
     }
 
@@ -232,34 +341,52 @@ class HighLevelZmqClient {
      */
     fun performHealthCheck(): Boolean {
         if (!connected || socket == null || context == null) {
-            Timber.w("[HighLevelZmqClient] 本地连接状态检查失败")
+            Timber.v("[HighLevelZmqClient] 本地连接状态检查失败 - 连接已断开")
+            connected = false
             return false
         }
 
         return try {
-            // 尝试发送一个轻量级的检查请求
-            val request = JsonObject().apply {
-                addProperty("command", "healthCheck")
+            // 保存原始超时设置
+            val originalReceiveTimeout = socket?.receiveTimeOut ?: 3000
+            val originalSendTimeout = socket?.sendTimeOut ?: 1000
+            
+            // 设置健康检查的较短超时
+            socket?.receiveTimeOut = 1500 // 1.5秒接收超时
+            socket?.sendTimeOut = 500 // 0.5秒发送超时
+            
+            val result = try {
+                // 尝试发送一个轻量级的检查请求
+                val request = JsonObject().apply {
+                    addProperty("command", "healthCheck")
+                }
+
+                Timber.v("[HighLevelZmqClient] 执行健康检查")
+                val response = sendRequest(request)
+                
+                val isHealthy = response?.success == true || response?.connected == true
+                
+                if (isHealthy) {
+                    Timber.v("[HighLevelZmqClient] 健康检查通过")
+                } else {
+                    Timber.w("[HighLevelZmqClient] 健康检查失败: ${response?.message}")
+                    connected = false
+                }
+                
+                isHealthy
+            } finally {
+                // 恢复原来的超时设置
+                try {
+                    socket?.receiveTimeOut = originalReceiveTimeout
+                    socket?.sendTimeOut = originalSendTimeout
+                } catch (e: Exception) {
+                    Timber.d(e, "[HighLevelZmqClient] 恢复超时设置时出现异常")
+                }
             }
-
-            // 使用较短的超时进行健康检查
-            val originalTimeout = socket?.receiveTimeOut ?: 5000
-            socket?.receiveTimeOut = 2000 // 2秒超时
-
-            val response = sendRequest(request)
-
-            // 恢复原来的超时设置
-            socket?.receiveTimeOut = originalTimeout
-
-            val isHealthy = response?.success == true || response?.connected == true
-            if (!isHealthy) {
-                Timber.w("[HighLevelZmqClient] 健康检查失败")
-                connected = false
-            }
-
-            isHealthy
+            
+            result
         } catch (e: Exception) {
-            Timber.e(e, "[HighLevelZmqClient] 健康检查异常")
+            Timber.w(e, "[HighLevelZmqClient] 健康检查异常")
             connected = false
             false
         }

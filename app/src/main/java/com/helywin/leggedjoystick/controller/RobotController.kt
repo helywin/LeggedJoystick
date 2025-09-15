@@ -18,6 +18,7 @@ import com.helywin.leggedjoystick.data.SettingsState
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
 import com.helywin.leggedjoystick.zmq.HighLevelZmqClient
+import com.helywin.leggedjoystick.zmq.ClientType
 import kotlinx.coroutines.*
 import timber.log.Timber
 import kotlin.math.abs
@@ -52,7 +53,7 @@ class RobotController(private val context: Context) {
     }
 
     /**
-     * 异步连接到机器人，支持超时和中断
+     * 异步连接到机器人，支持超时、重试和中断
      */
     fun connectAsync(settings: AppSettings) {
         // 如果已经在连接中，先取消
@@ -61,37 +62,81 @@ class RobotController(private val context: Context) {
         settingsState.updateConnectionState(ConnectionState.CONNECTING)
 
         connectionJob = controllerScope.launch {
-            try {
-                val endpoint = "tcp://${settings.zmqIp}:${settings.zmqPort}"
-                Timber.i("开始连接到机器人: $endpoint")
+            val endpoint = "tcp://${settings.zmqIp}:${settings.zmqPort}"
+            val maxRetries = 3
+            val retryDelayMs = 2000L // 2秒重试间隔
+            val connectionTimeoutMs = 8000L // 8秒连接超时
 
-                // 使用withTimeout来设置连接超时
-                val success = withTimeout(5000L) { // 10秒超时
-                    zmqClient.connect()
+            Timber.i("开始连接到机器人: $endpoint (最多重试 $maxRetries 次)")
+
+            repeat(maxRetries) { attempt ->
+                if (!isActive) {
+                    Timber.i("连接任务已取消")
+                    return@launch
                 }
 
-                if (success) {
-                    settingsState.updateConnectionState(ConnectionState.CONNECTED)
-                    startHeartbeat()
-                    startBatteryUpdate()
-                    startStatusUpdate()
-                    startHealthCheck() // 启动健康检查
-                    startContinuousSpeedSending() // 启动持续速度发送
-                    Timber.i("成功连接到机器人: $endpoint")
-                } else {
-                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                    Timber.e("连接机器人失败: $endpoint")
-                }
+                try {
+                    Timber.i("连接尝试 ${attempt + 1}/$maxRetries: $endpoint")
+                    
+                    // 使用withTimeout来设置连接超时
+                    val success = withTimeout(connectionTimeoutMs) {
+                        zmqClient.connect(ClientType.REMOTE_CONTROLLER, endpoint)
+                    }
 
-            } catch (e: TimeoutCancellationException) {
-                settingsState.updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
-                Timber.e("连接机器人超时")
-            } catch (e: CancellationException) {
-                settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
-                Timber.i("连接已被用户取消")
-            } catch (e: Exception) {
-                settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                Timber.e(e, "连接机器人异常")
+                    if (success) {
+                        settingsState.updateConnectionState(ConnectionState.CONNECTED)
+                        startHeartbeat()
+                        startBatteryUpdate()
+                        startStatusUpdate()
+                        startHealthCheck() // 启动健康检查
+                        
+                        // 只在手动模式下启动持续速度发送
+                        if (settingsState.robotMode == RobotMode.MANUAL) {
+                            startContinuousSpeedSending()
+                            Timber.i("手动模式：已启动持续速度发送")
+                        } else {
+                            Timber.i("非手动模式：不启动持续速度发送")
+                        }
+                        
+                        Timber.i("成功连接到机器人: $endpoint (尝试 ${attempt + 1}/$maxRetries)")
+                        return@launch // 成功连接，退出重试循环
+                    } else {
+                        Timber.w("连接尝试 ${attempt + 1}/$maxRetries 失败: $endpoint")
+                        if (attempt == maxRetries - 1) {
+                            // 最后一次尝试失败
+                            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                            Timber.e("所有连接尝试均失败: $endpoint")
+                        } else {
+                            // 等待重试
+                            delay(retryDelayMs)
+                        }
+                    }
+
+                } catch (e: TimeoutCancellationException) {
+                    Timber.w("连接尝试 ${attempt + 1}/$maxRetries 超时: $endpoint")
+                    if (attempt == maxRetries - 1) {
+                        // 最后一次尝试超时
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
+                        Timber.e("连接机器人超时，所有重试均失败: $endpoint")
+                    } else {
+                        // 等待重试
+                        delay(retryDelayMs)
+                    }
+                } catch (e: CancellationException) {
+                    settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+                    Timber.i("连接已被用户取消")
+                    return@launch
+                } catch (e: Exception) {
+                    Timber.w(e, "连接尝试 ${attempt + 1}/$maxRetries 异常: $endpoint")
+                    if (attempt == maxRetries - 1) {
+                        // 最后一次尝试异常
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                        Timber.e(e, "连接机器人异常，所有重试均失败: $endpoint")
+                    } else {
+                        // 等待重试
+                        delay(retryDelayMs)
+                    }
+                }
             }
         }
     }
@@ -170,6 +215,23 @@ class RobotController(private val context: Context) {
                 val success = zmqClient.setMode(mode) ?: false
                 if (success) {
                     settingsState.updateMode(mode)
+                    
+                    // 根据模式控制速度发送
+                    when (mode) {
+                        RobotMode.MANUAL -> {
+                            // 切换到手动模式，启动持续速度发送
+                            if (continuousSpeedJob?.isActive != true) {
+                                startContinuousSpeedSending()
+                                Timber.i("切换到手动模式，启动持续速度发送")
+                            }
+                        }
+                        RobotMode.AUTO -> {
+                            // 切换到自动模式，停止持续速度发送
+                            stopContinuousSpeedSending()
+                            Timber.i("切换到自动模式，停止持续速度发送")
+                        }
+                    }
+                    
                     Timber.i("控制模式已切换到: ${mode.displayName}")
                 } else {
                     Timber.e("切换控制模式失败: ${mode.displayName}")
@@ -214,15 +276,23 @@ class RobotController(private val context: Context) {
 
     /**
      * 开始持续速度发送（20Hz）
+     * 只在手动模式下运行
      */
     private fun startContinuousSpeedSending() {
         continuousSpeedJob?.cancel()
         continuousSpeedJob = controllerScope.launch {
+            Timber.i("持续速度发送任务已启动")
             while (isActive && settingsState.isConnected) {
                 try {
-                    // 只有在连接状态下才发送速度
+                    // 检查连接状态和模式
                     if (!settingsState.isConnected) {
                         Timber.d("连接已断开，停止速度发送")
+                        break
+                    }
+                    
+                    // 检查是否为手动模式
+                    if (settingsState.robotMode != RobotMode.MANUAL) {
+                        Timber.i("当前为非手动模式(${settingsState.robotMode.displayName})，停止速度发送")
                         break
                     }
 
@@ -252,7 +322,7 @@ class RobotController(private val context: Context) {
                     break
                 }
             }
-            Timber.d("持续速度发送任务已结束")
+            Timber.i("持续速度发送任务已结束")
         }
     }
 
@@ -265,6 +335,7 @@ class RobotController(private val context: Context) {
         // 重置摇杆状态
         currentLeftJoystick = JoystickValue.ZERO
         currentRightJoystick = JoystickValue.ZERO
+        Timber.i("持续速度发送已停止")
     }
 
     // ========== 兼容性方法（向后兼容） ==========
@@ -306,45 +377,60 @@ class RobotController(private val context: Context) {
         heartbeatThread = Thread({
             var consecutiveFailures = 0
             val maxFailures = 3 // 连续失败3次后断开连接
+            val heartbeatInterval = 1000L // 1秒心跳间隔
 
-            Timber.d("心跳线程已启动")
+            Timber.i("心跳线程已启动，间隔${heartbeatInterval}ms")
 
             while (heartbeatRunning && settingsState.isConnected) {
                 try {
-                    // 只有在连接状态下才发送心跳
+                    // 双重检查连接状态
                     if (!settingsState.isConnected || !heartbeatRunning) {
-                        Timber.d("连接已断开或心跳已停止，退出心跳线程")
+                        Timber.i("连接已断开或心跳已停止，退出心跳线程")
                         break
                     }
 
-                    val success = zmqClient.sendHeartbeat()
-                    if (!success) {
+                    // 首先进行本地连接检查
+                    if (!zmqClient.isConnected()) {
                         consecutiveFailures++
-                        Timber.w("心跳发送失败 ($consecutiveFailures/$maxFailures)")
-
+                        Timber.w("本地连接检查失败 ($consecutiveFailures/$maxFailures)")
+                        
                         if (consecutiveFailures >= maxFailures) {
-                            Timber.e("心跳连续失败，断开连接")
-                            // 使用协程更新UI状态
+                            Timber.e("本地连接检查连续失败，断开连接")
                             controllerScope.launch {
                                 settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
                             }
                             break
                         }
                     } else {
-                        consecutiveFailures = 0 // 重置失败计数
-                        Timber.d("心跳发送成功")
+                        // 发送心跳
+                        val success = zmqClient.sendHeartbeat()
+                        if (!success) {
+                            consecutiveFailures++
+                            Timber.w("心跳发送失败 ($consecutiveFailures/$maxFailures)")
+
+                            if (consecutiveFailures >= maxFailures) {
+                                Timber.e("心跳连续失败，断开连接")
+                                controllerScope.launch {
+                                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                                }
+                                break
+                            }
+                        } else {
+                            consecutiveFailures = 0 // 重置失败计数
+                            Timber.v("心跳发送成功")
+                        }
                     }
 
-                    Thread.sleep(1000) // 1秒心跳间隔
+                    Thread.sleep(heartbeatInterval)
                 } catch (e: InterruptedException) {
-                    Timber.d("心跳线程被中断")
+                    Timber.i("心跳线程被中断")
                     break
                 } catch (e: Exception) {
                     consecutiveFailures++
                     Timber.e(e, "心跳异常 ($consecutiveFailures/$maxFailures)")
 
                     if (consecutiveFailures >= maxFailures) {
-                        // 使用协程更新UI状态
+                        Timber.e("心跳连续异常，断开连接")
                         controllerScope.launch {
                             settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
                         }
@@ -352,13 +438,13 @@ class RobotController(private val context: Context) {
                     }
 
                     try {
-                        Thread.sleep(1000)
+                        Thread.sleep(heartbeatInterval)
                     } catch (ie: InterruptedException) {
                         break
                     }
                 }
             }
-            Timber.d("心跳线程已结束")
+            Timber.i("心跳线程已结束")
         }, "HeartbeatThread")
 
         heartbeatThread?.start()
@@ -448,8 +534,27 @@ class RobotController(private val context: Context) {
                     if (controlMode != null) {
                         // 只有在状态真正改变时才更新，这样可以清除changing状态
                         if (controlMode != settingsState.robotMode || settingsState.isRobotModeChanging) {
+                            val previousMode = settingsState.robotMode
                             settingsState.updateMode(controlMode)
                             Timber.v("控制模式更新: ${controlMode.displayName}")
+                            
+                            // 检查模式是否发生变化，相应地启动或停止速度发送
+                            if (previousMode != controlMode) {
+                                when (controlMode) {
+                                    RobotMode.MANUAL -> {
+                                        if (continuousSpeedJob?.isActive != true) {
+                                            startContinuousSpeedSending()
+                                            Timber.i("模式切换到手动，启动持续速度发送")
+                                        }
+                                    }
+                                    RobotMode.AUTO -> {
+                                        if (continuousSpeedJob?.isActive == true) {
+                                            stopContinuousSpeedSending()
+                                            Timber.i("模式切换到自动，停止持续速度发送")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else {
                         Timber.w("获取控制模式失败，可能连接已断开")
@@ -504,31 +609,57 @@ class RobotController(private val context: Context) {
     private fun startHealthCheck() {
         healthCheckJob?.cancel()
         healthCheckJob = controllerScope.launch {
+            val healthCheckInterval = 30000L // 30秒检查一次
+            var consecutiveFailures = 0
+            val maxHealthCheckFailures = 2 // 健康检查连续失败2次后断开
+            
+            Timber.i("健康检查任务已启动，间隔${healthCheckInterval}ms")
+            
             while (isActive && settingsState.isConnected) {
                 try {
-                    delay(30000) // 30秒检查一次
+                    delay(healthCheckInterval)
 
                     // 只有在连接状态下才进行健康检查
                     if (!settingsState.isConnected) {
-                        Timber.d("连接已断开，停止健康检查")
+                        Timber.i("连接已断开，停止健康检查")
                         break
                     }
 
+                    Timber.v("执行连接健康检查...")
                     val isHealthy = zmqClient.performHealthCheck()
+                    
                     if (!isHealthy) {
-                        Timber.w("健康检查失败，连接可能已断开")
-                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                        break
+                        consecutiveFailures++
+                        Timber.w("健康检查失败 ($consecutiveFailures/$maxHealthCheckFailures)，连接可能已断开")
+                        
+                        if (consecutiveFailures >= maxHealthCheckFailures) {
+                            Timber.e("健康检查连续失败，断开连接")
+                            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                            break
+                        }
                     } else {
-                        Timber.d("健康检查通过")
+                        consecutiveFailures = 0 // 重置失败计数
+                        Timber.v("健康检查通过")
+                        
+                        // 额外检查ZMQ客户端的内部连接状态
+                        if (!zmqClient.isConnected()) {
+                            Timber.w("ZMQ客户端内部状态显示已断开，更新连接状态")
+                            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                            break
+                        }
                     }
                 } catch (e: Exception) {
-                    Timber.e(e, "健康检查异常")
-                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                    break
+                    consecutiveFailures++
+                    Timber.e(e, "健康检查异常 ($consecutiveFailures/$maxHealthCheckFailures)")
+                    
+                    if (consecutiveFailures >= maxHealthCheckFailures) {
+                        Timber.e("健康检查连续异常，断开连接")
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                        break
+                    }
                 }
             }
-            Timber.d("健康检查任务已结束")
+            Timber.i("健康检查任务已结束")
         }
     }
 
