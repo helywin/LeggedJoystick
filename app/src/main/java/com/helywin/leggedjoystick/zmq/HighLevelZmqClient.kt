@@ -11,6 +11,8 @@ package com.helywin.leggedjoystick.zmq
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.helywin.leggedjoystick.data.RobotCtrlMode
+import com.helywin.leggedjoystick.data.RobotMode
 import org.zeromq.SocketType
 import org.zeromq.ZContext
 import org.zeromq.ZMQ
@@ -44,15 +46,15 @@ class HighLevelZmqClient(
         try {
             context = ZContext()
             socket = context?.createSocket(SocketType.DEALER)
-            
+
             // 设置接收超时（毫秒）
             socket?.receiveTimeOut = 5000 // 5秒超时
-            
+
             // 设置唯一的客户端标识
             val clientTypeStr = if (clientType == ClientType.REMOTE_CONTROLLER) "rc" else "nav"
             val identity = "${clientTypeStr}_${System.currentTimeMillis()}"
             socket?.identity = identity.toByteArray(StandardCharsets.UTF_8)
-            
+
             socket?.connect(tcpEndpoint)
             connected = true
 
@@ -108,7 +110,7 @@ class HighLevelZmqClient(
     /**
      * 设置模式（只有遥控器客户端可以调用）
      */
-    fun setMode(mode: String): Boolean {
+    fun setMode(mode: RobotMode): Boolean {
         if (clientType != ClientType.REMOTE_CONTROLLER) {
             Timber.e("[HighLevelZmqClient] 只有遥控器客户端可以设置模式")
             return false
@@ -117,7 +119,7 @@ class HighLevelZmqClient(
         val request = JsonObject().apply {
             addProperty("command", "setMode")
             add("params", JsonObject().apply {
-                addProperty("mode", mode)
+                addProperty("mode", mode.ordinal)
             })
         }
         val response = sendRequest(request)
@@ -127,12 +129,16 @@ class HighLevelZmqClient(
     /**
      * 获取当前模式
      */
-    fun getCurrentMode(): String {
+    fun getCurrentMode(): RobotMode {
         val request = JsonObject().apply {
             addProperty("command", "getCurrentMode")
         }
         val response = sendRequest(request)
-        return response?.mode ?: "auto"
+        return when (response?.mode) {
+            RobotMode.MANUAL.ordinal -> RobotMode.MANUAL
+            RobotMode.AUTO.ordinal -> RobotMode.AUTO
+            else -> RobotMode.AUTO // 默认手动模式
+        }
     }
 
     /**
@@ -171,33 +177,7 @@ class HighLevelZmqClient(
     fun getClientType(): ClientType = clientType
 
     // ========== 基础控制接口 ==========
-
-    /**
-     * 初始化机器人
-     */
-    fun initRobot(localIp: String, localPort: Int, dogIp: String = "192.168.234.1"): Boolean {
-        val request = JsonObject().apply {
-            addProperty("command", "initRobot")
-            add("params", JsonObject().apply {
-                addProperty("local_ip", localIp)
-                addProperty("local_port", localPort)
-                addProperty("dog_ip", dogIp)
-            })
-        }
-        val response = sendRequest(request)
-        return response?.success == true
-    }
-
-    /**
-     * 去初始化机器人
-     */
-    fun deinitRobot(): Boolean {
-        val request = JsonObject().apply {
-            addProperty("command", "deinitRobot")
-        }
-        val response = sendRequest(request)
-        return response?.success == true
-    }
+    // 注意：以下控制方法返回UInt值，0表示成功，非0表示错误代码
 
     /**
      * 检查连接状态
@@ -212,6 +192,7 @@ class HighLevelZmqClient(
 
     /**
      * 站立
+     * @return 0表示成功，非0表示错误代码
      */
     fun standUp(): UInt {
         val request = JsonObject().apply {
@@ -223,6 +204,7 @@ class HighLevelZmqClient(
 
     /**
      * 趴下
+     * @return 0表示成功，非0表示错误代码
      */
     fun lieDown(): UInt {
         val request = JsonObject().apply {
@@ -234,6 +216,7 @@ class HighLevelZmqClient(
 
     /**
      * 被动模式
+     * @return 0表示成功，非0表示错误代码
      */
     fun passive(): UInt {
         val request = JsonObject().apply {
@@ -245,6 +228,7 @@ class HighLevelZmqClient(
 
     /**
      * 移动控制
+     * @return 0表示成功，非0表示错误代码
      */
     fun move(vx: Float, vy: Float, yawRate: Float): UInt {
         val request = JsonObject().apply {
@@ -261,6 +245,7 @@ class HighLevelZmqClient(
 
     /**
      * 跳跃
+     * @return 0表示成功，非0表示错误代码
      */
     fun jump(): UInt {
         val request = JsonObject().apply {
@@ -272,6 +257,7 @@ class HighLevelZmqClient(
 
     /**
      * 前空翻
+     * @return 0表示成功，非0表示错误代码
      */
     fun frontJump(): UInt {
         val request = JsonObject().apply {
@@ -283,6 +269,7 @@ class HighLevelZmqClient(
 
     /**
      * 后空翻
+     * @return 0表示成功，非0表示错误代码
      */
     fun backflip(): UInt {
         val request = JsonObject().apply {
@@ -294,6 +281,7 @@ class HighLevelZmqClient(
 
     /**
      * 姿态控制
+     * @return 0表示成功，非0表示错误代码
      */
     fun attitudeControl(rollVel: Float, pitchVel: Float, yawVel: Float, heightVel: Float): UInt {
         val request = JsonObject().apply {
@@ -310,9 +298,11 @@ class HighLevelZmqClient(
     }
 
     // ========== 高级动作接口 ==========
+    // 注意：以下高级动作方法返回UInt值，0表示成功，非0表示错误代码
 
     /**
      * 握手
+     * @return 0表示成功，非0表示错误代码
      */
     fun shakeHand(): UInt {
         val request = JsonObject().apply {
@@ -324,6 +314,7 @@ class HighLevelZmqClient(
 
     /**
      * 双腿站立
+     * @return 0表示成功，非0表示错误代码
      */
     fun twoLegStand(vx: Float = 0.0f, yawRate: Float = 0.0f): UInt {
         val request = JsonObject().apply {
@@ -532,12 +523,17 @@ class HighLevelZmqClient(
     /**
      * 获取当前控制模式
      */
-    fun getCurrentCtrlmode(): UInt {
+    fun getCurrentCtrlmode(): RobotCtrlMode {
         val request = JsonObject().apply {
             addProperty("command", "getCurrentCtrlmode")
         }
         val response = sendRequest(request)
-        return response?.value?.toUInt() ?: 0u
+        return when (response?.value?.toUInt()) {
+            0U, 10U -> RobotCtrlMode.PASSIVE
+            18U -> RobotCtrlMode.STAND
+            51U -> RobotCtrlMode.LIE_DOWN
+            else -> RobotCtrlMode.STAND // 默认站立模式
+        }
     }
 
     /**

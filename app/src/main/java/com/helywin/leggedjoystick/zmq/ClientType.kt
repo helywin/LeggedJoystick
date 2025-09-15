@@ -13,6 +13,6 @@ package com.helywin.leggedjoystick.zmq
  * 客户端类型
  */
 enum class ClientType(val value: String) {
+    NAVIGATION("navigation"),                // 导航程序
     REMOTE_CONTROLLER("remote_controller"),  // 遥控器
-    NAVIGATION("navigation")                 // 导航程序
 }

@@ -37,18 +37,18 @@ data class AppSettings(
 /**
  * 机器人模式枚举
  */
-enum class RobotMode(val displayName: String, val value: String) {
-    PASSIVE("阻尼模式", "passive"),
-    LIE_DOWN("趴下模式", "lieDown"),
-    STAND("站立模式", "stand")
+enum class RobotCtrlMode(val displayName: String) {
+    PASSIVE("阻尼模式"),
+    STAND("站立模式"),
+    LIE_DOWN("趴下模式")
 }
 
 /**
  * 控制模式枚举
  */
-enum class ControlMode(val displayName: String, val value: String) {
-    MANUAL("手动模式", "remote_controller"),  // 遥控器模式
-    AUTO("自动模式", "navigation")            // 导航模式
+enum class RobotMode(val displayName: String) {
+    MANUAL("手动模式"),  // 遥控器模式
+    AUTO("自动模式")            // 导航模式
 }
 
 /**
@@ -69,10 +69,10 @@ class SettingsState {
     var settings by mutableStateOf(AppSettings())
         private set
     
-    var robotMode by mutableStateOf(RobotMode.STAND)
+    var robotCtrlMode by mutableStateOf(RobotCtrlMode.STAND)
         private set
         
-    var controlMode by mutableStateOf(ControlMode.MANUAL)
+    var robotMode by mutableStateOf(RobotMode.MANUAL)
         private set
         
     var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
@@ -81,6 +81,9 @@ class SettingsState {
     var batteryLevel by mutableStateOf(80)
         private set
         
+    var isRobotCtrlModeChanging by mutableStateOf(false)
+        private set
+
     var isRobotModeChanging by mutableStateOf(false)
         private set
     
@@ -89,19 +92,20 @@ class SettingsState {
         Timber.d("Settings updated: $newSettings")
     }
     
-    fun updateRobotMode(mode: RobotMode) {
-        robotMode = mode
-        isRobotModeChanging = false
+    fun updateRobotCtrlMode(mode: RobotCtrlMode) {
+        robotCtrlMode = mode
+        isRobotCtrlModeChanging = false
         Timber.d("Robot mode updated: ${mode.displayName}")
     }
     
-    fun updateControlMode(mode: ControlMode) {
-        controlMode = mode
+    fun updateMode(mode: RobotMode) {
+        robotMode = mode
+        isRobotModeChanging = false
         Timber.d("Control mode updated: ${mode.displayName}")
     }
     
     fun updateRobotModeChangingState(changing: Boolean) {
-        isRobotModeChanging = changing
+        isRobotCtrlModeChanging = changing
         Timber.d("Robot mode changing: $changing")
     }
     

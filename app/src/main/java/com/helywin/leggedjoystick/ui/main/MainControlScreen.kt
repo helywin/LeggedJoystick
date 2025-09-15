@@ -30,11 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.RobotController
 import com.helywin.leggedjoystick.data.ConnectionState
-import com.helywin.leggedjoystick.data.ControlMode
 import com.helywin.leggedjoystick.data.RobotMode
+import com.helywin.leggedjoystick.data.RobotCtrlMode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.joystick.*
-import timber.log.Timber
 
 /**
  * 主控制界面
@@ -46,12 +45,12 @@ fun MainControlScreen(
     onSettingsClick: () -> Unit
 ) {
     val settingsState = robotController.settingsState
-    val currentMode = settingsState.robotMode
-    val controlMode = settingsState.controlMode
+    val currentMode = settingsState.robotCtrlMode
+    val controlMode = settingsState.robotMode
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val isRageModeEnabled = settingsState.settings.isRageModeEnabled
-    val isRobotModeChanging = settingsState.isRobotModeChanging
+    val isRobotModeChanging = settingsState.isRobotCtrlModeChanging
 
     // 连接状态对话框
     ConnectionDialog(
@@ -88,7 +87,7 @@ fun MainControlScreen(
                 }
             },
             onControlModeClick = { mode ->
-                robotController.setControlMode(mode)
+                robotController.setMode(mode)
             },
             onSettingsClick = onSettingsClick
         )
@@ -101,7 +100,7 @@ fun MainControlScreen(
             isRobotModeChanging = isRobotModeChanging,
             isConnected = connectionState == ConnectionState.CONNECTED,
             onModeSelected = { mode ->
-                robotController.setRobotMode(mode)
+                robotController.setRobotCtrlMode(mode)
             }
         )
 
@@ -167,10 +166,10 @@ fun MainControlScreen(
 private fun TopStatusBar(
     batteryLevel: Int,
     connectionState: ConnectionState,
-    controlMode: ControlMode,
+    controlMode: RobotMode,
     isRageModeEnabled: Boolean,
     onConnectClick: () -> Unit,
-    onControlModeClick: (ControlMode) -> Unit,
+    onControlModeClick: (RobotMode) -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -268,22 +267,22 @@ private fun BatteryIndicator(batteryLevel: Int) {
  */
 @Composable
 private fun ControlModeToggle(
-    currentMode: ControlMode,
+    currentMode: RobotMode,
     isConnected: Boolean,
-    onModeClick: (ControlMode) -> Unit
+    onModeClick: (RobotMode) -> Unit
 ) {
     Button(
         onClick = {
-            val newMode = if (currentMode == ControlMode.MANUAL) {
-                ControlMode.AUTO
+            val newMode = if (currentMode == RobotMode.MANUAL) {
+                RobotMode.AUTO
             } else {
-                ControlMode.MANUAL
+                RobotMode.MANUAL
             }
             onModeClick(newMode)
         },
         enabled = isConnected,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (currentMode == ControlMode.AUTO) {
+            containerColor = if (currentMode == RobotMode.AUTO) {
                 MaterialTheme.colorScheme.secondary
             } else {
                 MaterialTheme.colorScheme.primary
@@ -302,16 +301,16 @@ private fun ControlModeToggle(
  */
 @Composable
 private fun ModeSelectionRow(
-    currentMode: RobotMode,
+    currentMode: RobotCtrlMode,
     isRobotModeChanging: Boolean,
     isConnected: Boolean,
-    onModeSelected: (RobotMode) -> Unit
+    onModeSelected: (RobotCtrlMode) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        RobotMode.values().forEach { mode ->
+        RobotCtrlMode.entries.forEach { mode ->
             ModeButton(
                 mode = mode,
                 isSelected = currentMode == mode,
@@ -328,7 +327,7 @@ private fun ModeSelectionRow(
  */
 @Composable
 private fun ModeButton(
-    mode: RobotMode,
+    mode: RobotCtrlMode,
     isSelected: Boolean,
     isEnabled: Boolean,
     isChanging: Boolean,

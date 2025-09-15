@@ -28,6 +28,6 @@ data class ZmqResponse(
     val result: Int? = null,
     val value: Int? = null,
     val values: List<Float>? = null,
-    val mode: String? = null,
+    val mode: Int? = null,
     val connected: Boolean? = null
 )
