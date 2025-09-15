@@ -26,7 +26,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.RobotController
+import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.RobotMode
+import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.joystick.*
 import timber.log.Timber
 
@@ -41,9 +43,23 @@ fun MainControlScreen(
 ) {
     val settingsState = robotController.settingsState
     val currentMode = settingsState.robotMode
-    val isConnected = settingsState.isConnected
+    val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val isRageModeEnabled = settingsState.settings.isRageModeEnabled
+    
+    // 连接状态对话框
+    ConnectionDialog(
+        connectionState = connectionState,
+        onDismiss = {
+            // 重置连接状态为断开
+            if (connectionState != ConnectionState.CONNECTING) {
+                robotController.settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+            }
+        },
+        onCancel = {
+            robotController.cancelConnection()
+        }
+    )
     
     Column(
         modifier = Modifier
@@ -53,13 +69,15 @@ fun MainControlScreen(
         // 顶部状态栏
         TopStatusBar(
             batteryLevel = batteryLevel,
-            isConnected = isConnected,
+            connectionState = connectionState,
             isRageModeEnabled = isRageModeEnabled,
             onConnectClick = {
-                if (isConnected) {
+                if (connectionState == ConnectionState.CONNECTED) {
                     robotController.disconnect()
+                } else if (connectionState == ConnectionState.CONNECTING) {
+                    robotController.cancelConnection()
                 } else {
-                    robotController.connect(settingsState.settings)
+                    robotController.connectAsync(settingsState.settings)
                 }
             },
             onSettingsClick = onSettingsClick
@@ -147,7 +165,7 @@ fun MainControlScreen(
 @Composable
 private fun TopStatusBar(
     batteryLevel: Int,
-    isConnected: Boolean,
+    connectionState: ConnectionState,
     isRageModeEnabled: Boolean,
     onConnectClick: () -> Unit,
     onSettingsClick: () -> Unit
@@ -169,13 +187,23 @@ private fun TopStatusBar(
             Button(
                 onClick = onConnectClick,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isConnected) 
-                        MaterialTheme.colorScheme.error 
-                    else 
-                        MaterialTheme.colorScheme.primary
-                )
+                    containerColor = when (connectionState) {
+                        ConnectionState.CONNECTED -> MaterialTheme.colorScheme.error
+                        ConnectionState.CONNECTING -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                ),
+                enabled = connectionState != ConnectionState.CONNECTING
             ) {
-                Text(if (isConnected) "断开" else "连接")
+                Text(
+                    text = when (connectionState) {
+                        ConnectionState.CONNECTED -> "断开"
+                        ConnectionState.CONNECTING -> "连接中..."
+                        ConnectionState.CONNECTION_FAILED -> "重试"
+                        ConnectionState.CONNECTION_TIMEOUT -> "重试"
+                        else -> "连接"
+                    }
+                )
             }
             
             // 设置按钮

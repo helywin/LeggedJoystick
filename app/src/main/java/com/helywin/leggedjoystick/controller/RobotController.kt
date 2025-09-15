@@ -9,8 +9,8 @@
 
 package com.helywin.leggedjoystick.controller
 
-import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
+import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.RobotMode
 import com.helywin.leggedjoystick.data.SettingsState
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
@@ -29,6 +29,7 @@ class RobotController {
     private var heartbeatJob: Job? = null
     private var batteryUpdateJob: Job? = null
     private var zeroSpeedJob: Job? = null
+    private var connectionJob: Job? = null
     
     val settingsState = SettingsState()
     
@@ -37,39 +38,78 @@ class RobotController {
     private var isCurrentlyMoving = false
     
     /**
-     * 连接到机器人
+     * 异步连接到机器人，支持超时和中断
      */
-    fun connect(settings: AppSettings): Boolean {
-        disconnect() // 先断开现有连接
+    fun connectAsync(settings: AppSettings) {
+        // 如果已经在连接中，先取消
+        cancelConnection()
         
-        val endpoint = "tcp://${settings.zmqIp}:${settings.zmqPort}"
-        zmqClient = HighLevelZmqClient(ClientType.REMOTE_CONTROLLER, endpoint)
+        settingsState.updateConnectionState(ConnectionState.CONNECTING)
         
-        val success = zmqClient?.connect() ?: false
-        settingsState.updateConnectionStatus(success)
-        
-        if (success) {
-            startHeartbeat()
-            startBatteryUpdate()
-            Timber.i("成功连接到机器人: $endpoint")
-        } else {
-            Timber.e("连接机器人失败: $endpoint")
+        connectionJob = controllerScope.launch {
+            try {
+                val endpoint = "tcp://${settings.zmqIp}:${settings.zmqPort}"
+                Timber.i("开始连接到机器人: $endpoint")
+                
+                // 使用withTimeout来设置连接超时
+                val success = withTimeout(10000L) { // 10秒超时
+                    val client = HighLevelZmqClient(ClientType.REMOTE_CONTROLLER, endpoint)
+                    val connected = client.connect()
+                    if (connected) {
+                        zmqClient = client
+                        true
+                    } else {
+                        false
+                    }
+                }
+                
+                if (success) {
+                    settingsState.updateConnectionState(ConnectionState.CONNECTED)
+                    startHeartbeat()
+                    startBatteryUpdate()
+                    Timber.i("成功连接到机器人: $endpoint")
+                } else {
+                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                    Timber.e("连接机器人失败: $endpoint")
+                }
+                
+            } catch (e: TimeoutCancellationException) {
+                settingsState.updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
+                Timber.e("连接机器人超时")
+            } catch (e: CancellationException) {
+                settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+                Timber.i("连接已被用户取消")
+            } catch (e: Exception) {
+                settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                Timber.e(e, "连接机器人异常")
+            }
         }
-        
-        return success
+    }
+    
+    /**
+     * 取消正在进行的连接
+     */
+    fun cancelConnection() {
+        connectionJob?.cancel()
+        connectionJob = null
+        if (settingsState.connectionState == ConnectionState.CONNECTING) {
+            settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+            Timber.i("连接已取消")
+        }
     }
     
     /**
      * 断开连接
      */
     fun disconnect() {
+        cancelConnection() // 取消正在进行的连接
         stopHeartbeat()
         stopBatteryUpdate()
         stopZeroSpeedSending()
         
         zmqClient?.disconnect()
         zmqClient = null
-        settingsState.updateConnectionStatus(false)
+        settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         Timber.i("已断开机器人连接")
     }
     
@@ -87,8 +127,8 @@ class RobotController {
         controllerScope.launch {
             try {
                 when (mode) {
-                    RobotMode.PRONE -> zmqClient?.passive()
-                    RobotMode.CROUCH -> zmqClient?.lieDown() 
+                    RobotMode.PASSIVE -> zmqClient?.passive()
+                    RobotMode.LIE_DOWN -> zmqClient?.lieDown()
                     RobotMode.STAND -> zmqClient?.standUp()
                 }
                 settingsState.updateRobotMode(mode)
@@ -162,13 +202,13 @@ class RobotController {
                     val success = zmqClient?.sendHeartbeat() ?: false
                     if (!success) {
                         Timber.w("心跳发送失败")
-                        settingsState.updateConnectionStatus(false)
+                        settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
                         break
                     }
                     delay(5000) // 5秒心跳间隔
                 } catch (e: Exception) {
                     Timber.e(e, "心跳异常")
-                    settingsState.updateConnectionStatus(false)
+                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
                     break
                 }
             }

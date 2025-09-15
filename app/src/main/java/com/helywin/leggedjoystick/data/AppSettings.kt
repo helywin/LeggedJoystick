@@ -25,9 +25,20 @@ data class AppSettings(
  * 机器人模式枚举
  */
 enum class RobotMode(val displayName: String, val value: String) {
-    PRONE("阻尼模式", "passive"),
-    CROUCH("趴下模式", "lieDown"),
+    PASSIVE("阻尼模式", "passive"),
+    LIE_DOWN("趴下模式", "lieDown"),
     STAND("站立模式", "stand")
+}
+
+/**
+ * 连接状态枚举
+ */
+enum class ConnectionState(val displayName: String) {
+    DISCONNECTED("已断开"),
+    CONNECTING("连接中..."),
+    CONNECTED("已连接"),
+    CONNECTION_FAILED("连接失败"),
+    CONNECTION_TIMEOUT("连接超时")
 }
 
 /**
@@ -40,7 +51,7 @@ class SettingsState {
     var robotMode by mutableStateOf(RobotMode.STAND)
         private set
         
-    var isConnected by mutableStateOf(false)
+    var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
         private set
         
     var batteryLevel by mutableStateOf(80)
@@ -57,9 +68,17 @@ class SettingsState {
     }
     
     fun updateConnectionStatus(connected: Boolean) {
-        isConnected = connected
-        Timber.d("Connection status updated: $connected")
+        connectionState = if (connected) ConnectionState.CONNECTED else ConnectionState.DISCONNECTED
+        Timber.d("Connection status updated: ${connectionState.displayName}")
     }
+    
+    fun updateConnectionState(state: ConnectionState) {
+        connectionState = state
+        Timber.d("Connection state updated: ${state.displayName}")
+    }
+    
+    val isConnected: Boolean
+        get() = connectionState == ConnectionState.CONNECTED
     
     fun updateBatteryLevel(level: Int) {
         batteryLevel = level.coerceIn(0, 100)

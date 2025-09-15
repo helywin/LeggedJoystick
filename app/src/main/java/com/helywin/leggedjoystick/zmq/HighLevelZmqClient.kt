@@ -45,6 +45,9 @@ class HighLevelZmqClient(
             context = ZContext()
             socket = context?.createSocket(SocketType.DEALER)
             
+            // 设置接收超时（毫秒）
+            socket?.receiveTimeOut = 5000 // 5秒超时
+            
             // 设置唯一的客户端标识
             val clientTypeStr = if (clientType == ClientType.REMOTE_CONTROLLER) "rc" else "nav"
             val identity = "${clientTypeStr}_${System.currentTimeMillis()}"
