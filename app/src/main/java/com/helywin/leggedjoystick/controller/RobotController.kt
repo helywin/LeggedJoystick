@@ -17,7 +17,7 @@ import com.helywin.leggedjoystick.data.RobotCtrlMode
 import com.helywin.leggedjoystick.data.SettingsState
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
-import com.helywin.leggedjoystick.zmq.HighLevelZmqClient
+import com.helywin.leggedjoystick.zmq.LeggedRobotZmqClient
 import com.helywin.leggedjoystick.zmq.ClientType
 import kotlinx.coroutines.*
 import timber.log.Timber
@@ -27,7 +27,7 @@ import kotlin.math.abs
  * 机器人控制器
  */
 class RobotController(private val context: Context) {
-    private var zmqClient: HighLevelZmqClient = HighLevelZmqClient()
+    private var zmqClient: LeggedRobotZmqClient = LeggedRobotZmqClient()
     private var controllerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var heartbeatJob: Job? = null
     private var connectionJob: Job? = null
@@ -586,6 +586,7 @@ class RobotController(private val context: Context) {
      */
     fun cleanup() {
         disconnect()
+        zmqClient.close()
         controllerScope.cancel()
     }
 

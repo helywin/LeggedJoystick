@@ -29,18 +29,18 @@ enum class MessageType {
 // 模式枚举
 @Serializable
 enum class Mode {
-    @ProtoNumber(0) MODE_UNSPECIFIED,
+    @ProtoNumber(0) MODE_AUTO,
     @ProtoNumber(1) MODE_MANUAL,
-    @ProtoNumber(2) MODE_AUTO
+    @ProtoNumber(100) MODE_UNSPECIFIED,
 }
 
 // 控制模式枚举
 @Serializable
 enum class ControlMode {
-    @ProtoNumber(0) CONTROL_MODE_UNSPECIFIED,
-    @ProtoNumber(1) CONTROL_MODE_DAMPING,
+    @ProtoNumber(0) CONTROL_MODE_PASSIVE,
+    @ProtoNumber(1) CONTROL_MODE_STAND_UP
     @ProtoNumber(2) CONTROL_MODE_LIE_DOWN,
-    @ProtoNumber(3) CONTROL_MODE_STAND_UP
+    @ProtoNumber(100) CONTROL_MODE_UNSPECIFIED,
 }
 
 // 心跳消息体

@@ -1,7 +1,7 @@
 package com.helywin.leggedjoystick.utils
 
-import com.helywin.leggedjoystick.zmq.HighLevelZmqClient
+import com.helywin.leggedjoystick.zmq.LeggedRobotZmqClient
 
 object GlobalStates {
-//    var client : HighLevelZmqClient = HighLevelZmqClient()
+//    var client : LeggedRobotZmqClient = LeggedRobotZmqClient()
 }

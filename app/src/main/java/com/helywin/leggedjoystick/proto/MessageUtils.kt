@@ -4,6 +4,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import java.util.zip.CRC32
+import java.util.UUID
 
 object MessageUtils {
     private val protoBuf = ProtoBuf
@@ -15,6 +16,20 @@ object MessageUtils {
         val crc = CRC32()
         crc.update(data)
         return crc.value.toInt()
+    }
+
+    /**
+     * 生成设备ID
+     */
+    fun generateDeviceId(deviceType: DeviceType): String {
+        val prefix = when (deviceType) {
+            DeviceType.DEVICE_TYPE_SERVER -> "server"
+            DeviceType.DEVICE_TYPE_NAVIGATION -> "nav"
+            DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER -> "remote"
+            else -> "unknown"
+        }
+        val uuid = UUID.randomUUID().toString().substring(0, 8)
+        return "${prefix}_$uuid"
     }
 
     /**
@@ -92,5 +107,75 @@ object MessageUtils {
      */
     fun getCurrentTimestampMs(): Long {
         return System.currentTimeMillis()
+    }
+
+    /**
+     * 创建心跳消息
+     */
+    fun createHeartbeatMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        isConnected: Boolean = true
+    ): LeggedDriverMessage {
+        return createMessageWithCRC(
+            timestampMs = getCurrentTimestampMs(),
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_HEARTBEAT,
+            heartbeat = HeartbeatMessage(isConnected = isConnected)
+        )
+    }
+
+    /**
+     * 创建模式设置消息
+     */
+    fun createModeSetMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        mode: Mode
+    ): LeggedDriverMessage {
+        return createMessageWithCRC(
+            timestampMs = getCurrentTimestampMs(),
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_MODE_SET,
+            modeSet = ModeSetMessage(mode = mode)
+        )
+    }
+
+    /**
+     * 创建控制模式设置消息
+     */
+    fun createControlModeSetMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        controlMode: ControlMode
+    ): LeggedDriverMessage {
+        return createMessageWithCRC(
+            timestampMs = getCurrentTimestampMs(),
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_CONTROL_MODE_SET,
+            controlModeSet = ControlModeSetMessage(controlMode = controlMode)
+        )
+    }
+
+    /**
+     * 创建速度指令消息
+     */
+    fun createVelocityCommandMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        vx: Float,
+        vy: Float,
+        yawRate: Float
+    ): LeggedDriverMessage {
+        return createMessageWithCRC(
+            timestampMs = getCurrentTimestampMs(),
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_VELOCITY_COMMAND,
+            velocityCommand = VelocityCommandMessage(vx = vx, vy = vy, yawRate = yawRate)
+        )
     }
 }
