@@ -31,11 +31,17 @@ class RobotController(private val context: Context) {
     private var controllerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var heartbeatJob: Job? = null
     private var connectionJob: Job? = null
-    private var statusUpdateJob: Job? = null
-    private var healthCheckJob: Job? = null
     private var continuousSpeedJob: Job? = null // 持续速度发送任务
     private var heartbeatThread: Thread? = null // 心跳独立线程
     private var heartbeatRunning = false // 心跳线程运行状态
+    
+    // 速度发送线程相关
+    private var speedSendingThread: Thread? = null
+    private var speedSendingRunning = false
+    
+    // 状态控制
+    private var hasReceivedInitialMode = false // 是否已收到初始模式
+    private var controlReadyState = false // 是否准备好进行控制
 
     // 设置管理器
     private val settingsManager = SettingsManager(context)
@@ -84,15 +90,15 @@ class RobotController(private val context: Context) {
 
                     if (success) {
                         settingsState.updateConnectionState(ConnectionState.CONNECTED)
+                        
+                        // 重置状态控制标志
+                        hasReceivedInitialMode = false
+                        controlReadyState = false
+                        
                         startHeartbeat()
 
-                        // 只在手动模式下启动持续速度发送
-                        if (settingsState.robotMode == RobotMode.MANUAL) {
-                            startContinuousSpeedSending()
-                            Timber.i("手动模式：已启动持续速度发送")
-                        } else {
-                            Timber.i("非手动模式：不启动持续速度发送")
-                        }
+                        // 等待获取到初始模式后再决定是否启动速度发送
+                        Timber.i("连接成功，等待获取初始模式...")
 
                         Timber.i("成功连接到机器人: $endpoint (尝试 ${attempt + 1}/$maxRetries)")
                         return@launch // 成功连接，退出重试循环
@@ -156,6 +162,10 @@ class RobotController(private val context: Context) {
         cancelConnection() // 取消正在进行的连接
         stopHeartbeat()
         stopContinuousSpeedSending() // 停止持续速度发送
+        
+        // 重置状态控制标志
+        hasReceivedInitialMode = false
+        controlReadyState = false
 
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
@@ -201,7 +211,15 @@ class RobotController(private val context: Context) {
      * 设置控制模式
      */
     fun setMode(mode: RobotMode) {
-        if (!settingsState.isConnected) return
+        if (!settingsState.isConnected) {
+            Timber.w("未连接，无法切换模式")
+            return
+        }
+        
+        if (!controlReadyState) {
+            Timber.w("尚未准备好进行控制，无法切换模式")
+            return
+        }
 
         controllerScope.launch {
             try {
@@ -213,7 +231,7 @@ class RobotController(private val context: Context) {
                     when (mode) {
                         RobotMode.MANUAL -> {
                             // 切换到手动模式，启动持续速度发送
-                            if (continuousSpeedJob?.isActive != true) {
+                            if (!speedSendingRunning) {
                                 startContinuousSpeedSending()
                                 Timber.i("切换到手动模式，启动持续速度发送")
                             }
@@ -270,62 +288,81 @@ class RobotController(private val context: Context) {
 
     /**
      * 开始持续速度发送（20Hz）
-     * 只在手动模式下运行
+     * 只在手动模式下运行，使用独立线程
      */
     private fun startContinuousSpeedSending() {
-//        continuousSpeedJob?.cancel()
-//        continuousSpeedJob = controllerScope.launch {
-//            Timber.i("持续速度发送任务已启动")
-//            while (isActive && settingsState.isConnected) {
-//                try {
-//                    // 检查连接状态和模式
-//                    if (!settingsState.isConnected) {
-//                        Timber.d("连接已断开，停止速度发送")
-//                        break
-//                    }
-//
-//                    // 检查是否为手动模式
-//                    if (settingsState.robotMode != RobotMode.MANUAL) {
-//                        Timber.i("当前为非手动模式(${settingsState.robotMode.displayName})，停止速度发送")
-//                        break
-//                    }
-//
-//                    // 计算速度参数
-//                    val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
-//                    val vx = currentLeftJoystick.x * maxSpeed
-//                    val vy = currentLeftJoystick.y * maxSpeed
-//                    val yawRate = currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
-//
-//                    // 发送移动指令
-//                    val result = zmqClient.move(vx, vy, yawRate)
-//                    if (result != 0u) {
-//                        Timber.v("速度指令发送失败: vx=$vx, vy=$vy, yawRate=$yawRate, result=$result")
-//                    } else {
-//                        // 只有在有运动时才打印日志，避免日志过多
-//                        val isMoving = abs(vx) > 0.01f || abs(vy) > 0.01f || abs(yawRate) > 0.01f
-//                        if (isMoving) {
-//                            Timber.v("速度指令已发送: vx=$vx, vy=$vy, yawRate=$yawRate")
-//                        }
-//                    }
-//
-//                    delay(50) // 20Hz = 1000ms / 20 = 50ms
-//                } catch (e: Exception) {
-//                    Timber.e(e, "发送速度指令失败")
-//                    // 速度发送异常可能表示连接问题
-//                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-//                    break
-//                }
-//            }
-//            Timber.i("持续速度发送任务已结束")
-//        }
+        stopContinuousSpeedSending() // 先停止现有的速度发送
+
+        speedSendingRunning = true
+        speedSendingThread = Thread({
+            val speedSendInterval = 50L // 20Hz = 50ms间隔
+            var consecutiveFailures = 0
+            val maxFailures = 5 // 连续失败5次后停止
+
+            Timber.i("速度发送线程已启动，间隔${speedSendInterval}ms")
+
+            while (speedSendingRunning && settingsState.isConnected && controlReadyState) {
+                try {
+                    // 多重检查确保状态正确
+                    if (!speedSendingRunning || !settingsState.isConnected || !controlReadyState) {
+                        Timber.i("速度发送线程退出条件满足，退出线程")
+                        break
+                    }
+
+                    // 检查是否为手动模式
+                    if (settingsState.robotMode != RobotMode.MANUAL) {
+                        Timber.i("当前为非手动模式(${settingsState.robotMode.displayName})，停止速度发送")
+                        break
+                    }
+
+                    // 计算速度参数
+                    val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
+                    val vx = currentLeftJoystick.x * maxSpeed
+                    val vy = currentLeftJoystick.y * maxSpeed
+                    val yawRate = currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
+
+                    // 发送移动指令
+                    zmqClient.move(vx, vy, yawRate)
+                    Thread.sleep(speedSendInterval)
+                } catch (e: InterruptedException) {
+                    Timber.i("速度发送线程被中断")
+                    break
+                } catch (e: Exception) {
+                    consecutiveFailures++
+                    Timber.e(e, "发送速度指令异常 ($consecutiveFailures/$maxFailures)")
+                    
+                    try {
+                        Thread.sleep(speedSendInterval)
+                    } catch (ie: InterruptedException) {
+                        break
+                    }
+                }
+            }
+            Timber.i("速度发送线程已结束")
+        }, "SpeedSendingThread")
+
+        speedSendingThread?.start()
     }
 
     /**
      * 停止持续速度发送
      */
     private fun stopContinuousSpeedSending() {
+        speedSendingRunning = false
+        speedSendingThread?.interrupt()
+        speedSendingThread?.let { thread ->
+            try {
+                thread.join(1000) // 最多等待1秒
+            } catch (e: InterruptedException) {
+                Timber.w("等待速度发送线程结束被中断")
+            }
+        }
+        speedSendingThread = null
+        
+        // 取消协程任务（如果还在使用）
         continuousSpeedJob?.cancel()
         continuousSpeedJob = null
+        
         // 重置摇杆状态
         currentLeftJoystick = JoystickValue.ZERO
         currentRightJoystick = JoystickValue.ZERO
@@ -431,6 +468,21 @@ class RobotController(private val context: Context) {
 
                         val controlMode = zmqClient.getCurrentMode()
                         if (controlMode != null) {
+                            // 检查是否首次收到模式信息
+                            if (!hasReceivedInitialMode) {
+                                hasReceivedInitialMode = true
+                                controlReadyState = true
+                                Timber.i("首次收到控制模式: ${controlMode.displayName}，系统准备就绪")
+                                
+                                // 根据初始模式决定是否启动速度发送
+                                if (controlMode == RobotMode.MANUAL) {
+                                    startContinuousSpeedSending()
+                                    Timber.i("初始模式为手动，启动持续速度发送")
+                                } else {
+                                    Timber.i("初始模式为自动，不启动持续速度发送")
+                                }
+                            }
+                            
                             // 只有在状态真正改变时才更新，这样可以清除changing状态
                             if (controlMode != settingsState.robotMode || settingsState.isRobotModeChanging) {
                                 val previousMode = settingsState.robotMode
@@ -438,17 +490,17 @@ class RobotController(private val context: Context) {
                                 Timber.v("控制模式更新: ${controlMode.displayName}")
 
                                 // 检查模式是否发生变化，相应地启动或停止速度发送
-                                if (previousMode != controlMode) {
+                                if (hasReceivedInitialMode && previousMode != controlMode) {
                                     when (controlMode) {
                                         RobotMode.MANUAL -> {
-                                            if (continuousSpeedJob?.isActive != true) {
+                                            if (!speedSendingRunning) {
                                                 startContinuousSpeedSending()
                                                 Timber.i("模式切换到手动，启动持续速度发送")
                                             }
                                         }
 
                                         RobotMode.AUTO -> {
-                                            if (continuousSpeedJob?.isActive == true) {
+                                            if (speedSendingRunning) {
                                                 stopContinuousSpeedSending()
                                                 Timber.i("模式切换到自动，停止持续速度发送")
                                             }
@@ -582,4 +634,15 @@ class RobotController(private val context: Context) {
      * 检查是否连接
      */
     fun isConnected(): Boolean = settingsState.isConnected
+
+    /**
+     * 检查是否准备好进行控制
+     * 只有连接成功且已获取到初始模式后才返回true
+     */
+    fun isReadyForControl(): Boolean = isConnected() && controlReadyState
+
+    /**
+     * 检查模式切换按钮是否应该启用
+     */
+    fun isModeControlEnabled(): Boolean = isReadyForControl()
 }

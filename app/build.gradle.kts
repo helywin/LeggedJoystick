@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.jeromq)
     implementation(libs.timber)
     implementation(libs.gson)
+    implementation(libs.kotlinx.serialization.protobuf)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

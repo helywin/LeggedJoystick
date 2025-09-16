@@ -47,8 +47,8 @@ enum class RobotCtrlMode(val displayName: String) {
  * 控制模式枚举
  */
 enum class RobotMode(val displayName: String) {
-    MANUAL("手动模式"),  // 遥控器模式
-    AUTO("自动模式")            // 导航模式
+    AUTO("自动模式"),            // 导航模式
+    MANUAL("手动模式"),          // 遥控器模式
 }
 
 /**
