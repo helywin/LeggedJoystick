@@ -1,21 +1,67 @@
 package com.helywin.leggedjoystick.proto
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
-import java.util.zip.CRC32
 import java.util.UUID
 
 object MessageUtils {
+    @OptIn(ExperimentalSerializationApi::class)
     private val protoBuf = ProtoBuf
 
     /**
-     * 计算CRC32校验码
+     * CRC32工具类，实现与C++代码一致的CRC32算法
+     */
+    private object CRC32Utils {
+        private val crcTable = IntArray(256)
+        private var tableComputed = false
+
+        private fun computeTable() {
+            if (tableComputed) return
+
+            for (i in 0 until 256) {
+                var crc = i.toLong() and 0xFFFFFFFFL
+                for (j in 0 until 8) {
+                    if ((crc and 1L) != 0L) {
+                        crc = (crc ushr 1) xor 0xEDB88320L
+                    } else {
+                        crc = crc ushr 1
+                    }
+                }
+                crcTable[i] = crc.toInt()
+            }
+            tableComputed = true
+        }
+
+        fun calculate(data: ByteArray): Long {
+            computeTable()
+
+            var crc = 0xFFFFFFFFL
+            for (byte in data) {
+                val index = ((crc xor (byte.toLong() and 0xFF)) and 0xFF).toInt()
+                crc = (crcTable[index].toLong() and 0xFFFFFFFFL) xor (crc ushr 8)
+            }
+
+            return crc xor 0xFFFFFFFFL
+        }
+    }
+
+    /**
+     * 计算CRC32校验码（使用与C++一致的算法）
      */
     fun calculateCRC32(data: ByteArray): Int {
-        val crc = CRC32()
-        crc.update(data)
-        return crc.value.toInt()
+        return CRC32Utils.calculate(data).toInt()
+    }
+
+    /**
+     * 测试CRC32实现（用于调试）
+     */
+    fun testCRC32() {
+        // 测试已知数据的CRC32值
+        val testData = "Hello, World!".toByteArray()
+        val crc = calculateCRC32(testData)
+        println("CRC32 of 'Hello, World!': 0x${crc.toString(16).uppercase()}")
     }
 
     /**
@@ -35,6 +81,7 @@ object MessageUtils {
     /**
      * 创建消息并计算CRC32
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun createMessageWithCRC(
         timestampMs: Long,
         deviceType: DeviceType,
@@ -79,6 +126,7 @@ object MessageUtils {
     /**
      * 序列化消息为字节数组
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun serializeMessage(message: LeggedDriverMessage): ByteArray {
         return protoBuf.encodeToByteArray(message)
     }
@@ -86,6 +134,7 @@ object MessageUtils {
     /**
      * 反序列化字节数组为消息
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun deserializeMessage(data: ByteArray): LeggedDriverMessage {
         return protoBuf.decodeFromByteArray<LeggedDriverMessage>(data)
     }
@@ -93,6 +142,7 @@ object MessageUtils {
     /**
      * 验证消息的CRC32校验码
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun verifyMessage(message: LeggedDriverMessage): Boolean {
         // 创建不带CRC的临时消息
         val tempMessage = message.copy(crc32 = 0)

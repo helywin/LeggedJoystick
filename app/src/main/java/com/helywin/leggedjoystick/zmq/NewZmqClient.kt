@@ -98,6 +98,14 @@ class NewZmqClient : CoroutineScope {
     }
 
     /**
+     * 设置连接端点
+     */
+    fun setEndpoint(endpoint: String) {
+        this.tcpEndpoint = endpoint
+        Timber.d("[NewZmqClient] 连接端点已设置为: $endpoint")
+    }
+
+    /**
      * 连接到服务器
      */
     fun connect(): Boolean {

@@ -25,8 +25,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 初始化机器人控制器
-        controller = RobotControllerImpl()
+        // 初始化机器人控制器，传入Context
+        controller = RobotControllerImpl(this)
         
         enableEdgeToEdge()
         setContent {
@@ -85,6 +85,8 @@ fun LeggedJoystickAppPreview() {
             override fun onRightJoystickReleased() {}
             override fun toggleRageMode() {}
             override fun updateSettings(settings: AppSettings) {}
+            override fun loadSettings() {}
+            override fun saveSettings(settings: AppSettings) {}
             override fun isConnected() = false
             override fun cleanup() {}
         }

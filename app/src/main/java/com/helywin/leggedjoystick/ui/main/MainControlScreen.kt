@@ -309,15 +309,17 @@ private fun ModeSelectionRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        ControlMode.entries.forEach { mode ->
-            ModeButton(
-                mode = mode,
-                isSelected = currentCtrlMode == mode,
-                isEnabled = isConnected && !isRobotModeChanging,
-                isChanging = isRobotModeChanging && currentCtrlMode != mode,
-                onClick = { onCtrlModeSelected(mode) }
-            )
-        }
+        ControlMode.entries
+            .filter { it != ControlMode.CONTROL_MODE_UNSPECIFIED } // 过滤掉未指定模式
+            .forEach { mode ->
+                ModeButton(
+                    mode = mode,
+                    isSelected = currentCtrlMode == mode,
+                    isEnabled = isConnected && !isRobotModeChanging,
+                    isChanging = isRobotModeChanging && currentCtrlMode != mode,
+                    onClick = { onCtrlModeSelected(mode) }
+                )
+            }
     }
 }
 
@@ -437,6 +439,8 @@ fun MainControlScreenPreview() {
             override fun onRightJoystickReleased() {}
             override fun toggleRageMode() {}
             override fun updateSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
+            override fun loadSettings() {}
+            override fun saveSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
             override fun isConnected() = false
             override fun cleanup() {}
         }

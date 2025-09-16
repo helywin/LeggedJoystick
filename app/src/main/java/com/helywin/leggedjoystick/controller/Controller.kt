@@ -9,9 +9,11 @@
 
 package com.helywin.leggedjoystick.controller
 
+import android.content.Context
 import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.proto.*
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
 import com.helywin.leggedjoystick.zmq.NewZmqClient
@@ -118,13 +120,16 @@ interface Controller {
     fun updateSettings(settings: AppSettings)
     fun isConnected(): Boolean
     fun cleanup()
+    fun loadSettings()
+    fun saveSettings(settings: AppSettings)
 }
 
 /**
  * 机器人控制器实现类
  */
-class RobotControllerImpl : Controller {
+class RobotControllerImpl(private val context: Context) : Controller {
     private val zmqClient = NewZmqClient()
+    private val settingsManager = SettingsManager(context)
     
     // 协程相关
     private val supervisorJob = SupervisorJob()
@@ -150,6 +155,9 @@ class RobotControllerImpl : Controller {
         zmqClient.setConnectionLostCallback {
             handleConnectionLost()
         }
+        
+        // 启动时加载设置
+        loadSettings()
     }
     
     /**
@@ -222,6 +230,9 @@ class RobotControllerImpl : Controller {
                 // 构建连接地址
                 val endpoint = "tcp://${settingsState.settings.zmqIp}:${settingsState.settings.zmqPort}"
                 Timber.i("[Controller] 连接地址: $endpoint")
+                
+                // 设置连接地址
+                zmqClient.setEndpoint(endpoint)
                 
                 // 进行连接
                 val success = zmqClient.connect()
@@ -370,8 +381,10 @@ class RobotControllerImpl : Controller {
      */
     override fun toggleRageMode() {
         settingsState.toggleRageMode()
+        // 自动保存更新后的设置
+        saveSettings(settingsState.settings)
         val mode = if (settingsState.settings.isRageModeEnabled) "狂暴模式" else "普通模式"
-        Timber.i("[Controller] 已切换到$mode")
+        Timber.i("[Controller] 已切换到${mode}并保存设置")
     }
     
     /**
@@ -379,7 +392,34 @@ class RobotControllerImpl : Controller {
      */
     override fun updateSettings(settings: AppSettings) {
         settingsState.updateSettings(settings)
-        Timber.d("[Controller] 设置已更新")
+        // 自动保存设置
+        saveSettings(settings)
+        Timber.d("[Controller] 设置已更新并保存")
+    }
+    
+    /**
+     * 加载设置
+     */
+    override fun loadSettings() {
+        try {
+            val settings = settingsManager.loadSettings()
+            settingsState.updateSettings(settings)
+            Timber.i("[Controller] 设置已从存储中加载: $settings")
+        } catch (e: Exception) {
+            Timber.e(e, "[Controller] 加载设置失败，使用默认设置")
+        }
+    }
+    
+    /**
+     * 保存设置
+     */
+    override fun saveSettings(settings: AppSettings) {
+        try {
+            settingsManager.saveSettings(settings)
+            Timber.d("[Controller] 设置已保存到存储")
+        } catch (e: Exception) {
+            Timber.e(e, "[Controller] 保存设置失败")
+        }
     }
     
     /**
