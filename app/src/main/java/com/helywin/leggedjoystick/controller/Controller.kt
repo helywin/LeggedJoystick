@@ -450,9 +450,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         if (leftJoystickPressed || rightJoystickPressed) {
                             // 计算速度参数
                             val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
-                            val vx = currentLeftJoystick.x * maxSpeed
-                            val vy = currentLeftJoystick.y * maxSpeed
-                            val yawRate = currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
+                            val vx = -currentLeftJoystick.y * maxSpeed
+                            val vy = -currentLeftJoystick.x * maxSpeed
+                            val yawRate = -currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
                             
                             // 发送速度指令
                             zmqClient.sendVelocityCommand(vx, vy, yawRate)

@@ -255,9 +255,9 @@ private fun BatteryIndicator(batteryLevel: Int) {
         // 百分比文本（白色）
         Text(
             text = "$batteryLevel%",
-            fontSize = 12.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White
+            color = Color.Black
         )
     }
 }
