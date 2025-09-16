@@ -83,6 +83,8 @@ fun LeggedJoystickAppPreview() {
             override fun updateRightJoystick(joystickValue: com.helywin.leggedjoystick.ui.joystick.JoystickValue) {}
             override fun onLeftJoystickReleased() {}
             override fun onRightJoystickReleased() {}
+            override fun onLeftJoystickPressed() {}
+            override fun onRightJoystickPressed() {}
             override fun toggleRageMode() {}
             override fun updateSettings(settings: AppSettings) {}
             override fun loadSettings() {}

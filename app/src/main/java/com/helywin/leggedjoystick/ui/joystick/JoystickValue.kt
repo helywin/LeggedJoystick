@@ -42,7 +42,7 @@ fun interface JoystickCallback {
 }
 
 /**
- * 增强的摇杆回调接口，包含释放事件
+ * 增强的摇杆回调接口，包含按下和释放事件
  */
 interface EnhancedJoystickCallback {
     /**
@@ -50,6 +50,11 @@ interface EnhancedJoystickCallback {
      * @param value 当前摇杆值
      */
     fun onValueChanged(value: JoystickValue)
+    
+    /**
+     * 当摇杆被按下时调用
+     */
+    fun onPressed() {}
     
     /**
      * 当摇杆释放时调用

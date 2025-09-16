@@ -10,6 +10,10 @@
 package com.helywin.leggedjoystick.controller
 
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
@@ -117,6 +121,8 @@ interface Controller {
     fun updateRightJoystick(joystickValue: JoystickValue)
     fun onLeftJoystickReleased()
     fun onRightJoystickReleased()
+    fun onLeftJoystickPressed()
+    fun onRightJoystickPressed()
     fun toggleRageMode()
     fun updateSettings(settings: AppSettings)
     fun isConnected(): Boolean
@@ -129,8 +135,27 @@ interface Controller {
  * 机器人控制器实现类
  */
 class RobotControllerImpl(private val context: Context) : Controller {
+    companion object {
+        // 震动反馈相关常量
+        private const val JOYSTICK_PRESS_VIBRATION_MS = 100L    // 按下震动时长
+        private const val JOYSTICK_RELEASE_VIBRATION_MS = 80L   // 释放震动时长
+        private const val VIBRATION_AMPLITUDE_PRESS = 180       // 按下震动强度
+        private const val VIBRATION_AMPLITUDE_RELEASE = 150     // 释放震动强度
+    }
+    
     private val zmqClient = NewZmqClient()
     private val settingsManager = SettingsManager(context)
+    
+    // 震动管理器
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            vibratorManager?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
     
     // 协程相关
     private val supervisorJob = SupervisorJob()
@@ -367,7 +392,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun onLeftJoystickReleased() {
         currentLeftJoystick = JoystickValue.ZERO
-        Timber.d("[Controller] 左摇杆已释放")
+        triggerVibration(JOYSTICK_RELEASE_VIBRATION_MS, VIBRATION_AMPLITUDE_RELEASE)
+        Timber.d("[Controller] 左摇杆已释放，触发震动反馈")
     }
     
     /**
@@ -375,7 +401,24 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun onRightJoystickReleased() {
         currentRightJoystick = JoystickValue.ZERO
-        Timber.d("[Controller] 右摇杆已释放")
+        triggerVibration(JOYSTICK_RELEASE_VIBRATION_MS, VIBRATION_AMPLITUDE_RELEASE)
+        Timber.d("[Controller] 右摇杆已释放，触发震动反馈")
+    }
+
+    /**
+     * 左摇杆按下回调
+     */
+    override fun onLeftJoystickPressed() {
+        triggerVibration(JOYSTICK_PRESS_VIBRATION_MS, VIBRATION_AMPLITUDE_PRESS)
+        Timber.d("[Controller] 左摇杆已按下，触发震动反馈")
+    }
+
+    /**
+     * 右摇杆按下回调
+     */
+    override fun onRightJoystickPressed() {
+        triggerVibration(JOYSTICK_PRESS_VIBRATION_MS, VIBRATION_AMPLITUDE_PRESS)
+        Timber.d("[Controller] 右摇杆已按下，触发震动反馈")
     }
     
     /**
@@ -494,6 +537,33 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun cleanup() {
         disconnect()
         supervisorJob.cancel()
+    }
+
+    /**
+     * 执行震动反馈
+     * @param durationMs 震动持续时间（毫秒）
+     * @param amplitude 震动强度（0-255）
+     */
+    private fun triggerVibration(durationMs: Long, amplitude: Int) {
+        try {
+            val currentVibrator = vibrator
+            if (currentVibrator?.hasVibrator() == true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // Android 8.0+ 使用VibrationEffect
+                    val effect = VibrationEffect.createOneShot(durationMs, amplitude)
+                    currentVibrator.vibrate(effect)
+                } else {
+                    // 兼容旧版本
+                    @Suppress("DEPRECATION")
+                    currentVibrator.vibrate(durationMs)
+                }
+                Timber.v("[Controller] 执行震动: ${durationMs}ms, 强度: $amplitude")
+            } else {
+                Timber.d("[Controller] 设备不支持震动或震动器未初始化")
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "[Controller] 触发震动失败")
+        }
     }
 }
 

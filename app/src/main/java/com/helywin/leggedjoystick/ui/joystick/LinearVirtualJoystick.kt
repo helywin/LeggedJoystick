@@ -3,6 +3,8 @@ package com.helywin.leggedjoystick.ui.joystick
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -15,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
@@ -84,33 +88,43 @@ fun LinearVirtualJoystick(
                 .fillMaxSize()
                 .onSizeChanged { canvasSize = it }
                 .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            isDragging = true
-                            val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
-                            val maxRange = (canvasSize.width / 2f) - halfKnobSize
-                            val x = ((offset.x - center.x) / maxRange * maxVelocity)
-                                .coerceIn(-maxVelocity, maxVelocity)
-                            currentValue = JoystickValue(x, 0f)
-                            Timber.d("LinearJoystick drag start: $currentValue")
-                        },
-                        onDrag = { change, _ ->
-                            // 使用触摸的绝对位置而不是拖动偏移量
-                            val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
-                            val maxRange = (canvasSize.width / 2f) - halfKnobSize
-                            val touchPosition = change.position
-                            val x = ((touchPosition.x - center.x) / maxRange * maxVelocity)
-                                .coerceIn(-maxVelocity, maxVelocity)
-                            currentValue = JoystickValue(x, 0f)
-                        },
-                        onDragEnd = {
-                            isDragging = false
-                            currentValue = JoystickValue.ZERO
-                            // 触发释放回调
-                            enhancedCallback?.onReleased()
-                            Timber.d("LinearJoystick drag end: $currentValue")
-                        }
-                    )
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        
+                        // 按下时立即触发
+                        isDragging = true
+                        val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
+                        val maxRange = (canvasSize.width / 2f) - halfKnobSize
+                        
+                        // 计算初始位置
+                        val x = ((down.position.x - center.x) / maxRange * maxVelocity)
+                            .coerceIn(-maxVelocity, maxVelocity)
+                        currentValue = JoystickValue(x, 0f)
+                        
+                        // 立即触发按下回调
+                        enhancedCallback?.onPressed()
+                        Timber.d("LinearJoystick pressed: $currentValue")
+                        
+                        // 处理拖动
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            
+                            if (change.pressed) {
+                                // 更新拖动位置
+                                val newX = ((change.position.x - center.x) / maxRange * maxVelocity)
+                                    .coerceIn(-maxVelocity, maxVelocity)
+                                currentValue = JoystickValue(newX, 0f)
+                                change.consume()
+                            }
+                        } while (event.changes.any { it.pressed })
+                        
+                        // 释放时触发
+                        isDragging = false
+                        currentValue = JoystickValue.ZERO
+                        enhancedCallback?.onReleased()
+                        Timber.d("LinearJoystick released: $currentValue")
+                    }
                 }
         ) {
             drawLinearJoystick(

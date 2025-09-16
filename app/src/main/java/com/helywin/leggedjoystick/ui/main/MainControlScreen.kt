@@ -126,6 +126,10 @@ fun MainControlScreen(
                         controller.updateLeftJoystick(value)
                     }
 
+                    override fun onPressed() {
+                        controller.onLeftJoystickPressed()
+                    }
+
                     override fun onReleased() {
                         controller.onLeftJoystickReleased()
                     }
@@ -148,6 +152,10 @@ fun MainControlScreen(
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
                         controller.updateRightJoystick(value)
+                    }
+
+                    override fun onPressed() {
+                        controller.onRightJoystickPressed()
                     }
 
                     override fun onReleased() {
@@ -438,6 +446,8 @@ fun MainControlScreenPreview() {
             override fun updateRightJoystick(joystickValue: JoystickValue) {}
             override fun onLeftJoystickReleased() {}
             override fun onRightJoystickReleased() {}
+            override fun onLeftJoystickPressed() {}
+            override fun onRightJoystickPressed() {}
             override fun toggleRageMode() {}
             override fun updateSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
             override fun loadSettings() {}

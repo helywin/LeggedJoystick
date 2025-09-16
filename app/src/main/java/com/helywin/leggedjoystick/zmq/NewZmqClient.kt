@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.getValue
 
 /**
  * 消息回调函数类型
@@ -36,7 +37,11 @@ typealias ConnectionLostCallback = () -> Unit
  * 新的ZMQ客户端实现
  * 使用ExecutorService管理线程池，提供更稳定的连接管理
  */
-class NewZmqClient {
+class NewZmqClient (
+    val deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+    var tcpEndpoint: String = DEFAULT_TCP_ENDPOINT,
+    val heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
+){
     companion object {
         private const val DEFAULT_TCP_ENDPOINT = "tcp://127.0.0.1:33445"
         private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
@@ -49,10 +54,9 @@ class NewZmqClient {
 
     // ZMQ相关
     @Volatile
-    private var context: ZContext? = null
+    private var zmqContext: ZContext? = null
     @Volatile
     private var socket: ZMQ.Socket? = null
-    private var tcpEndpoint = DEFAULT_TCP_ENDPOINT
 
     // 状态控制
     private val running = AtomicBoolean(false)
@@ -79,9 +83,7 @@ class NewZmqClient {
     private val consecutiveFailures = AtomicInteger(0)
 
     // 客户端信息
-    private var deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER
-    private var deviceId: String = ""
-    private var heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS
+    private var deviceId: String = MessageUtils.generateDeviceId(deviceType)
 
     // 回调
     private var messageCallback: MessageCallback? = null
@@ -94,26 +96,10 @@ class NewZmqClient {
     private val batteryLevel = AtomicReference(0)
 
     /**
-     * 构造函数
-     */
-    constructor(
-        deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
-        tcpEndpoint: String = DEFAULT_TCP_ENDPOINT,
-        heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
-    ) {
-        this.deviceType = deviceType
-        this.tcpEndpoint = tcpEndpoint
-        this.heartbeatIntervalMs = heartbeatIntervalMs
-        this.deviceId = MessageUtils.generateDeviceId(deviceType)
-        
-        Timber.i("[NewZmqClient] 客户端创建，设备ID: $deviceId, 类型: $deviceType")
-    }
-
-    /**
      * 设置连接端点
      */
     fun setEndpoint(endpoint: String) {
-        this.tcpEndpoint = endpoint
+        tcpEndpoint = endpoint
         Timber.d("[NewZmqClient] 连接端点已设置为: $endpoint")
     }
 
@@ -144,7 +130,7 @@ class NewZmqClient {
             }
 
             // 更新实例变量
-            context = newContext
+            zmqContext = newContext
             socket = newSocket
             
             Timber.i("[NewZmqClient] 连接到服务器: $tcpEndpoint")
@@ -195,12 +181,12 @@ class NewZmqClient {
     private fun cleanup() {
         try {
             socket?.close()
-            context?.close()
+            zmqContext?.close()
         } catch (e: Exception) {
             Timber.w(e, "[NewZmqClient] 清理ZMQ资源时出现异常")
         } finally {
             socket = null
-            context = null
+            zmqContext = null
             sendQueue.clear()
         }
     }
@@ -638,16 +624,6 @@ class NewZmqClient {
      * 获取电池电量
      */
     fun getBatteryLevel(): Int = batteryLevel.get()
-
-    /**
-     * 获取设备类型
-     */
-    fun getDeviceType(): DeviceType = deviceType
-
-    /**
-     * 获取设备ID
-     */
-    fun getDeviceId(): String = deviceId
 
     /**
      * 清理资源
