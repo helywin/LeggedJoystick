@@ -63,12 +63,8 @@ class NewZmqClient (
     private val connected = AtomicBoolean(false)
     
     // 线程池管理
-    private val executorService: ExecutorService = Executors.newFixedThreadPool(3) { runnable ->
-        Thread(runnable).apply {
-            isDaemon = true
-            name = "ZMQ-Worker-${System.currentTimeMillis()}"
-        }
-    }
+    @Volatile
+    private var executorService: ExecutorService? = null
     
     // 任务Future，用于控制任务的取消
     private val receiveFuture = AtomicReference<Future<*>?>()
@@ -113,6 +109,9 @@ class NewZmqClient (
         }
 
         return try {
+            // 确保线程池可用
+            ensureExecutorService()
+
             // 创建ZMQ上下文和socket
             val newContext = ZContext()
             val newSocket = newContext.createSocket(SocketType.DEALER).apply {
@@ -135,10 +134,12 @@ class NewZmqClient (
             
             Timber.i("[NewZmqClient] 连接到服务器: $tcpEndpoint")
 
+            // 重置状态变量
+            resetConnectionState()
+
             // 更新状态并启动工作任务
             connected.set(true)
             running.set(true)
-            consecutiveFailures.set(0)
 
             startWorkerTasks()
 
@@ -192,18 +193,46 @@ class NewZmqClient (
     }
 
     /**
+     * 确保线程池可用
+     */
+    private fun ensureExecutorService() {
+        val currentExecutor = executorService
+        if (currentExecutor == null || currentExecutor.isShutdown) {
+            executorService = Executors.newFixedThreadPool(3) { runnable ->
+                Thread(runnable).apply {
+                    isDaemon = true
+                    name = "ZMQ-Worker-${System.currentTimeMillis()}"
+                }
+            }
+            Timber.d("[NewZmqClient] 创建新的线程池")
+        }
+    }
+
+    /**
+     * 重置连接状态
+     */
+    private fun resetConnectionState() {
+        consecutiveFailures.set(0)
+        lastHeartbeatTime.set(0)
+        serverConnected.set(false)
+        sendQueue.clear()
+    }
+
+    /**
      * 启动工作任务
      */
     private fun startWorkerTasks() {
         try {
+            val executor = executorService ?: throw IllegalStateException("ExecutorService 未初始化")
+            
             // 启动接收任务
-            receiveFuture.set(executorService.submit { receiveTask() })
+            receiveFuture.set(executor.submit { receiveTask() })
             
             // 启动发送任务
-            sendFuture.set(executorService.submit { sendTask() })
+            sendFuture.set(executor.submit { sendTask() })
             
             // 启动心跳任务
-            heartbeatFuture.set(executorService.submit { heartbeatTask() })
+            heartbeatFuture.set(executor.submit { heartbeatTask() })
             
             Timber.d("[NewZmqClient] 所有工作任务已启动")
         } catch (e: Exception) {
@@ -226,18 +255,26 @@ class NewZmqClient (
             }
             futureRef.set(null)
         }
+    }
 
-        // 关闭执行器服务
+    /**
+     * 关闭线程池（仅在完全关闭客户端时调用）
+     */
+    private fun shutdownExecutorService() {
+        val executor = executorService ?: return
+        
         try {
-            executorService.shutdown()
-            if (!executorService.awaitTermination(THREAD_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            executor.shutdown()
+            if (!executor.awaitTermination(THREAD_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 Timber.w("[NewZmqClient] 执行器服务未能在规定时间内关闭，强制关闭")
-                executorService.shutdownNow()
+                executor.shutdownNow()
             }
         } catch (e: InterruptedException) {
             Timber.w("[NewZmqClient] 等待执行器服务关闭时被中断")
-            executorService.shutdownNow()
+            executor.shutdownNow()
             Thread.currentThread().interrupt()
+        } finally {
+            executorService = null
         }
     }
 
@@ -403,8 +440,9 @@ class NewZmqClient (
             
             // 异步通知连接丢失，避免死锁
             try {
-                if (!executorService.isShutdown) {
-                    executorService.submit {
+                val executor = executorService
+                if (executor != null && !executor.isShutdown) {
+                    executor.submit {
                         try {
                             connectionLostCallback?.invoke()
                         } catch (e: Exception) {
@@ -605,9 +643,37 @@ class NewZmqClient (
      * 发送速度指令
      */
     fun sendVelocityCommand(vx: Float, vy: Float, yawRate: Float) {
-        val message = MessageUtils.createVelocityCommandMessage(deviceType, deviceId, vx, vy, yawRate)
+        // 应用速度限制
+        val filteredVx = applyVxLimit(vx)
+        val filteredVy = applyVyLimit(vy)
+        
+        val message = MessageUtils.createVelocityCommandMessage(deviceType, deviceId, filteredVx, filteredVy, yawRate)
         sendMessage(message)
-        Timber.v("[NewZmqClient] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
+        Timber.v("[NewZmqClient] 发送速度指令: vx=$filteredVx, vy=$filteredVy, yawRate=$yawRate")
+    }
+
+    /**
+     * 应用vx速度限制：绝对值范围0.05-3，小于0.05设置为0
+     */
+    private fun applyVxLimit(vx: Float): Float {
+        val absVx = kotlin.math.abs(vx)
+        return when {
+            absVx < 0.05f -> 0.0f
+            absVx > 3.0f -> if (vx > 0) 3.0f else -3.0f
+            else -> vx
+        }
+    }
+
+    /**
+     * 应用vy速度限制：绝对值范围0.1-1，小于0.1设置为0
+     */
+    private fun applyVyLimit(vy: Float): Float {
+        val absVy = kotlin.math.abs(vy)
+        return when {
+            absVy < 0.1f -> 0.0f
+            absVy > 1.0f -> if (vy > 0) 1.0f else -1.0f
+            else -> vy
+        }
     }
 
     /**
@@ -631,9 +697,7 @@ class NewZmqClient (
     fun close() {
         disconnect()
         
-        // 确保ExecutorService被关闭
-        if (!executorService.isShutdown) {
-            executorService.shutdown()
-        }
+        // 关闭线程池
+        shutdownExecutorService()
     }
 }
