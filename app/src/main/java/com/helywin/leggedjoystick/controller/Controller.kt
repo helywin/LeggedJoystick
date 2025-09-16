@@ -191,7 +191,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 }
             }
             else -> {
-                Timber.d("[Controller] 收到其他消息类型: ${message.message_type}")
+//                Timber.d("[Controller] 收到其他消息类型: ${message.message_type}")
             }
         }
     }

@@ -11,7 +11,6 @@ package com.helywin.leggedjoystick.zmq
 
 import legged_driver.*
 import com.helywin.leggedjoystick.proto.MessageUtils
-import kotlinx.coroutines.*
 import org.zeromq.SocketType
 import org.zeromq.ZContext
 import org.zeromq.ZMQ
@@ -20,7 +19,6 @@ import timber.log.Timber
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.CoroutineContext
 
 /**
  * 消息回调函数类型
@@ -34,19 +32,15 @@ typealias ConnectionLostCallback = () -> Unit
 
 /**
  * 新的ZMQ客户端实现
- * 参考C++版本，使用异步发送和接收线程
+ * 参考C++版本，使用原生线程进行异步发送和接收
  */
-class NewZmqClient : CoroutineScope {
+class NewZmqClient {
     companion object {
         private const val DEFAULT_TCP_ENDPOINT = "tcp://127.0.0.1:33445"
         private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L // 1Hz心跳频率
         private const val SOCKET_RECV_TIMEOUT_MS = 100 // 接收超时100ms
         private const val SOCKET_SEND_TIMEOUT_MS = 1000 // 发送超时1秒
     }
-
-    // 协程相关
-    private val job = SupervisorJob()
-    override val coroutineContext: CoroutineContext = Dispatchers.IO + job
 
     // ZMQ相关
     private var context: ZContext? = null
@@ -57,10 +51,10 @@ class NewZmqClient : CoroutineScope {
     private val running = AtomicBoolean(false)
     private val connected = AtomicBoolean(false)
     
-    // 线程Job
-    private var receiveJob: Job? = null
-    private var sendJob: Job? = null
-    private var heartbeatJob: Job? = null
+    // 工作线程
+    private var receiveThread: Thread? = null
+    private var sendThread: Thread? = null
+    private var heartbeatThread: Thread? = null
 
     // 发送队列
     private val sendQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -140,8 +134,8 @@ class NewZmqClient : CoroutineScope {
             connected.set(true)
             running.set(true)
 
-            // 启动协程
-            startCoroutines()
+            // 启动工作线程
+            startThreads()
 
             Timber.i("[NewZmqClient] 客户端启动成功")
             return true
@@ -166,16 +160,19 @@ class NewZmqClient : CoroutineScope {
         running.set(false)
         connected.set(false)
 
-        // 取消所有协程
-        receiveJob?.cancel()
-        sendJob?.cancel()
-        heartbeatJob?.cancel()
+        // 中断并等待所有线程结束
+        receiveThread?.interrupt()
+        sendThread?.interrupt()
+        heartbeatThread?.interrupt()
 
-        // 等待协程结束
-        runBlocking {
-            receiveJob?.join()
-            sendJob?.join()
-            heartbeatJob?.join()
+        // 等待线程结束
+        try {
+            receiveThread?.join(5000) // 最多等待5秒
+            sendThread?.join(5000)
+            heartbeatThread?.join(5000)
+        } catch (e: InterruptedException) {
+            Timber.w("[NewZmqClient] 等待线程结束时被中断")
+            Thread.currentThread().interrupt() // 恢复中断状态
         }
 
         cleanup()
@@ -191,24 +188,33 @@ class NewZmqClient : CoroutineScope {
         socket = null
         context = null
         sendQueue.clear()
+        
+        // 清理线程引用
+        receiveThread = null
+        sendThread = null
+        heartbeatThread = null
     }
 
     /**
-     * 启动协程
+     * 启动工作线程
      */
-    private fun startCoroutines() {
-        receiveJob = launch { receiveLoop() }
-        sendJob = launch { sendLoop() }
-        heartbeatJob = launch { heartbeatLoop() }
+    private fun startThreads() {
+        receiveThread = Thread({ receiveLoop() }, "ZMQ-Receive")
+        sendThread = Thread({ sendLoop() }, "ZMQ-Send")
+        heartbeatThread = Thread({ heartbeatLoop() }, "ZMQ-Heartbeat")
+        
+        receiveThread?.start()
+        sendThread?.start()
+        heartbeatThread?.start()
     }
 
     /**
-     * 接收循环协程
+     * 接收循环线程
      */
-    private suspend fun receiveLoop() {
-        Timber.i("[NewZmqClient] 接收协程启动")
+    private fun receiveLoop() {
+        Timber.i("[NewZmqClient] 接收线程启动")
 
-        while (running.get() && isActive) {
+        while (running.get() && !Thread.currentThread().isInterrupted) {
             try {
                 val socket = this@NewZmqClient.socket ?: break
                 
@@ -234,34 +240,47 @@ class NewZmqClient : CoroutineScope {
                         Timber.e(e, "[NewZmqClient] 消息解析失败")
                     }
                 } else {
-                    // 没有消息，短暂延迟
-                    delay(10)
+                    // 没有消息，短暂休眠
+                    Thread.sleep(10)
                 }
 
+            } catch (e: InterruptedException) {
+                Timber.i("[NewZmqClient] 接收线程被中断")
+                break
             } catch (e: ZMQException) {
                 if (e.errorCode != ZMQ.Error.EAGAIN.code) {
                     Timber.e(e, "[NewZmqClient] 接收循环错误")
                 }
-                delay(10)
+                try {
+                    Thread.sleep(10)
+                } catch (ie: InterruptedException) {
+                    Timber.i("[NewZmqClient] 接收线程休眠时被中断")
+                    break
+                }
             } catch (e: Exception) {
                 Timber.e(e, "[NewZmqClient] 接收循环异常")
-                delay(100)
+                try {
+                    Thread.sleep(100)
+                } catch (ie: InterruptedException) {
+                    Timber.i("[NewZmqClient] 接收线程休眠时被中断")
+                    break
+                }
             }
         }
 
-        Timber.i("[NewZmqClient] 接收协程结束")
+        Timber.i("[NewZmqClient] 接收线程结束")
     }
 
     /**
-     * 发送循环协程
+     * 发送循环线程
      */
-    private suspend fun sendLoop() {
-        Timber.i("[NewZmqClient] 发送协程启动")
+    private fun sendLoop() {
+        Timber.i("[NewZmqClient] 发送线程启动")
         
         var consecutiveFailures = 0
         val maxFailures = 5 // 连续失败5次后认为连接异常
 
-        while (running.get() && isActive) {
+        while (running.get() && !Thread.currentThread().isInterrupted) {
             try {
                 val socket = this@NewZmqClient.socket ?: break
 
@@ -274,7 +293,7 @@ class NewZmqClient : CoroutineScope {
                             if (!success) {
                                 // 发送失败，可能是缓冲区满，稍后重试
                                 sendQueue.offer(data) // 重新入队
-                                delay(10)
+                                Thread.sleep(10)
                                 break
                             } else {
                                 consecutiveFailures = 0 // 重置失败计数
@@ -291,13 +310,16 @@ class NewZmqClient : CoroutineScope {
                                 notifyConnectionLost()
                                 break
                             }
-                            delay(10)
+                            Thread.sleep(10)
                         }
                     }
                 }
 
-                delay(10) // 防止忙等待
+                Thread.sleep(10) // 防止忙等待
 
+            } catch (e: InterruptedException) {
+                Timber.i("[NewZmqClient] 发送线程被中断")
+                break
             } catch (e: Exception) {
                 consecutiveFailures++
                 Timber.e(e, "[NewZmqClient] 发送循环异常 ($consecutiveFailures/$maxFailures)")
@@ -309,27 +331,35 @@ class NewZmqClient : CoroutineScope {
                     notifyConnectionLost()
                     break
                 }
-                delay(100)
+                try {
+                    Thread.sleep(100)
+                } catch (ie: InterruptedException) {
+                    Timber.i("[NewZmqClient] 发送线程休眠时被中断")
+                    break
+                }
             }
         }
 
-        Timber.i("[NewZmqClient] 发送协程结束")
+        Timber.i("[NewZmqClient] 发送线程结束")
     }
 
     /**
-     * 心跳循环协程
+     * 心跳循环线程
      */
-    private suspend fun heartbeatLoop() {
-        Timber.i("[NewZmqClient] 心跳协程启动")
+    private fun heartbeatLoop() {
+        Timber.i("[NewZmqClient] 心跳线程启动")
         
         var consecutiveFailures = 0
         val maxFailures = 3 // 连续失败3次后断开连接
 
-        while (running.get() && isActive) {
+        while (running.get() && !Thread.currentThread().isInterrupted) {
             try {
                 sendHeartbeat()
                 consecutiveFailures = 0 // 重置失败计数
-                delay(heartbeatIntervalMs)
+                Thread.sleep(heartbeatIntervalMs)
+            } catch (e: InterruptedException) {
+                Timber.i("[NewZmqClient] 心跳线程被中断")
+                break
             } catch (e: Exception) {
                 consecutiveFailures++
                 Timber.e(e, "[NewZmqClient] 心跳异常 ($consecutiveFailures/$maxFailures)")
@@ -343,16 +373,20 @@ class NewZmqClient : CoroutineScope {
                     connected.set(false)
                     
                     // 通知上层连接失败
-                    // 这里可以通过回调通知Controller层连接状态变化
                     notifyConnectionLost()
                     break
                 }
                 
-                delay(heartbeatIntervalMs)
+                try {
+                    Thread.sleep(heartbeatIntervalMs)
+                } catch (ie: InterruptedException) {
+                    Timber.i("[NewZmqClient] 心跳线程休眠时被中断")
+                    break
+                }
             }
         }
 
-        Timber.i("[NewZmqClient] 心跳协程结束")
+        Timber.i("[NewZmqClient] 心跳线程结束")
     }
 
     /**
@@ -365,7 +399,10 @@ class NewZmqClient : CoroutineScope {
             MessageType.MESSAGE_TYPE_CURRENT_MODE -> handleCurrentModeMessage(message)
             MessageType.MESSAGE_TYPE_CURRENT_CONTROL_MODE -> handleCurrentControlModeMessage(message)
             MessageType.MESSAGE_TYPE_ODOMETRY -> handleOdometryMessage(message)
-            else -> Timber.d("[NewZmqClient] 收到消息类型: ${message.message_type}")
+            else -> {
+                // 其他消息类型暂不处理
+//                Timber.d("[NewZmqClient] 收到消息类型: ${message.message_type}")
+            }
         }
     }
 
@@ -375,7 +412,7 @@ class NewZmqClient : CoroutineScope {
     private fun handleHeartbeatMessage(message: LeggedDriverMessage) {
         message.heartbeat?.let { heartbeat ->
             serverConnected.set(heartbeat.is_connected)
-            Timber.d("[NewZmqClient] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
+//            Timber.d("[NewZmqClient] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
         }
     }
 
@@ -385,7 +422,7 @@ class NewZmqClient : CoroutineScope {
     private fun handleBatteryInfoMessage(message: LeggedDriverMessage) {
         message.battery_info?.let { batteryInfo ->
             batteryLevel.set(batteryInfo.battery_level)
-            Timber.d("[NewZmqClient] 收到电池信息，电量: ${batteryInfo.battery_level}%")
+//            Timber.d("[NewZmqClient] 收到电池信息，电量: ${batteryInfo.battery_level}%")
         }
     }
 
@@ -395,7 +432,7 @@ class NewZmqClient : CoroutineScope {
     private fun handleCurrentModeMessage(message: LeggedDriverMessage) {
         message.current_mode?.let { currentModeMsg ->
             currentMode.set(currentModeMsg.mode)
-            Timber.d("[NewZmqClient] 收到当前模式: ${currentModeMsg.mode}")
+//            Timber.d("[NewZmqClient] 收到当前模式: ${currentModeMsg.mode}")
         }
     }
 
@@ -405,7 +442,7 @@ class NewZmqClient : CoroutineScope {
     private fun handleCurrentControlModeMessage(message: LeggedDriverMessage) {
         message.current_control_mode?.let { currentControlModeMsg ->
             currentControlMode.set(currentControlModeMsg.control_mode)
-            Timber.d("[NewZmqClient] 收到当前控制模式: ${currentControlModeMsg.control_mode}")
+//            Timber.d("[NewZmqClient] 收到当前控制模式: ${currentControlModeMsg.control_mode}")
         }
     }
 
@@ -414,7 +451,7 @@ class NewZmqClient : CoroutineScope {
      */
     private fun handleOdometryMessage(message: LeggedDriverMessage) {
         message.odometry?.let { odom ->
-            Timber.d("[NewZmqClient] 收到里程计信息: pos(${odom.position?.x},${odom.position?.y},${odom.position?.z})")
+//            Timber.d("[NewZmqClient] 收到里程计信息: pos(${odom.position?.x},${odom.position?.y},${odom.position?.z})")
         }
     }
 
@@ -542,6 +579,5 @@ class NewZmqClient : CoroutineScope {
      */
     fun close() {
         disconnect()
-        job.cancel()
     }
 }
