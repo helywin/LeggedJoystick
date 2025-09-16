@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package legged_driver;
+
+// 设备类型枚举
+enum DeviceType {
+    DEVICE_TYPE_UNSPECIFIED = 0;
+    DEVICE_TYPE_SERVER = 1;        // 服务端
+    DEVICE_TYPE_NAVIGATION = 2;    // 导航端
+    DEVICE_TYPE_REMOTE_CONTROLLER = 3;  // 遥控器端
+}
+
+// 消息类型枚举
+enum MessageType {
+    MESSAGE_TYPE_UNSPECIFIED = 0;
+    MESSAGE_TYPE_HEARTBEAT = 1;      // 心跳消息
+    MESSAGE_TYPE_BATTERY_INFO = 2;   // 电池信息
+    MESSAGE_TYPE_MODE_SET = 3;       // 模式设置
+    MESSAGE_TYPE_CONTROL_MODE_SET = 4;  // 控制模式设置
+    MESSAGE_TYPE_VELOCITY_COMMAND = 5;  // 运动速度指令
+    MESSAGE_TYPE_CURRENT_MODE = 6;   // 当前模式
+    MESSAGE_TYPE_CURRENT_CONTROL_MODE = 7; // 当前控制模式
+    MESSAGE_TYPE_ODOMETRY = 8;       // 里程计信息
+}
+
+// 模式枚举 (手动/自动)
+enum Mode {
+    MODE_AUTO = 0;       // 自动模式
+    MODE_MANUAL = 1;     // 手动模式
+}
+
+// 控制模式枚举 (阻尼/趴下/站立)
+enum ControlMode {
+    CONTROL_MODE_PASSIVE = 0;    // 阻尼模式
+    CONTROL_MODE_STAND_UP = 1;   // 站立模式
+    CONTROL_MODE_LIE_DOWN = 2;   // 趴下模式
+    CONTROL_MODE_UNSPECIFIED = 100; // 未指定
+}
+
+// 心跳消息体
+message HeartbeatMessage {
+    bool is_connected = 1;       // 连接状态
+}
+
+// 电池信息消息体
+message BatteryInfoMessage {
+    uint32 battery_level = 1;    // 电池电量 (0-100)
+    float voltage = 2;           // 电压
+    float current = 3;           // 电流
+    float temperature = 4;       // 温度
+}
+
+// 模式设置消息体
+message ModeSetMessage {
+    Mode mode = 1;               // 要设置的模式
+}
+
+// 控制模式设置消息体
+message ControlModeSetMessage {
+    ControlMode control_mode = 1; // 要设置的控制模式
+}
+
+// 速度指令消息体
+message VelocityCommandMessage {
+    float vx = 1;               // x方向线速度
+    float vy = 2;               // y方向线速度
+    float yaw_rate = 3;         // 角速度
+}
+
+// 当前模式消息体
+message CurrentModeMessage {
+    Mode mode = 1;              // 当前模式
+}
+
+// 当前控制模式消息体
+message CurrentControlModeMessage {
+    ControlMode control_mode = 1; // 当前控制模式
+}
+
+// 3D向量
+message Vector3 {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+}
+
+// 四元数
+message Quaternion {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+    float w = 4;
+}
+
+// 里程计消息体
+message OdometryMessage {
+    Vector3 position = 1;        // 位置 getPosition
+    Quaternion orientation = 2;  // 姿态角 getQuaternion
+    Vector3 linear_velocity = 3; // 线速度 getBodyVelocity
+    Vector3 angular_velocity = 4; // 角速度 getBodyGyro
+}
+
+// 主消息结构
+message LeggedDriverMessage {
+    uint64 timestamp_ms = 1;     // 时间戳，精确到毫秒
+    DeviceType device_type = 2;  // 设备类型
+    string device_id = 3;        // 设备ID
+    MessageType message_type = 4; // 消息类型
+    
+    // 消息体 (使用oneof确保只有一个消息体被设置)
+    oneof payload {
+        HeartbeatMessage heartbeat = 10;
+        BatteryInfoMessage battery_info = 11;
+        ModeSetMessage mode_set = 12;
+        ControlModeSetMessage control_mode_set = 13;
+        VelocityCommandMessage velocity_command = 14;
+        CurrentModeMessage current_mode = 15;
+        CurrentControlModeMessage current_control_mode = 16;
+        OdometryMessage odometry = 17;
+    }
+    
+    uint32 crc32 = 20;          // CRC32校验码 - 放在最后
+}

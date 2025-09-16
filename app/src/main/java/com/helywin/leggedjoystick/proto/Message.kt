@@ -31,7 +31,6 @@ enum class MessageType {
 enum class Mode (val displayName: String) {
     @ProtoNumber(0) MODE_AUTO("自动模式"),
     @ProtoNumber(1) MODE_MANUAL("手动模式"),
-    @ProtoNumber(100) MODE_UNSPECIFIED("未指定模式"),
 }
 
 // 控制模式枚举
@@ -61,7 +60,7 @@ data class BatteryInfoMessage(
 // 模式设置消息体
 @Serializable
 data class ModeSetMessage(
-    @ProtoNumber(1) val mode: Mode = Mode.MODE_UNSPECIFIED
+    @ProtoNumber(1) val mode: Mode = Mode.MODE_AUTO
 )
 
 // 控制模式设置消息体
@@ -81,7 +80,7 @@ data class VelocityCommandMessage(
 // 当前模式消息体
 @Serializable
 data class CurrentModeMessage(
-    @ProtoNumber(1) val mode: Mode = Mode.MODE_UNSPECIFIED
+    @ProtoNumber(1) val mode: Mode = Mode.MODE_AUTO
 )
 
 // 当前控制模式消息体

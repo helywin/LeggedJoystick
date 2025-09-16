@@ -141,6 +141,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     // 摇杆状态
     private var currentLeftJoystick = JoystickValue.ZERO  // 左摇杆：vx, vy
     private var currentRightJoystick = JoystickValue.ZERO  // 右摇杆：yawRate
+    private var lastCommandSent = false  // 跟踪是否发送过速度指令
     
     // 速度发送任务
     private var velocitySendJob: Job? = null
@@ -455,11 +456,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
                             // 发送速度指令
                             zmqClient.sendVelocityCommand(vx, vy, yawRate)
                             Timber.v("[Controller] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
-                        } else {
-                            // 两个摇杆都在中心位置，发送停止指令
+                            lastCommandSent = true
+                        } else if (lastCommandSent) {
+                            // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令
                             zmqClient.sendVelocityCommand(0f, 0f, 0f)
-                            Timber.v("[Controller] 摇杆都在中心位置，发送停止指令")
+                            Timber.v("[Controller] 发送停止指令")
+                            lastCommandSent = false
                         }
+                        // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
                     }
                     
                     delay(50) // 20Hz发送频率
@@ -480,6 +484,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private fun stopVelocityLoop() {
         velocitySendJob?.cancel()
         velocitySendJob = null
+        lastCommandSent = false  // 重置命令发送标志
     }
     
     /**

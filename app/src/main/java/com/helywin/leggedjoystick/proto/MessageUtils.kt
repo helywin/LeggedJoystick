@@ -4,6 +4,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
+import timber.log.Timber
 import java.util.UUID
 
 object MessageUtils {
@@ -21,15 +22,15 @@ object MessageUtils {
             if (tableComputed) return
 
             for (i in 0 until 256) {
-                var crc = i.toLong() and 0xFFFFFFFFL
+                var crc = i
                 for (j in 0 until 8) {
-                    if ((crc and 1L) != 0L) {
-                        crc = (crc ushr 1) xor 0xEDB88320L
+                    if ((crc and 1) != 0) {
+                        crc = (crc ushr 1) xor 0xEDB88320.toInt()
                     } else {
                         crc = crc ushr 1
                     }
                 }
-                crcTable[i] = crc.toInt()
+                crcTable[i] = crc
             }
             tableComputed = true
         }
@@ -37,13 +38,13 @@ object MessageUtils {
         fun calculate(data: ByteArray): Long {
             computeTable()
 
-            var crc = 0xFFFFFFFFL
+            var crc = 0xFFFFFFFF.toInt()
             for (byte in data) {
-                val index = ((crc xor (byte.toLong() and 0xFF)) and 0xFF).toInt()
-                crc = (crcTable[index].toLong() and 0xFFFFFFFFL) xor (crc ushr 8)
+                val index = (crc xor (byte.toInt() and 0xFF)) and 0xFF
+                crc = crcTable[index] xor (crc ushr 8)
             }
 
-            return crc xor 0xFFFFFFFFL
+            return (crc xor 0xFFFFFFFF.toInt()).toLong() and 0xFFFFFFFFL
         }
     }
 
@@ -58,10 +59,46 @@ object MessageUtils {
      * 测试CRC32实现（用于调试）
      */
     fun testCRC32() {
+        Timber.d("开始CRC32测试...")
+        
         // 测试已知数据的CRC32值
         val testData = "Hello, World!".toByteArray()
         val crc = calculateCRC32(testData)
-        println("CRC32 of 'Hello, World!': 0x${crc.toString(16).uppercase()}")
+        Timber.d("CRC32 of 'Hello, World!': 0x${crc.toString(16).uppercase()}")
+        
+        // 测试空数据
+        val emptyCRC = calculateCRC32(byteArrayOf())
+        Timber.d("CRC32 of empty data: 0x${emptyCRC.toString(16).uppercase()}")
+        
+        // 测试单字节数据
+        val singleByteCRC = calculateCRC32(byteArrayOf(0x41)) // 'A'
+        Timber.d("CRC32 of 'A': 0x${singleByteCRC.toString(16).uppercase()}")
+        
+        // 测试消息序列化和CRC32计算
+        val testMessage = createHeartbeatMessage(
+            DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            "test_device",
+            true
+        )
+        
+        val serialized = serializeMessage(testMessage)
+        Timber.d("序列化消息长度: ${serialized.size} bytes")
+        Timber.d("消息CRC32: 0x${testMessage.crc32.toString(16).uppercase()}")
+        
+        // 验证消息
+        val isValid = verifyMessage(testMessage)
+        Timber.d("消息CRC32验证结果: $isValid")
+        
+        // 测试反序列化
+        try {
+            val deserialized = deserializeMessage(serialized)
+            Timber.d("反序列化成功，CRC32: 0x${deserialized.crc32.toString(16).uppercase()}")
+            
+            val isDeserializedValid = verifyMessage(deserialized)
+            Timber.d("反序列化消息CRC32验证结果: $isDeserializedValid")
+        } catch (e: Exception) {
+            Timber.e(e, "反序列化失败")
+        }
     }
 
     /**
@@ -80,6 +117,7 @@ object MessageUtils {
 
     /**
      * 创建消息并计算CRC32
+     * 注意：CRC32是对整个消息序列化数据计算的，但计算时crc32字段应该为0
      */
     @OptIn(ExperimentalSerializationApi::class)
     fun createMessageWithCRC(
@@ -96,13 +134,13 @@ object MessageUtils {
         currentControlMode: CurrentControlModeMessage? = null,
         odometry: OdometryMessage? = null
     ): LeggedDriverMessage {
-        // 先创建不带CRC的消息
-        val tempMessage = LeggedDriverMessage(
+        // 创建消息，CRC32字段设为0（这样计算CRC32时不会包含CRC32本身）
+        val message = LeggedDriverMessage(
             timestampMs = timestampMs,
             deviceType = deviceType,
             deviceId = deviceId,
             messageType = messageType,
-            crc32 = 0, // 临时设为0
+            crc32 = 0, // CRC32字段在计算时必须为0
             heartbeat = heartbeat,
             batteryInfo = batteryInfo,
             modeSet = modeSet,
@@ -113,14 +151,14 @@ object MessageUtils {
             odometry = odometry
         )
 
-        // 序列化临时消息
-        val tempData = protoBuf.encodeToByteArray(tempMessage)
+        // 序列化消息（此时crc32=0）
+        val messageData = protoBuf.encodeToByteArray(message)
+        
+        // 计算CRC32校验码
+        val crc32 = calculateCRC32(messageData)
 
-        // 计算CRC32
-        val crc32 = calculateCRC32(tempData)
-
-        // 返回带CRC32的最终消息
-        return tempMessage.copy(crc32 = crc32)
+        // 返回带正确CRC32的消息
+        return message.copy(crc32 = crc32)
     }
 
     /**
@@ -144,12 +182,25 @@ object MessageUtils {
      */
     @OptIn(ExperimentalSerializationApi::class)
     fun verifyMessage(message: LeggedDriverMessage): Boolean {
-        // 创建不带CRC的临时消息
+        // 保存原始CRC32值
+        val originalCRC = message.crc32
+        
+        // 创建CRC32为0的临时消息
         val tempMessage = message.copy(crc32 = 0)
         val tempData = protoBuf.encodeToByteArray(tempMessage)
+        
+        // 计算CRC32并比较
         val calculatedCRC = calculateCRC32(tempData)
-
-        return calculatedCRC == message.crc32
+        
+        val isValid = calculatedCRC == originalCRC
+        
+        if (!isValid) {
+            Timber.w("CRC32校验失败 - 原始: 0x${originalCRC.toString(16).uppercase()}, " +
+                    "计算得到: 0x${calculatedCRC.toString(16).uppercase()}, " +
+                    "数据长度: ${tempData.size}")
+        }
+        
+        return isValid
     }
 
     /**
