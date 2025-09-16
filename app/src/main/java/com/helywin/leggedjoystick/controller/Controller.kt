@@ -400,15 +400,26 @@ class RobotControllerImpl : Controller {
                 try {
                     // 只有在手动模式下才发送速度指令
                     if (settingsState.robotMode == Mode.MODE_MANUAL) {
-                        // 计算速度参数
-                        val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
-                        val vx = currentLeftJoystick.x * maxSpeed
-                        val vy = currentLeftJoystick.y * maxSpeed
-                        val yawRate = currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
+                        // 检查是否有摇杆被按下（不在中心位置）
+                        val leftJoystickPressed = !currentLeftJoystick.isCenter
+                        val rightJoystickPressed = !currentRightJoystick.isCenter
                         
-                        // 发送速度指令
-                        zmqClient.sendVelocityCommand(vx, vy, yawRate)
-                        Timber.v("[Controller] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
+                        // 只有当至少有一个摇杆被按下时才发送速度指令
+                        if (leftJoystickPressed || rightJoystickPressed) {
+                            // 计算速度参数
+                            val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
+                            val vx = currentLeftJoystick.x * maxSpeed
+                            val vy = currentLeftJoystick.y * maxSpeed
+                            val yawRate = currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
+                            
+                            // 发送速度指令
+                            zmqClient.sendVelocityCommand(vx, vy, yawRate)
+                            Timber.v("[Controller] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
+                        } else {
+                            // 两个摇杆都在中心位置，发送停止指令
+                            zmqClient.sendVelocityCommand(0f, 0f, 0f)
+                            Timber.v("[Controller] 摇杆都在中心位置，发送停止指令")
+                        }
                     }
                     
                     delay(50) // 20Hz发送频率
