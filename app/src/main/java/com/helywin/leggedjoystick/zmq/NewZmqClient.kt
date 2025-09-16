@@ -77,7 +77,7 @@ class NewZmqClient : CoroutineScope {
      * 构造函数
      */
     constructor(
-        deviceType: DeviceType,
+        deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
         tcpEndpoint: String = DEFAULT_TCP_ENDPOINT,
         heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
     ) {

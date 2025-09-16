@@ -1,7 +1,5 @@
 package com.helywin.leggedjoystick.utils
 
-import com.helywin.leggedjoystick.zmq.LeggedRobotZmqClient
-
 object GlobalStates {
-//    var client : LeggedRobotZmqClient = LeggedRobotZmqClient()
+    // 全局状态管理（如果需要的话）
 }

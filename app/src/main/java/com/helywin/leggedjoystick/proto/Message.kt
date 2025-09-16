@@ -28,19 +28,19 @@ enum class MessageType {
 
 // 模式枚举
 @Serializable
-enum class Mode {
-    @ProtoNumber(0) MODE_AUTO,
-    @ProtoNumber(1) MODE_MANUAL,
-    @ProtoNumber(100) MODE_UNSPECIFIED,
+enum class Mode (val displayName: String) {
+    @ProtoNumber(0) MODE_AUTO("自动模式"),
+    @ProtoNumber(1) MODE_MANUAL("手动模式"),
+    @ProtoNumber(100) MODE_UNSPECIFIED("未指定模式"),
 }
 
 // 控制模式枚举
 @Serializable
-enum class ControlMode {
-    @ProtoNumber(0) CONTROL_MODE_PASSIVE,
-    @ProtoNumber(1) CONTROL_MODE_STAND_UP
-    @ProtoNumber(2) CONTROL_MODE_LIE_DOWN,
-    @ProtoNumber(100) CONTROL_MODE_UNSPECIFIED,
+enum class ControlMode(val displayName: String) {
+    @ProtoNumber(0) CONTROL_MODE_PASSIVE("阻尼模式"),
+    @ProtoNumber(1) CONTROL_MODE_STAND_UP("站立模式"),
+    @ProtoNumber(2) CONTROL_MODE_LIE_DOWN("趴下模式"),
+    @ProtoNumber(100) CONTROL_MODE_UNSPECIFIED("未指定控制模式"),
 }
 
 // 心跳消息体

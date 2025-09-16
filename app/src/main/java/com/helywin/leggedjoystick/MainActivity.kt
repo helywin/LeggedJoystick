@@ -10,7 +10,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import com.helywin.leggedjoystick.controller.RobotController
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
 import com.helywin.leggedjoystick.ui.theme.LeggedJoystickTheme
