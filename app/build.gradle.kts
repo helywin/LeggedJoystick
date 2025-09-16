@@ -9,14 +9,21 @@ plugins {
 android {
     namespace = "com.helywin.leggedjoystick"
     compileSdk = 36
-
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("..\\key\\helywin.jks")
+            storePassword = "jiangwq."
+            keyAlias = "helywin"
+            keyPassword = "jiangwq."
+        }
+    }
     defaultConfig {
         applicationId = "com.helywin.leggedjoystick"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
+        signingConfig = signingConfigs.getByName("debug")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
