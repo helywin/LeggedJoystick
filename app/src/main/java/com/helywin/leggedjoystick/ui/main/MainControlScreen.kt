@@ -28,6 +28,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.helywin.leggedjoystick.controller.Controller
+import com.helywin.leggedjoystick.controller.RobotControllerImpl
+import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.proto.ControlMode
 import com.helywin.leggedjoystick.proto.Mode
@@ -57,11 +60,11 @@ fun MainControlScreen(
         onDismiss = {
             // 重置连接状态为断开
             if (connectionState != ConnectionState.CONNECTING) {
-                TODO()
+                controller.disconnect()
             }
         },
         onCancel = {
-            TODO()
+            controller.cancelConnection()
         }
     )
 
@@ -78,15 +81,15 @@ fun MainControlScreen(
             isRageModeEnabled = isRageModeEnabled,
             onConnectClick = {
                 if (connectionState == ConnectionState.CONNECTED) {
-                    TODO()
+                    controller.disconnect()
                 } else if (connectionState == ConnectionState.CONNECTING) {
-                    TODO()
+                    controller.cancelConnection()
                 } else {
-                    TODO()
+                    controller.connect()
                 }
             },
             onModeClick = { mode ->
-                TODO()
+                controller.setMode(mode)
             },
             onSettingsClick = onSettingsClick
         )
@@ -99,7 +102,7 @@ fun MainControlScreen(
             isRobotModeChanging = isRobotModeChanging,
             isConnected = connectionState == ConnectionState.CONNECTED,
             onCtrlModeSelected = { mode ->
-                TODO()
+                controller.setControlMode(mode)
             }
         )
 
@@ -119,11 +122,11 @@ fun MainControlScreen(
                 maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
-                        TODO()
+                        controller.updateLeftJoystick(value)
                     }
 
                     override fun onReleased() {
-                        TODO()
+                        controller.onLeftJoystickReleased()
                     }
                 }
             )
@@ -132,7 +135,7 @@ fun MainControlScreen(
             RageModeButton(
                 isEnabled = isRageModeEnabled,
                 onClick = {
-                    TODO()
+                    controller.toggleRageMode()
                 }
             )
 
@@ -143,11 +146,11 @@ fun MainControlScreen(
                 maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
-                        TODO()
+                        controller.updateRightJoystick(value)
                     }
 
                     override fun onReleased() {
-                        TODO()
+                        controller.onRightJoystickReleased()
                     }
                 }
             )
@@ -420,21 +423,27 @@ private fun RageModeButton(
 @Preview(showBackground = true, widthDp = 800, heightDp = 480)
 @Composable
 fun MainControlScreenPreview() {
-    // 在预览中注释掉，避免需要Context
-    /*
+    // 预览时使用假的Controller实现
     val dummyController = remember {
-        RobotController().apply {
-            settingsState.updateBatteryLevel(75)
-            settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
-            setRobotMode(RobotMode.STAND)
-            settingsState.updateSettings(
-                settingsState.settings.copy(isRageModeEnabled = false)
-            )
+        object : Controller {
+            override fun connect() {}
+            override fun disconnect() {}
+            override fun cancelConnection() {}
+            override fun setMode(mode: Mode) {}
+            override fun setControlMode(controlMode: ControlMode) {}
+            override fun updateLeftJoystick(joystickValue: JoystickValue) {}
+            override fun updateRightJoystick(joystickValue: JoystickValue) {}
+            override fun onLeftJoystickReleased() {}
+            override fun onRightJoystickReleased() {}
+            override fun toggleRageMode() {}
+            override fun updateSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
+            override fun isConnected() = false
+            override fun cleanup() {}
         }
     }
+    
     MainControlScreen(
         controller = dummyController,
         onSettingsClick = {}
     )
-    */
 }

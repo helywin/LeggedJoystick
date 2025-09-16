@@ -27,6 +27,11 @@ import kotlin.coroutines.CoroutineContext
 typealias MessageCallback = (LeggedDriverMessage) -> Unit
 
 /**
+ * 连接状态回调函数类型
+ */
+typealias ConnectionLostCallback = () -> Unit
+
+/**
  * 新的ZMQ客户端实现
  * 参考C++版本，使用异步发送和接收线程
  */
@@ -66,6 +71,9 @@ class NewZmqClient : CoroutineScope {
 
     // 消息回调
     private var messageCallback: MessageCallback? = null
+
+    // 连接丢失回调
+    private var connectionLostCallback: ConnectionLostCallback? = null
 
     // 服务器状态缓存
     private val serverConnected = AtomicBoolean(false)
@@ -240,6 +248,9 @@ class NewZmqClient : CoroutineScope {
      */
     private suspend fun sendLoop() {
         Timber.i("[NewZmqClient] 发送协程启动")
+        
+        var consecutiveFailures = 0
+        val maxFailures = 5 // 连续失败5次后认为连接异常
 
         while (running.get() && isActive) {
             try {
@@ -256,9 +267,21 @@ class NewZmqClient : CoroutineScope {
                                 sendQueue.offer(data) // 重新入队
                                 delay(10)
                                 break
+                            } else {
+                                consecutiveFailures = 0 // 重置失败计数
                             }
                         } catch (e: ZMQException) {
-                            Timber.e(e, "[NewZmqClient] 发送消息失败")
+                            consecutiveFailures++
+                            Timber.e(e, "[NewZmqClient] 发送消息失败 ($consecutiveFailures/$maxFailures)")
+                            
+                            // 连续失败达到上限时，通知连接丢失
+                            if (consecutiveFailures >= maxFailures) {
+                                Timber.e("[NewZmqClient] 发送连续失败${maxFailures}次，判断连接丢失")
+                                running.set(false)
+                                connected.set(false)
+                                notifyConnectionLost()
+                                break
+                            }
                             delay(10)
                         }
                     }
@@ -267,7 +290,16 @@ class NewZmqClient : CoroutineScope {
                 delay(10) // 防止忙等待
 
             } catch (e: Exception) {
-                Timber.e(e, "[NewZmqClient] 发送循环异常")
+                consecutiveFailures++
+                Timber.e(e, "[NewZmqClient] 发送循环异常 ($consecutiveFailures/$maxFailures)")
+                
+                if (consecutiveFailures >= maxFailures) {
+                    Timber.e("[NewZmqClient] 发送循环连续异常${maxFailures}次，判断连接丢失")
+                    running.set(false)
+                    connected.set(false)
+                    notifyConnectionLost()
+                    break
+                }
                 delay(100)
             }
         }
@@ -280,13 +312,33 @@ class NewZmqClient : CoroutineScope {
      */
     private suspend fun heartbeatLoop() {
         Timber.i("[NewZmqClient] 心跳协程启动")
+        
+        var consecutiveFailures = 0
+        val maxFailures = 3 // 连续失败3次后断开连接
 
         while (running.get() && isActive) {
             try {
                 sendHeartbeat()
+                consecutiveFailures = 0 // 重置失败计数
                 delay(heartbeatIntervalMs)
             } catch (e: Exception) {
-                Timber.e(e, "[NewZmqClient] 心跳异常")
+                consecutiveFailures++
+                Timber.e(e, "[NewZmqClient] 心跳异常 ($consecutiveFailures/$maxFailures)")
+                
+                // 连续失败达到上限时，断开连接
+                if (consecutiveFailures >= maxFailures) {
+                    Timber.e("[NewZmqClient] 心跳连续失败${maxFailures}次，自动断开连接")
+                    
+                    // 设置状态为断开，触发连接失败
+                    running.set(false)
+                    connected.set(false)
+                    
+                    // 通知上层连接失败
+                    // 这里可以通过回调通知Controller层连接状态变化
+                    notifyConnectionLost()
+                    break
+                }
+                
                 delay(heartbeatIntervalMs)
             }
         }
@@ -386,6 +438,20 @@ class NewZmqClient : CoroutineScope {
      */
     fun setMessageCallback(callback: MessageCallback?) {
         this.messageCallback = callback
+    }
+
+    /**
+     * 设置连接丢失回调
+     */
+    fun setConnectionLostCallback(callback: ConnectionLostCallback?) {
+        this.connectionLostCallback = callback
+    }
+
+    /**
+     * 通知连接丢失
+     */
+    private fun notifyConnectionLost() {
+        connectionLostCallback?.invoke()
     }
 
     /**
