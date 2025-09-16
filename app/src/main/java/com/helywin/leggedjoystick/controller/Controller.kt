@@ -14,7 +14,8 @@ import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SettingsManager
-import com.helywin.leggedjoystick.proto.*
+import com.helywin.leggedjoystick.proto.MessageUtils
+import legged_driver.*
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
 import com.helywin.leggedjoystick.zmq.NewZmqClient
 import kotlinx.coroutines.*
@@ -165,32 +166,32 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 处理接收到的消息
      */
     private fun handleIncomingMessage(message: LeggedDriverMessage) {
-        when (message.messageType) {
+        when (message.message_type) {
             MessageType.MESSAGE_TYPE_HEARTBEAT -> {
                 message.heartbeat?.let { heartbeat ->
-                    Timber.d("[Controller] 收到服务器心跳，连接状态: ${heartbeat.isConnected}")
+                    Timber.d("[Controller] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
                 }
             }
             MessageType.MESSAGE_TYPE_BATTERY_INFO -> {
-                message.batteryInfo?.let { batteryInfo ->
-                    settingsState.updateBatteryLevel(batteryInfo.batteryLevel)
-                    Timber.d("[Controller] 收到电池信息，电量: ${batteryInfo.batteryLevel}%")
+                message.battery_info?.let { batteryInfo ->
+                    settingsState.updateBatteryLevel(batteryInfo.battery_level)
+                    Timber.d("[Controller] 收到电池信息，电量: ${batteryInfo.battery_level}%")
                 }
             }
             MessageType.MESSAGE_TYPE_CURRENT_MODE -> {
-                message.currentMode?.let { currentModeMsg ->
+                message.current_mode?.let { currentModeMsg ->
                     settingsState.updateRobotMode(currentModeMsg.mode)
                     Timber.d("[Controller] 收到当前模式: ${currentModeMsg.mode}")
                 }
             }
             MessageType.MESSAGE_TYPE_CURRENT_CONTROL_MODE -> {
-                message.currentControlMode?.let { currentControlModeMsg ->
-                    settingsState.updateRobotCtrlMode(currentControlModeMsg.controlMode)
-                    Timber.d("[Controller] 收到当前控制模式: ${currentControlModeMsg.controlMode}")
+                message.current_control_mode?.let { currentControlModeMsg ->
+                    settingsState.updateRobotCtrlMode(currentControlModeMsg.control_mode)
+                    Timber.d("[Controller] 收到当前控制模式: ${currentControlModeMsg.control_mode}")
                 }
             }
             else -> {
-                Timber.d("[Controller] 收到其他消息类型: ${message.messageType}")
+                Timber.d("[Controller] 收到其他消息类型: ${message.message_type}")
             }
         }
     }

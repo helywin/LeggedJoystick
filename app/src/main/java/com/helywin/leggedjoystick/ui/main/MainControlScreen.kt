@@ -29,11 +29,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.Controller
+import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.ConnectionState
-import com.helywin.leggedjoystick.proto.ControlMode
-import com.helywin.leggedjoystick.proto.Mode
+import legged_driver.ControlMode
+import legged_driver.Mode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.joystick.*
 

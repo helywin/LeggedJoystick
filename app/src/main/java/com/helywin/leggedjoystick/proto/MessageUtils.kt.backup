@@ -1,11 +1,16 @@
 package com.helywin.leggedjoystick.proto
 
-import legged_driver.*
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.protobuf.ProtoBuf
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
 import timber.log.Timber
 import java.util.UUID
 
 object MessageUtils {
-    
+    @OptIn(ExperimentalSerializationApi::class)
+    private val protoBuf = ProtoBuf
+
     /**
      * CRC32工具类，实现与C++代码一致的CRC32算法
      */
@@ -114,6 +119,7 @@ object MessageUtils {
      * 创建消息并计算CRC32
      * 注意：CRC32是对整个消息序列化数据计算的，但计算时crc32字段应该为0
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun createMessageWithCRC(
         timestampMs: Long,
         deviceType: DeviceType,
@@ -129,58 +135,59 @@ object MessageUtils {
         odometry: OdometryMessage? = null
     ): LeggedDriverMessage {
         // 创建消息，CRC32字段设为0（这样计算CRC32时不会包含CRC32本身）
-        val message = LeggedDriverMessage.Builder()
-            .timestamp_ms(timestampMs)
-            .device_type(deviceType)
-            .device_id(deviceId)
-            .message_type(messageType)
-            .crc32(0) // CRC32字段在计算时必须为0
-            .also { builder ->
-                heartbeat?.let { builder.heartbeat(it) }
-                batteryInfo?.let { builder.battery_info(it) }
-                modeSet?.let { builder.mode_set(it) }
-                controlModeSet?.let { builder.control_mode_set(it) }
-                velocityCommand?.let { builder.velocity_command(it) }
-                currentMode?.let { builder.current_mode(it) }
-                currentControlMode?.let { builder.current_control_mode(it) }
-                odometry?.let { builder.odometry(it) }
-            }
-            .build()
+        val message = LeggedDriverMessage(
+            timestampMs = timestampMs,
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = messageType,
+            crc32 = 0, // CRC32字段在计算时必须为0
+            heartbeat = heartbeat,
+            batteryInfo = batteryInfo,
+            modeSet = modeSet,
+            controlModeSet = controlModeSet,
+            velocityCommand = velocityCommand,
+            currentMode = currentMode,
+            currentControlMode = currentControlMode,
+            odometry = odometry
+        )
 
         // 序列化消息（此时crc32=0）
-        val messageData = serializeMessage(message)
+        val messageData = protoBuf.encodeToByteArray(message)
         
         // 计算CRC32校验码
         val crc32 = calculateCRC32(messageData)
 
         // 返回带正确CRC32的消息
-        return message.newBuilder().crc32(crc32).build()
+        return message.copy(crc32 = crc32)
     }
 
     /**
      * 序列化消息为字节数组
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun serializeMessage(message: LeggedDriverMessage): ByteArray {
-        return message.encode()
+        return protoBuf.encodeToByteArray(message)
     }
 
     /**
      * 反序列化字节数组为消息
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun deserializeMessage(data: ByteArray): LeggedDriverMessage {
-        return LeggedDriverMessage.ADAPTER.decode(data)
+        return protoBuf.decodeFromByteArray<LeggedDriverMessage>(data)
     }
 
     /**
      * 验证消息的CRC32校验码
      */
+    @OptIn(ExperimentalSerializationApi::class)
     fun verifyMessage(message: LeggedDriverMessage): Boolean {
         // 保存原始CRC32值
         val originalCRC = message.crc32
         
         // 创建CRC32为0的临时消息
-        val tempMessage = message.newBuilder().crc32(0).build()
-        val tempData = serializeMessage(tempMessage)
+        val tempMessage = message.copy(crc32 = 0)
+        val tempData = protoBuf.encodeToByteArray(tempMessage)
         
         // 计算CRC32并比较
         val calculatedCRC = calculateCRC32(tempData)
@@ -216,7 +223,7 @@ object MessageUtils {
             deviceType = deviceType,
             deviceId = deviceId,
             messageType = MessageType.MESSAGE_TYPE_HEARTBEAT,
-            heartbeat = HeartbeatMessage(is_connected = isConnected)
+            heartbeat = HeartbeatMessage(isConnected = isConnected)
         )
     }
 
@@ -250,7 +257,7 @@ object MessageUtils {
             deviceType = deviceType,
             deviceId = deviceId,
             messageType = MessageType.MESSAGE_TYPE_CONTROL_MODE_SET,
-            controlModeSet = ControlModeSetMessage(control_mode = controlMode)
+            controlModeSet = ControlModeSetMessage(controlMode = controlMode)
         )
     }
 
@@ -269,27 +276,7 @@ object MessageUtils {
             deviceType = deviceType,
             deviceId = deviceId,
             messageType = MessageType.MESSAGE_TYPE_VELOCITY_COMMAND,
-            velocityCommand = VelocityCommandMessage(vx = vx, vy = vy, yaw_rate = yawRate)
+            velocityCommand = VelocityCommandMessage(vx = vx, vy = vy, yawRate = yawRate)
         )
     }
 }
-
-/**
- * 模式枚举的显示名称扩展属性
- */
-val Mode.displayName: String
-    get() = when (this) {
-        Mode.MODE_AUTO -> "自动模式"
-        Mode.MODE_MANUAL -> "手动模式"
-    }
-
-/**
- * 控制模式枚举的显示名称扩展属性
- */
-val ControlMode.displayName: String
-    get() = when (this) {
-        ControlMode.CONTROL_MODE_PASSIVE -> "阻尼模式"
-        ControlMode.CONTROL_MODE_STAND_UP -> "站立模式"
-        ControlMode.CONTROL_MODE_LIE_DOWN -> "趴下模式"
-        ControlMode.CONTROL_MODE_UNSPECIFIED -> "未指定控制模式"
-    }

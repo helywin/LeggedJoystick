@@ -77,8 +77,8 @@ fun LeggedJoystickAppPreview() {
             override fun connect() {}
             override fun disconnect() {}
             override fun cancelConnection() {}
-            override fun setMode(mode: com.helywin.leggedjoystick.proto.Mode) {}
-            override fun setControlMode(controlMode: com.helywin.leggedjoystick.proto.ControlMode) {}
+            override fun setMode(mode: legged_driver.Mode) {}
+            override fun setControlMode(controlMode: legged_driver.ControlMode) {}
             override fun updateLeftJoystick(joystickValue: com.helywin.leggedjoystick.ui.joystick.JoystickValue) {}
             override fun updateRightJoystick(joystickValue: com.helywin.leggedjoystick.ui.joystick.JoystickValue) {}
             override fun onLeftJoystickReleased() {}

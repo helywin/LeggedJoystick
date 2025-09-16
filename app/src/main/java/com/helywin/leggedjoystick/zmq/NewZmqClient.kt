@@ -9,7 +9,8 @@
 
 package com.helywin.leggedjoystick.zmq
 
-import com.helywin.leggedjoystick.proto.*
+import legged_driver.*
+import com.helywin.leggedjoystick.proto.MessageUtils
 import kotlinx.coroutines.*
 import org.zeromq.SocketType
 import org.zeromq.ZContext
@@ -358,13 +359,13 @@ class NewZmqClient : CoroutineScope {
      * 处理接收到的消息
      */
     private fun processReceivedMessage(message: LeggedDriverMessage) {
-        when (message.messageType) {
+        when (message.message_type) {
             MessageType.MESSAGE_TYPE_HEARTBEAT -> handleHeartbeatMessage(message)
             MessageType.MESSAGE_TYPE_BATTERY_INFO -> handleBatteryInfoMessage(message)
             MessageType.MESSAGE_TYPE_CURRENT_MODE -> handleCurrentModeMessage(message)
             MessageType.MESSAGE_TYPE_CURRENT_CONTROL_MODE -> handleCurrentControlModeMessage(message)
             MessageType.MESSAGE_TYPE_ODOMETRY -> handleOdometryMessage(message)
-            else -> Timber.d("[NewZmqClient] 收到消息类型: ${message.messageType}")
+            else -> Timber.d("[NewZmqClient] 收到消息类型: ${message.message_type}")
         }
     }
 
@@ -373,8 +374,8 @@ class NewZmqClient : CoroutineScope {
      */
     private fun handleHeartbeatMessage(message: LeggedDriverMessage) {
         message.heartbeat?.let { heartbeat ->
-            serverConnected.set(heartbeat.isConnected)
-            Timber.d("[NewZmqClient] 收到服务器心跳，连接状态: ${heartbeat.isConnected}")
+            serverConnected.set(heartbeat.is_connected)
+            Timber.d("[NewZmqClient] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
         }
     }
 
@@ -382,9 +383,9 @@ class NewZmqClient : CoroutineScope {
      * 处理电池信息消息
      */
     private fun handleBatteryInfoMessage(message: LeggedDriverMessage) {
-        message.batteryInfo?.let { batteryInfo ->
-            batteryLevel.set(batteryInfo.batteryLevel)
-            Timber.d("[NewZmqClient] 收到电池信息，电量: ${batteryInfo.batteryLevel}%")
+        message.battery_info?.let { batteryInfo ->
+            batteryLevel.set(batteryInfo.battery_level)
+            Timber.d("[NewZmqClient] 收到电池信息，电量: ${batteryInfo.battery_level}%")
         }
     }
 
@@ -392,7 +393,7 @@ class NewZmqClient : CoroutineScope {
      * 处理当前模式消息
      */
     private fun handleCurrentModeMessage(message: LeggedDriverMessage) {
-        message.currentMode?.let { currentModeMsg ->
+        message.current_mode?.let { currentModeMsg ->
             currentMode.set(currentModeMsg.mode)
             Timber.d("[NewZmqClient] 收到当前模式: ${currentModeMsg.mode}")
         }
@@ -402,9 +403,9 @@ class NewZmqClient : CoroutineScope {
      * 处理当前控制模式消息
      */
     private fun handleCurrentControlModeMessage(message: LeggedDriverMessage) {
-        message.currentControlMode?.let { currentControlModeMsg ->
-            currentControlMode.set(currentControlModeMsg.controlMode)
-            Timber.d("[NewZmqClient] 收到当前控制模式: ${currentControlModeMsg.controlMode}")
+        message.current_control_mode?.let { currentControlModeMsg ->
+            currentControlMode.set(currentControlModeMsg.control_mode)
+            Timber.d("[NewZmqClient] 收到当前控制模式: ${currentControlModeMsg.control_mode}")
         }
     }
 
@@ -413,7 +414,7 @@ class NewZmqClient : CoroutineScope {
      */
     private fun handleOdometryMessage(message: LeggedDriverMessage) {
         message.odometry?.let { odom ->
-            Timber.d("[NewZmqClient] 收到里程计信息: pos(${odom.position.x},${odom.position.y},${odom.position.z})")
+            Timber.d("[NewZmqClient] 收到里程计信息: pos(${odom.position?.x},${odom.position?.y},${odom.position?.z})")
         }
     }
 
