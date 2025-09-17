@@ -81,12 +81,16 @@ fun MainControlScreen(
             mode = controlMode,
             isRageModeEnabled = isRageModeEnabled,
             onConnectClick = {
-                if (connectionState == ConnectionState.CONNECTED) {
-                    controller.disconnect()
-                } else if (connectionState == ConnectionState.CONNECTING) {
-                    controller.cancelConnection()
-                } else {
-                    controller.connect()
+                when (connectionState) {
+                    ConnectionState.CONNECTED -> {
+                        controller.disconnect()
+                    }
+                    ConnectionState.CONNECTING -> {
+                        controller.cancelConnection()
+                    }
+                    else -> {
+                        controller.connect()
+                    }
                 }
             },
             onModeClick = { mode ->

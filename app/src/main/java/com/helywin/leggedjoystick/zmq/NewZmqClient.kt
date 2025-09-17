@@ -11,6 +11,7 @@ package com.helywin.leggedjoystick.zmq
 
 import legged_driver.*
 import com.helywin.leggedjoystick.proto.MessageUtils
+import com.helywin.leggedjoystick.data.ConnectionState
 import org.zeromq.SocketType
 import org.zeromq.ZContext
 import org.zeromq.ZMQ
@@ -31,17 +32,27 @@ typealias MessageCallback = (LeggedDriverMessage) -> Unit
 /**
  * 连接状态回调函数类型
  */
+typealias ConnectionStateCallback = (ConnectionState) -> Unit
+
+/**
+ * 连接丢失回调函数类型
+ */
 typealias ConnectionLostCallback = () -> Unit
+
+/**
+ * 连接状态回调函数类型
+ */
+typealias ConnectionStateChangeCallback = (ConnectionState) -> Unit
 
 /**
  * 新的ZMQ客户端实现
  * 使用ExecutorService管理线程池，提供更稳定的连接管理
  */
-class NewZmqClient (
+class NewZmqClient(
     val deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
     var tcpEndpoint: String = DEFAULT_TCP_ENDPOINT,
     val heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
-){
+) {
     companion object {
         private const val DEFAULT_TCP_ENDPOINT = "tcp://127.0.0.1:33445"
         private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
@@ -50,22 +61,24 @@ class NewZmqClient (
         private const val MAX_SEND_QUEUE_SIZE = 1000 // 限制发送队列大小
         private const val THREAD_SHUTDOWN_TIMEOUT_MS = 5000L
         private const val MAX_CONSECUTIVE_FAILURES = 3
+        private const val CONNECTION_VERIFY_TIMEOUT_MS = 3000L // 连接验证超时时间
     }
 
     // ZMQ相关
     @Volatile
     private var zmqContext: ZContext? = null
+
     @Volatile
     private var socket: ZMQ.Socket? = null
 
     // 状态控制
     private val running = AtomicBoolean(false)
-    private val connected = AtomicBoolean(false)
-    
+    private val connectionState = AtomicReference(ConnectionState.DISCONNECTED)
+
     // 线程池管理
     @Volatile
     private var executorService: ExecutorService? = null
-    
+
     // 任务Future，用于控制任务的取消
     private val receiveFuture = AtomicReference<Future<*>?>()
     private val sendFuture = AtomicReference<Future<*>?>()
@@ -83,7 +96,7 @@ class NewZmqClient (
 
     // 回调
     private var messageCallback: MessageCallback? = null
-    private var connectionLostCallback: ConnectionLostCallback? = null
+    private var connectionStateCallback: ConnectionStateCallback? = null
 
     // 服务器状态缓存
     private val serverConnected = AtomicBoolean(false)
@@ -102,70 +115,72 @@ class NewZmqClient (
     /**
      * 连接到服务器
      */
-    fun connect(): Boolean {
-        if (connected.get()) {
+    fun connect() {
+        val currentState = connectionState.get()
+        if (currentState == ConnectionState.CONNECTED) {
             Timber.w("[NewZmqClient] 客户端已经连接")
-            return true
         }
 
-        return try {
-            // 确保线程池可用
-            ensureExecutorService()
-
-            // 创建ZMQ上下文和socket
-            val newContext = ZContext()
-            val newSocket = newContext.createSocket(SocketType.DEALER).apply {
-                receiveTimeOut = SOCKET_RECV_TIMEOUT_MS
-                sendTimeOut = SOCKET_SEND_TIMEOUT_MS
-                linger = 0
-            }
-
-            // 连接到服务器
-            if (!newSocket.connect(tcpEndpoint)) {
-                Timber.e("[NewZmqClient] 连接失败: $tcpEndpoint")
-                newSocket.close()
-                newContext.close()
-                return false
-            }
-
-            // 更新实例变量
-            zmqContext = newContext
-            socket = newSocket
-            
-            Timber.i("[NewZmqClient] 连接到服务器: $tcpEndpoint")
-
-            // 重置状态变量
-            resetConnectionState()
-
-            // 更新状态并启动工作任务
-            connected.set(true)
-            running.set(true)
-
-            startWorkerTasks()
-
-            Timber.i("[NewZmqClient] 客户端启动成功")
-            true
-
-        } catch (e: Exception) {
-            Timber.e(e, "[NewZmqClient] 连接失败")
-            cleanup()
-            false
+        if (currentState == ConnectionState.CONNECTING) {
+            Timber.w("[NewZmqClient] 正在连接中，请稍候")
         }
+
+        // 设置连接中状态
+        updateConnectionState(ConnectionState.CONNECTING)
+
+        Timber.i("[NewZmqClient] 开始连接到服务器: $tcpEndpoint")
+
+        // 确保线程池可用
+        ensureExecutorService()
+
+        // 创建ZMQ上下文和socket
+        val newContext = ZContext()
+        val newSocket = newContext.createSocket(SocketType.DEALER).apply {
+            receiveTimeOut = SOCKET_RECV_TIMEOUT_MS
+            sendTimeOut = SOCKET_SEND_TIMEOUT_MS
+            linger = 0
+        }
+
+        // ZMQ的connect是异步的，总是返回true
+        newSocket.connect(tcpEndpoint)
+
+        // 更新实例变量
+        zmqContext = newContext
+        socket = newSocket
+
+        Timber.i("[NewZmqClient] ZMQ socket已建立，开始验证服务器连接...")
+
+        // 重置状态变量
+        resetConnectionState()
+
+        // 验证连接
+        startConnectionVerification()
+
+        // 启动工作任务但不设置为已连接
+        running.set(true)
+        startWorkerTasks()
+
+
     }
 
     /**
      * 断开连接
      */
     fun disconnect() {
-        if (!connected.get()) {
+        val currentState = connectionState.get()
+        if (currentState == ConnectionState.DISCONNECTED ||
+            currentState == ConnectionState.CONNECTION_FAILED ||
+            currentState == ConnectionState.CONNECTION_TIMEOUT
+        ) {
+            Timber.w("[NewZmqClient] 客户端已经断开连接")
             return
         }
 
         Timber.i("[NewZmqClient] 正在断开连接...")
-        
+
         // 停止状态标志
         running.set(false)
-        connected.set(false)
+        updateConnectionState(ConnectionState.DISCONNECTED)
 
         // 取消所有任务
         cancelAllTasks()
@@ -174,6 +189,150 @@ class NewZmqClient (
         cleanup()
 
         Timber.i("[NewZmqClient] 客户端已断开连接")
+    }
+
+    /**
+     * 更新连接状态并通知回调
+     */
+    private fun updateConnectionState(newState: ConnectionState) {
+        val oldState = connectionState.getAndSet(newState)
+        if (oldState != newState) {
+            Timber.d("[NewZmqClient] 连接状态变更: $oldState -> $newState")
+            connectionStateCallback?.invoke(newState)
+        }
+    }
+
+    /**
+     * 启动异步连接验证
+     */
+    private fun startConnectionVerification() {
+        val executor = executorService ?: return
+
+        executor.submit {
+            try {
+                Timber.d("[NewZmqClient] 开始异步验证连接，发送测试心跳...")
+
+                // 发送测试心跳
+                sendHeartbeat()
+
+                // 等待服务器响应
+                val startTime = System.currentTimeMillis()
+                var connectionVerified = false
+
+                while (System.currentTimeMillis() - startTime < CONNECTION_VERIFY_TIMEOUT_MS && running.get()) {
+                    if (serverConnected.get()) {
+                        connectionVerified = true
+                        break
+                    }
+                    Thread.sleep(100)
+                }
+
+                if (connectionVerified) {
+                    updateConnectionState(ConnectionState.CONNECTED)
+                    Timber.i("[NewZmqClient] 服务器连接验证成功")
+                } else {
+                    Timber.w("[NewZmqClient] 连接验证超时，未收到服务器响应")
+                    updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
+
+                    // 清理资源
+                    running.set(false)
+                    cancelAllTasks()
+                    cleanup()
+                }
+
+            } catch (e: Exception) {
+                Timber.e(e, "[NewZmqClient] 连接验证过程中发生异常")
+                updateConnectionState(ConnectionState.CONNECTION_FAILED)
+
+                // 清理资源
+                running.set(false)
+                cancelAllTasks()
+                cleanup()
+            }
+        }
+    }
+
+    /**
+     * 启动带回调的连接验证
+     */
+    private fun startConnectionVerificationWithCallback(result: CompletableFuture<Boolean>) {
+        val executor = executorService ?: return
+
+        executor.submit {
+            try {
+                Timber.d("[NewZmqClient] 开始验证连接，发送测试心跳...")
+
+                // 发送测试心跳
+                sendHeartbeat()
+
+                // 等待服务器响应
+                val startTime = System.currentTimeMillis()
+                var connectionVerified = false
+
+                while (System.currentTimeMillis() - startTime < CONNECTION_VERIFY_TIMEOUT_MS && running.get()) {
+                    if (serverConnected.get()) {
+                        connectionVerified = true
+                        break
+                    }
+                    Thread.sleep(100)
+                }
+
+                if (connectionVerified) {
+                    updateConnectionState(ConnectionState.CONNECTED)
+                    Timber.i("[NewZmqClient] 服务器连接验证成功")
+                    result.complete(true)
+                } else {
+                    Timber.w("[NewZmqClient] 连接验证超时，未收到服务器响应")
+                    updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
+
+                    // 清理资源
+                    running.set(false)
+                    cancelAllTasks()
+                    cleanup()
+                    result.complete(false)
+                }
+
+            } catch (e: Exception) {
+                Timber.e(e, "[NewZmqClient] 连接验证过程中发生异常")
+                updateConnectionState(ConnectionState.CONNECTION_FAILED)
+
+                // 清理资源
+                running.set(false)
+                cancelAllTasks()
+                cleanup()
+                result.complete(false)
+            }
+        }
+    }
+
+    /**
+     * 验证连接是否真的建立成功（已弃用，保留用于兼容）
+     */
+    @Deprecated("使用异步验证替代")
+    private fun verifyConnection(): Boolean {
+        Timber.d("[NewZmqClient] 开始验证连接，发送测试心跳...")
+
+        try {
+            // 发送测试心跳
+            sendHeartbeat()
+
+            // 等待服务器响应
+            val startTime = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startTime < CONNECTION_VERIFY_TIMEOUT_MS) {
+                if (serverConnected.get()) {
+                    Timber.d("[NewZmqClient] 连接验证成功，收到服务器响应")
+                    return true
+                }
+                Thread.sleep(100)
+            }
+
+            Timber.w("[NewZmqClient] 连接验证超时，未收到服务器响应")
+            return false
+
+        } catch (e: Exception) {
+            Timber.e(e, "[NewZmqClient] 连接验证过程中发生异常")
+            return false
+        }
     }
 
     /**
@@ -223,17 +382,18 @@ class NewZmqClient (
      */
     private fun startWorkerTasks() {
         try {
-            val executor = executorService ?: throw IllegalStateException("ExecutorService 未初始化")
-            
+            val executor =
+                executorService ?: throw IllegalStateException("ExecutorService 未初始化")
+
             // 启动接收任务
             receiveFuture.set(executor.submit { receiveTask() })
-            
+
             // 启动发送任务
             sendFuture.set(executor.submit { sendTask() })
-            
+
             // 启动心跳任务
             heartbeatFuture.set(executor.submit { heartbeatTask() })
-            
+
             Timber.d("[NewZmqClient] 所有工作任务已启动")
         } catch (e: Exception) {
             Timber.e(e, "[NewZmqClient] 启动工作任务失败")
@@ -246,7 +406,7 @@ class NewZmqClient (
      */
     private fun cancelAllTasks() {
         val futures = listOf(receiveFuture, sendFuture, heartbeatFuture)
-        
+
         futures.forEach { futureRef ->
             futureRef.get()?.let { future ->
                 if (!future.isDone) {
@@ -262,7 +422,7 @@ class NewZmqClient (
      */
     private fun shutdownExecutorService() {
         val executor = executorService ?: return
-        
+
         try {
             executor.shutdown()
             if (!executor.awaitTermination(THREAD_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
@@ -283,11 +443,11 @@ class NewZmqClient (
      */
     private fun receiveTask() {
         Timber.i("[NewZmqClient] 接收任务启动")
-        
+
         try {
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 processReceiveOnce()
-                
+
                 // 短暂休眠避免CPU占用过高
                 Thread.sleep(10)
             }
@@ -307,22 +467,22 @@ class NewZmqClient (
     private fun processReceiveOnce() {
         try {
             val currentSocket = socket ?: return
-            
+
             val data = currentSocket.recv(ZMQ.NOBLOCK)
             if (data != null) {
                 val message = MessageUtils.deserializeMessage(data)
-                
+
                 if (MessageUtils.verifyMessage(message)) {
                     processReceivedMessage(message)
                     messageCallback?.invoke(message)
-                    
+
                     // 重置失败计数
                     consecutiveFailures.set(0)
                 } else {
                     Timber.w("[NewZmqClient] CRC32校验失败")
                 }
             }
-            
+
         } catch (e: ZMQException) {
             if (e.errorCode != ZMQ.Error.EAGAIN.code) {
                 handleReceiveError(e)
@@ -338,7 +498,7 @@ class NewZmqClient (
      */
     private fun sendTask() {
         Timber.i("[NewZmqClient] 发送任务启动")
-        
+
         try {
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 processSendOnce()
@@ -360,7 +520,7 @@ class NewZmqClient (
         try {
             val data = sendQueue.poll(100, TimeUnit.MILLISECONDS) ?: return
             val currentSocket = socket ?: return
-            
+
             if (currentSocket.send(data, ZMQ.NOBLOCK)) {
                 consecutiveFailures.set(0)
             } else {
@@ -370,7 +530,7 @@ class NewZmqClient (
                 }
                 incrementFailureCount()
             }
-            
+
         } catch (e: ZMQException) {
             Timber.e(e, "[NewZmqClient] 发送消息失败")
             incrementFailureCount()
@@ -387,7 +547,7 @@ class NewZmqClient (
      */
     private fun heartbeatTask() {
         Timber.i("[NewZmqClient] 心跳任务启动")
-        
+
         try {
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 sendHeartbeat()
@@ -436,36 +596,7 @@ class NewZmqClient (
      */
     private fun handleConnectionLost() {
         if (running.compareAndSet(true, false)) {
-            connected.set(false)
-            
-            // 异步通知连接丢失，避免死锁
-            try {
-                val executor = executorService
-                if (executor != null && !executor.isShutdown) {
-                    executor.submit {
-                        try {
-                            connectionLostCallback?.invoke()
-                        } catch (e: Exception) {
-                            Timber.e(e, "[NewZmqClient] 连接丢失回调异常")
-                        }
-                    }
-                } else {
-                    // 如果线程池已关闭，直接在当前线程调用
-                    try {
-                        connectionLostCallback?.invoke()
-                    } catch (e: Exception) {
-                        Timber.e(e, "[NewZmqClient] 连接丢失回调异常")
-                    }
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "[NewZmqClient] 提交连接丢失回调任务失败")
-                // 如果提交失败，直接在当前线程调用
-                try {
-                    connectionLostCallback?.invoke()
-                } catch (callbackException: Exception) {
-                    Timber.e(callbackException, "[NewZmqClient] 连接丢失回调异常")
-                }
-            }
+            updateConnectionState(ConnectionState.CONNECTION_FAILED)
         }
     }
 
@@ -543,10 +674,10 @@ class NewZmqClient (
             Timber.w("[NewZmqClient] 客户端未运行，忽略消息发送")
             return
         }
-        
+
         try {
             val data = MessageUtils.serializeMessage(message)
-            
+
             // 尝试添加到发送队列
             if (!sendQueue.offer(data)) {
                 Timber.w("[NewZmqClient] 发送队列已满，丢弃最旧的消息")
@@ -558,12 +689,10 @@ class NewZmqClient (
         }
     }
 
-    // ========== 公开接口 ==========
-
     /**
-     * 是否已连接
+     * 获取当前连接状态
      */
-    fun isConnected(): Boolean = connected.get()
+    fun getConnectionState(): ConnectionState = connectionState.get()
 
     /**
      * 服务器是否已连接
@@ -593,10 +722,10 @@ class NewZmqClient (
     }
 
     /**
-     * 设置连接丢失回调
+     * 设置连接状态回调
      */
-    fun setConnectionLostCallback(callback: ConnectionLostCallback?) {
-        this.connectionLostCallback = callback
+    fun setConnectionStateCallback(callback: ConnectionStateCallback?) {
+        this.connectionStateCallback = callback
     }
 
     /**
@@ -604,7 +733,7 @@ class NewZmqClient (
      */
     fun sendHeartbeat() {
         val message = MessageUtils.createHeartbeatMessage(
-            deviceType, deviceId, connected.get()
+            deviceType, deviceId, true
         )
         sendMessage(message)
     }
@@ -646,8 +775,14 @@ class NewZmqClient (
         // 应用速度限制
         val filteredVx = applyVxLimit(vx)
         val filteredVy = applyVyLimit(vy)
-        
-        val message = MessageUtils.createVelocityCommandMessage(deviceType, deviceId, filteredVx, filteredVy, yawRate)
+
+        val message = MessageUtils.createVelocityCommandMessage(
+            deviceType,
+            deviceId,
+            filteredVx,
+            filteredVy,
+            yawRate
+        )
         sendMessage(message)
         Timber.v("[NewZmqClient] 发送速度指令: vx=$filteredVx, vy=$filteredVy, yawRate=$yawRate")
     }
@@ -696,7 +831,7 @@ class NewZmqClient (
      */
     fun close() {
         disconnect()
-        
+
         // 关闭线程池
         shutdownExecutorService()
     }

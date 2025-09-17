@@ -177,10 +177,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
         zmqClient.setMessageCallback { message ->
             handleIncomingMessage(message)
         }
-        
-        // 设置连接丢失回调
-        zmqClient.setConnectionLostCallback {
-            handleConnectionLost()
+
+        zmqClient.setConnectionStateCallback {
+            handleConnectionState(it)
         }
         
         // 启动时加载设置
@@ -220,18 +219,26 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
         }
     }
-    
+
     /**
-     * 处理连接丢失
+     * 处理连接状态
      */
-    private fun handleConnectionLost() {
+    private fun handleConnectionState(state: ConnectionState) {
         scope.launch {
-            Timber.w("[Controller] 检测到连接丢失，自动断开连接")
-            settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-            stopVelocityLoop()
+            if (settingsState.connectionState == state) {
+                // 状态未变化，忽略
+                return@launch
+            }
+            if (state == ConnectionState.CONNECTING) {
+                startVelocityLoop()
+            } else {
+                stopVelocityLoop()
+            }
+            settingsState.updateConnectionState(state)
+            Timber.i("[Controller] 连接状态更新: $state")
         }
     }
-    
+
     /**
      * 连接到机器人
      */
@@ -262,19 +269,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 zmqClient.setEndpoint(endpoint)
                 
                 // 进行连接
-                val success = zmqClient.connect()
-                
-                if (success) {
-                    settingsState.updateConnectionState(ConnectionState.CONNECTED)
-                    Timber.i("[Controller] 连接成功")
-                    
-                    // 连接成功后开始速度发送循环（如果是手动模式）
-                    startVelocityLoop()
-                    
-                } else {
-                    settingsState.updateConnectionState(ConnectionState.CONNECTION_FAILED)
-                    Timber.e("[Controller] 连接失败")
-                }
+                zmqClient.connect()
+
                 
             } catch (e: CancellationException) {
                 settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
