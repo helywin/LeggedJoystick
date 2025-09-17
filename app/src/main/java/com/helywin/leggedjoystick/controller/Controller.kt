@@ -229,7 +229,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 // 状态未变化，忽略
                 return@launch
             }
-            if (state == ConnectionState.CONNECTING) {
+            if (state == ConnectionState.CONNECTED) {
                 startVelocityLoop()
             } else {
                 stopVelocityLoop()
