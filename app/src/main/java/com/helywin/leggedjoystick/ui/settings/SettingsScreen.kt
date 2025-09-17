@@ -9,6 +9,7 @@
 
 package com.helywin.leggedjoystick.ui.settings
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -38,7 +40,8 @@ fun SettingsScreen(
 ) {
     var zmqIp by remember { mutableStateOf(currentSettings.zmqIp) }
     var zmqPort by remember { mutableStateOf(currentSettings.zmqPort.toString()) }
-    
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -69,7 +72,7 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "ZMQ连接设置",
+                        text = "连接设置",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -114,6 +117,11 @@ fun SettingsScreen(
                                 )
                                 onSettingsChange(newSettings)
                                 Timber.i("ZMQ设置已保存: IP=$zmqIp, Port=$port")
+                                Toast.makeText(
+                                    context,
+                                    "设置已保存",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         ) {
                             Text("保存")
@@ -139,7 +147,7 @@ fun SettingsScreen(
                     
                     Text("版本: 1.0.0")
                     Text("作者: helywin")
-                    Text("描述: 四足机器人遥控器")
+                    Text("描述: 天马智行机器狗遥控器")
                 }
             }
             
@@ -157,11 +165,11 @@ fun SettingsScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    Text("• 配置ZMQ服务器的IP地址和端口")
+                    Text("• 配置服务器的IP地址和端口")
                     Text("• 点击连接按钮连接到机器人")
                     Text("• 使用摇杆控制机器人移动")
                     Text("• 选择不同模式控制机器人状态")
-                    Text("• 狂暴模式下速度限制提升到2倍")
+                    Text("• 狂暴模式开启时前后速度提升到2m/s，关闭时为1m/s")
                 }
             }
         }

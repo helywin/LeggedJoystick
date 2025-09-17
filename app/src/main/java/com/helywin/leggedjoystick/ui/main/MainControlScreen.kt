@@ -74,6 +74,18 @@ fun MainControlScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        Row (
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "天马智行机器狗遥控器",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
         // 顶部状态栏
         TopStatusBar(
             batteryLevel = batteryLevel,
@@ -351,7 +363,8 @@ private fun ModeButton(
         modifier = Modifier
             .selectable(
                 selected = isSelected,
-                onClick = { if (isEnabled) onClick() }
+                onClick = { if (isEnabled) onClick() },
+                enabled = isEnabled
             )
             .padding(4.dp)
             .alpha(if (isEnabled) 1f else 0.6f),

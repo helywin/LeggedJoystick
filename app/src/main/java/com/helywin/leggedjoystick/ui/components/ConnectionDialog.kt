@@ -100,7 +100,7 @@ private fun ConnectionDialogContent(
                     )
 
                     Text(
-                        text = "正在尝试连接到机器人",
+                        text = "正在尝试连接到机器狗",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -129,7 +129,7 @@ private fun ConnectionDialogContent(
                     )
 
                     Text(
-                        text = "无法连接到指定的服务器，请检查网络设置",
+                        text = "无法连接，请检查网络设置",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -155,7 +155,7 @@ private fun ConnectionDialogContent(
                     )
 
                     Text(
-                        text = "连接服务器超时，请检查服务器是否正在运行",
+                        text = "连接超时，请检查机器狗程序是否正在运行",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
