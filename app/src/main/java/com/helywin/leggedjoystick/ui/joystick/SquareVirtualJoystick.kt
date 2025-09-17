@@ -93,15 +93,8 @@ fun SquareVirtualJoystick(
                         val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
                         val maxRadius = min(canvasSize.width, canvasSize.height) / 2f - halfKnobSize
                         
-                        // 计算初始位置
-                        currentValue = down.position
-                            .toJoystickValue(center, maxRadius)
-                            .let { value ->
-                                JoystickValue(
-                                    (value.x * maxVelocity).coerceIn(-maxVelocity, maxVelocity),
-                                    (value.y * maxVelocity).coerceIn(-maxVelocity, maxVelocity)
-                                )
-                            }
+                        // 计算初始位置 (不应用maxVelocity缩放，保持[-1,1]范围)
+                        currentValue = down.position.toJoystickValue(center, maxRadius)
                         
                         // 立即触发按下回调
                         enhancedCallback?.onPressed()
@@ -113,15 +106,8 @@ fun SquareVirtualJoystick(
                             val change = event.changes.firstOrNull() ?: break
                             
                             if (change.pressed) {
-                                // 更新拖动位置
-                                currentValue = change.position
-                                    .toJoystickValue(center, maxRadius)
-                                    .let { value ->
-                                        JoystickValue(
-                                            (value.x * maxVelocity).coerceIn(-maxVelocity, maxVelocity),
-                                            (value.y * maxVelocity).coerceIn(-maxVelocity, maxVelocity)
-                                        )
-                                    }
+                                // 更新拖动位置 (不应用maxVelocity缩放，保持[-1,1]范围)
+                                currentValue = change.position.toJoystickValue(center, maxRadius)
                                 change.consume()
                             }
                         } while (event.changes.any { it.pressed })

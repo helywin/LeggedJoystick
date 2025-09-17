@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -83,6 +84,12 @@ fun SettingsScreen(
                         onValueChange = { zmqIp = it },
                         label = { Text("IP地址") },
                         placeholder = { Text("127.0.0.1") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Computer,
+                                contentDescription = "IP地址"
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -98,6 +105,12 @@ fun SettingsScreen(
                         },
                         label = { Text("端口") },
                         placeholder = { Text("33445") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "端口"
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true
@@ -124,6 +137,12 @@ fun SettingsScreen(
                                 ).show()
                             }
                         ) {
+                            Icon(
+                                imageVector = Icons.Default.Save,
+                                contentDescription = "保存",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text("保存")
                         }
                     }

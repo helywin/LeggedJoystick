@@ -10,10 +10,13 @@
 package com.helywin.leggedjoystick.ui.components
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -111,14 +114,22 @@ private fun ConnectionDialogContent(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Cancel,
+                            contentDescription = "取消",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("取消连接")
                     }
                 }
 
                 ConnectionState.CONNECTION_FAILED -> {
-                    Text(
-                        text = "❌",
-                        fontSize = 48.sp
+                    Icon(
+                        imageVector = Icons.Default.Error,
+                        contentDescription = "连接失败",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.error
                     )
 
                     Text(
@@ -137,14 +148,22 @@ private fun ConnectionDialogContent(
                     Button(
                         onClick = { onDismiss?.invoke() }
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "确定",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("确定")
                     }
                 }
 
                 ConnectionState.CONNECTION_TIMEOUT -> {
-                    Text(
-                        text = "⏰",
-                        fontSize = 48.sp
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = "连接超时",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.error
                     )
 
                     Text(
@@ -163,6 +182,12 @@ private fun ConnectionDialogContent(
                     Button(
                         onClick = { onDismiss?.invoke() }
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "确定",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("确定")
                     }
                 }

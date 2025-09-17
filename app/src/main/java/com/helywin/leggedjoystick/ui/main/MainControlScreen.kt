@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -78,7 +78,7 @@ fun MainControlScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Row (
+        Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
@@ -102,9 +102,11 @@ fun MainControlScreen(
                     ConnectionState.CONNECTED -> {
                         controller.disconnect()
                     }
+
                     ConnectionState.CONNECTING -> {
                         controller.cancelConnection()
                     }
+
                     else -> {
                         controller.connect()
                     }
@@ -141,7 +143,6 @@ fun MainControlScreen(
             // 左侧摇杆区域 - 用于移动控制 (vx, vy)
             SquareVirtualJoystick(
                 size = 200.dp,
-                maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
                         controller.updateLeftJoystick(value)
@@ -169,7 +170,6 @@ fun MainControlScreen(
             LinearVirtualJoystick(
                 width = 200.dp,
                 height = 60.dp,
-                maxVelocity = if (isRageModeEnabled) 2f else 1f,
                 enhancedCallback = object : EnhancedJoystickCallback {
                     override fun onValueChanged(value: JoystickValue) {
                         controller.updateRightJoystick(value)
@@ -214,7 +214,7 @@ private fun TopStatusBar(
         ) {
             // 电量显示
             BatteryIndicator(batteryLevel = batteryLevel)
-            
+
             // 游戏手柄状态显示
             if (gamepadInputState != null) {
                 GamepadStatusIndicator(
@@ -235,7 +235,7 @@ private fun TopStatusBar(
                 isConnected = connectionState == ConnectionState.CONNECTED,
                 onModeClick = onModeClick
             )
-            
+
             // 连接状态按钮
             Button(
                 onClick = onConnectClick,
@@ -248,6 +248,17 @@ private fun TopStatusBar(
                 ),
                 enabled = connectionState != ConnectionState.CONNECTING
             ) {
+                Icon(
+                    imageVector = when (connectionState) {
+                        ConnectionState.CONNECTED -> Icons.Default.LinkOff
+                        ConnectionState.CONNECTING -> Icons.Default.Sync
+                        ConnectionState.CONNECTION_FAILED, ConnectionState.CONNECTION_TIMEOUT -> Icons.Default.Refresh
+                        else -> Icons.Default.Link
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = when (connectionState) {
                         ConnectionState.CONNECTED -> "断开"
@@ -273,35 +284,38 @@ private fun TopStatusBar(
 @Composable
 private fun BatteryIndicator(batteryLevel: Int) {
     // 电池图标与百分比显示
-    Box(
-        modifier = Modifier
-            .width(80.dp)
-            .height(30.dp)
-            .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-            .clip(RoundedCornerShape(4.dp)),
-        contentAlignment = Alignment.Center
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // 电量背景
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(batteryLevel / 100f)
-                .background(
-                    when {
-                        batteryLevel > 50 -> Color.Green
-                        batteryLevel > 20 -> Color.Yellow
-                        else -> Color.Red
-                    }
-                )
-                .align(Alignment.CenterStart)
+        Icon(
+            imageVector = when {
+                batteryLevel > 90 -> Icons.Default.BatteryFull
+                batteryLevel > 60 -> Icons.Default.Battery6Bar
+                batteryLevel > 50 -> Icons.Default.Battery5Bar
+                batteryLevel > 30 -> Icons.Default.Battery4Bar
+                batteryLevel > 20 -> Icons.Default.Battery2Bar
+                batteryLevel > 10 -> Icons.Default.Battery1Bar
+                else -> Icons.Default.Battery0Bar
+            },
+            contentDescription = "电池电量",
+            tint = when {
+                batteryLevel > 50 -> Color(0xFF4CAF50)
+                batteryLevel > 20 -> Color(0xFFFF9800)
+                else -> Color(0xFFF44336)
+            },
+            modifier = Modifier.size(20.dp)
         )
-        
-        // 百分比文本（白色）
+
         Text(
             text = "$batteryLevel%",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = when {
+                batteryLevel > 50 -> Color(0xFF4CAF50)
+                batteryLevel > 20 -> Color(0xFFFF9800)
+                else -> Color(0xFFF44336)
+            }
         )
     }
 }
@@ -333,6 +347,12 @@ private fun ControlModeToggle(
             }
         )
     ) {
+        Icon(
+            imageVector = if (currentMode == Mode.MODE_AUTO) Icons.Default.AutoMode else Icons.Default.ControlCamera,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = currentMode.displayName,
             fontSize = 12.sp
@@ -386,8 +406,8 @@ private fun ModeButton(
                 onClick = { if (isEnabled) onClick() },
                 enabled = isEnabled
             )
-            .padding(4.dp)
-            .alpha(if (isEnabled) 1f else 0.6f),
+            .alpha(if (isEnabled) 1f else 0.6f)
+            .padding(4.dp),
         colors = CardDefaults.cardColors(
             containerColor = when {
                 isSelected -> MaterialTheme.colorScheme.primary
@@ -410,8 +430,24 @@ private fun ModeButton(
                     strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+            } else {
+                Icon(
+                    imageVector = when (mode) {
+                        ControlMode.CONTROL_MODE_STAND_UP -> Icons.Default.KeyboardArrowUp
+                        ControlMode.CONTROL_MODE_LIE_DOWN -> Icons.Default.KeyboardArrowDown
+                        ControlMode.CONTROL_MODE_PASSIVE -> Icons.Default.PauseCircleOutline
+                        else -> Icons.Default.HelpOutline
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = when {
+                        isSelected -> MaterialTheme.colorScheme.onPrimary
+                        isChanging -> MaterialTheme.colorScheme.onTertiary
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                )
             }
-            
+
             Text(
                 text = mode.displayName,
                 color = when {
@@ -454,15 +490,17 @@ private fun RageModeButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = "狂暴",
-                fontSize = 12.sp,
-                color = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface
+            Icon(
+                imageVector = if (isEnabled) Icons.Default.Whatshot else Icons.Default.LocalFireDepartment,
+                contentDescription = "狂暴模式",
+                modifier = Modifier.size(24.dp),
+                tint = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "模式",
-                fontSize = 12.sp,
-                color = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface
+                text = (if (isEnabled) "狂暴" else "普通") + "模式",
+                fontSize = 10.sp,
+                color = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (isEnabled) FontWeight.Bold else FontWeight.Normal
             )
         }
     }
@@ -493,7 +531,7 @@ fun MainControlScreenPreview() {
             override fun cleanup() {}
         }
     }
-    
+
     MainControlScreen(
         controller = dummyController,
         onSettingsClick = {}

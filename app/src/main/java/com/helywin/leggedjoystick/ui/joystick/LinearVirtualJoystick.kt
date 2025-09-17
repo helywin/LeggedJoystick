@@ -96,9 +96,8 @@ fun LinearVirtualJoystick(
                         val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
                         val maxRange = (canvasSize.width / 2f) - halfKnobSize
                         
-                        // 计算初始位置
-                        val x = ((down.position.x - center.x) / maxRange * maxVelocity)
-                            .coerceIn(-maxVelocity, maxVelocity)
+                        // 计算初始位置 (不应用maxVelocity缩放，保持[-1,1]范围)
+                        val x = ((down.position.x - center.x) / maxRange).coerceIn(-1f, 1f)
                         currentValue = JoystickValue(x, 0f)
                         
                         // 立即触发按下回调
@@ -111,9 +110,8 @@ fun LinearVirtualJoystick(
                             val change = event.changes.firstOrNull() ?: break
                             
                             if (change.pressed) {
-                                // 更新拖动位置
-                                val newX = ((change.position.x - center.x) / maxRange * maxVelocity)
-                                    .coerceIn(-maxVelocity, maxVelocity)
+                                // 更新拖动位置 (不应用maxVelocity缩放，保持[-1,1]范围)
+                                val newX = ((change.position.x - center.x) / maxRange).coerceIn(-1f, 1f)
                                 currentValue = JoystickValue(newX, 0f)
                                 change.consume()
                             }
