@@ -9,6 +9,7 @@
 
 package com.helywin.leggedjoystick.ui.main
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -23,7 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -40,6 +45,17 @@ import legged_driver.Mode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.components.GamepadStatusIndicator
 import com.helywin.leggedjoystick.ui.joystick.*
+import kotlin.random.Random
+
+/**
+ * 渐变点数据类
+ */
+data class GradientPoint(
+    val color: Color,
+    val center: Offset,
+    val radius: Float,
+    val alpha: Float
+)
 
 /**
  * 主控制界面
@@ -73,117 +89,119 @@ fun MainControlScreen(
         }
     )
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "天马智行机器狗遥控器",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        }
-        // 顶部状态栏
-        TopStatusBar(
-            batteryLevel = batteryLevel,
-            connectionState = connectionState,
-            mode = controlMode,
-            isRageModeEnabled = isRageModeEnabled,
-            gamepadInputState = gamepadInputState,
-            onConnectClick = {
-                when (connectionState) {
-                    ConnectionState.CONNECTED -> {
-                        controller.disconnect()
-                    }
-
-                    ConnectionState.CONNECTING -> {
-                        controller.cancelConnection()
-                    }
-
-                    else -> {
-                        controller.connect()
-                    }
-                }
-            },
-            onModeClick = { mode ->
-                controller.setMode(mode)
-            },
-            onSettingsClick = onSettingsClick
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // 模式选择按钮组
-        ModeSelectionRow(
-            currentCtrlMode = currentMode,
-            isRobotModeChanging = isRobotModeChanging,
-            isConnected = connectionState == ConnectionState.CONNECTED,
-            onCtrlModeSelected = { mode ->
-                controller.setControlMode(mode)
-            }
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // 主控制区域
-        Row(
+    MultiPointGradientBackground {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .padding(16.dp)
         ) {
-            // 左侧摇杆区域 - 用于移动控制 (vx, vy)
-            SquareVirtualJoystick(
-                size = 200.dp,
-                enhancedCallback = object : EnhancedJoystickCallback {
-                    override fun onValueChanged(value: JoystickValue) {
-                        controller.updateLeftJoystick(value)
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "天马智行机器狗遥控器",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            // 顶部状态栏
+            TopStatusBar(
+                batteryLevel = batteryLevel,
+                connectionState = connectionState,
+                mode = controlMode,
+                isRageModeEnabled = isRageModeEnabled,
+                gamepadInputState = gamepadInputState,
+                onConnectClick = {
+                    when (connectionState) {
+                        ConnectionState.CONNECTED -> {
+                            controller.disconnect()
+                        }
 
-                    override fun onPressed() {
-                        controller.onLeftJoystickPressed()
-                    }
+                        ConnectionState.CONNECTING -> {
+                            controller.cancelConnection()
+                        }
 
-                    override fun onReleased() {
-                        controller.onLeftJoystickReleased()
+                        else -> {
+                            controller.connect()
+                        }
                     }
+                },
+                onModeClick = { mode ->
+                    controller.setMode(mode)
+                },
+                onSettingsClick = onSettingsClick
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 模式选择按钮组
+            ModeSelectionRow(
+                currentCtrlMode = currentMode,
+                isRobotModeChanging = isRobotModeChanging,
+                isConnected = connectionState == ConnectionState.CONNECTED,
+                onCtrlModeSelected = { mode ->
+                    controller.setControlMode(mode)
                 }
             )
 
-            // 中间狂暴模式按钮
-            RageModeButton(
-                isEnabled = isRageModeEnabled,
-                onClick = {
-                    controller.toggleRageMode()
-                }
-            )
+            Spacer(modifier = Modifier.weight(1f))
 
-            // 右侧线性摇杆 - 用于转向控制 (yawRate)
-            LinearVirtualJoystick(
-                width = 200.dp,
-                height = 60.dp,
-                enhancedCallback = object : EnhancedJoystickCallback {
-                    override fun onValueChanged(value: JoystickValue) {
-                        controller.updateRightJoystick(value)
-                    }
+            // 主控制区域
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // 左侧摇杆区域 - 用于移动控制 (vx, vy)
+                SquareVirtualJoystick(
+                    size = 200.dp,
+                    enhancedCallback = object : EnhancedJoystickCallback {
+                        override fun onValueChanged(value: JoystickValue) {
+                            controller.updateLeftJoystick(value)
+                        }
 
-                    override fun onPressed() {
-                        controller.onRightJoystickPressed()
-                    }
+                        override fun onPressed() {
+                            controller.onLeftJoystickPressed()
+                        }
 
-                    override fun onReleased() {
-                        controller.onRightJoystickReleased()
+                        override fun onReleased() {
+                            controller.onLeftJoystickReleased()
+                        }
                     }
-                }
-            )
+                )
+
+                // 中间狂暴模式按钮
+                RageModeButton(
+                    isEnabled = isRageModeEnabled,
+                    onClick = {
+                        controller.toggleRageMode()
+                    }
+                )
+
+                // 右侧线性摇杆 - 用于转向控制 (yawRate)
+                LinearVirtualJoystick(
+                    width = 200.dp,
+                    height = 60.dp,
+                    enhancedCallback = object : EnhancedJoystickCallback {
+                        override fun onValueChanged(value: JoystickValue) {
+                            controller.updateRightJoystick(value)
+                        }
+
+                        override fun onPressed() {
+                            controller.onRightJoystickPressed()
+                        }
+
+                        override fun onReleased() {
+                            controller.onRightJoystickReleased()
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -536,4 +554,97 @@ fun MainControlScreenPreview() {
         controller = dummyController,
         onSettingsClick = {}
     )
+}
+
+/**
+ * 创建多点渐变背景
+ */
+private fun createMultiPointGradientBrush(): Brush {
+    return Brush.radialGradient(
+        colors = listOf(
+            Color(0xFF1E88E5).copy(alpha = 0.08f), // 蓝色点，透明度8%
+            Color(0xFF43A047).copy(alpha = 0.06f), // 绿色点，透明度6%
+            Color(0xFFE53935).copy(alpha = 0.04f), // 红色点，透明度4%
+            Color(0xFFFB8C00).copy(alpha = 0.05f), // 橙色点，透明度5%
+            Color(0xFF8E24AA).copy(alpha = 0.07f), // 紫色点，透明度7%
+            Color.Transparent                       // 透明
+        ),
+        center = Offset(0.3f, 0.2f),
+        radius = 800f
+    )
+}
+
+/**
+ * 生成随机渐变点
+ */
+private fun generateRandomGradientPoints(): List<GradientPoint> {
+    val baseColors = listOf(
+        Color(0xFF2196F3), // 蓝色
+        Color(0xFF4CAF50), // 绿色
+        Color(0xFF9C27B0), // 紫色
+        Color(0xFFFF9800), // 橙色
+        Color(0xFFE91E63), // 粉色
+        Color(0xFF00BCD4), // 青色
+        Color(0xFF607D8B), // 蓝灰色
+        Color(0xFFFF5722), // 深橙色
+        Color(0xFF795548), // 棕色
+        Color(0xFF3F51B5)  // 靛蓝色
+    )
+
+    return (0..Random.nextInt(3, 7)).map { // 随机生成3-6个渐变点
+        val color = baseColors.random()
+        val centerX = Random.nextFloat() // 0.0 - 1.0
+        val centerY = Random.nextFloat() // 0.0 - 1.0
+        val radius = Random.nextFloat() * 400f + 300f // 300-700像素
+        val alpha = Random.nextFloat() * 0.1f + 0.1f // 0.02-0.10透明度
+
+        GradientPoint(
+            color = color,
+            center = Offset(centerX, centerY),
+            radius = radius,
+            alpha = alpha
+        )
+    }
+}
+
+/**
+ * 创建多层叠加渐变背景（多个点效果）
+ */
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
+fun MultiPointGradientBackground(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    // 使用remember确保渐变点在重组时不会改变，只在初次创建时随机生成
+    val gradientPoints = remember { generateRandomGradientPoints() }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val screenWidth = with(density) { maxWidth.toPx() }
+        val screenHeight = with(density) { maxHeight.toPx() }
+        
+        // 为每个渐变点创建一层背景
+        gradientPoints.forEach { point ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                point.color.copy(alpha = point.alpha),
+                                Color.Transparent
+                            ),
+                            center = Offset(
+                                point.center.x * screenWidth,
+                                point.center.y * screenHeight
+                            ),
+                            radius = point.radius
+                        )
+                    )
+            )
+        }
+
+        content()
+    }
 }

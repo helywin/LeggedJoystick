@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.helywin.leggedjoystick.BuildConfig
 import com.helywin.leggedjoystick.data.AppSettings
 import timber.log.Timber
 
@@ -57,7 +58,7 @@ fun SettingsScreen(
                 }
             }
         )
-        
+
         // 设置内容
         Column(
             modifier = Modifier.padding(16.dp),
@@ -77,7 +78,7 @@ fun SettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    
+
                     // IP地址输入
                     OutlinedTextField(
                         value = zmqIp,
@@ -93,7 +94,7 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
-                    
+
                     // 端口输入
                     OutlinedTextField(
                         value = zmqPort,
@@ -115,7 +116,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true
                     )
-                    
+
                     // 保存按钮
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -148,7 +149,7 @@ fun SettingsScreen(
                     }
                 }
             }
-            
+
             // 应用信息
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -163,13 +164,13 @@ fun SettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    
-                    Text("版本: 1.0.0")
+
+                    Text("版本: ${BuildConfig.VERSION_NAME}")
                     Text("作者: helywin")
                     Text("描述: 天马智行机器狗遥控器")
                 }
             }
-            
+
             // 使用说明
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -184,10 +185,11 @@ fun SettingsScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    Text("• 配置服务器的IP地址和端口")
-                    Text("• 点击连接按钮连接到机器人")
-                    Text("• 使用摇杆控制机器人移动")
-                    Text("• 选择不同模式控制机器人状态")
+                    Text("• 配置服务器的IP地址和端口，然后保存")
+                    Text("• 点击连接按钮连接到机器人，等待连接成功")
+                    Text("• 手动模式下可以遥控机器狗，自动模式下机器人自主导航")
+                    Text("• 选择不同模式控制机器人状态，站立模式才能移动")
+                    Text("• 使用物理或者虚拟摇杆控制机器人移动，左边是线速度控制，右边是角速度控制")
                     Text("• 狂暴模式开启时前后速度提升到2m/s，关闭时为1m/s")
                 }
             }

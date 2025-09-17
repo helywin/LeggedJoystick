@@ -1,3 +1,10 @@
+import com.android.build.gradle.internal.api.ApkVariantOutputImpl
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -9,6 +16,12 @@ plugins {
 android {
     namespace = "com.helywin.leggedjoystick"
     compileSdk = 36
+
+    // 版本管理
+    val versionMajor = 1
+    val versionMinor = 0
+    val versionPatch = 2
+
     signingConfigs {
         getByName("debug") {
             storeFile = file("..\\key\\helywin.jks")
@@ -21,8 +34,8 @@ android {
         applicationId = "com.helywin.leggedjoystick"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = versionMajor * 10000 + versionMinor * 100 + versionPatch
+        versionName = "${versionMajor}.${versionMinor}.${versionPatch}"
         signingConfig = signingConfigs.getByName("debug")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +60,43 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    // 自定义 APK 文件名
+    applicationVariants.all {
+        this.outputs
+            .map { it as ApkVariantOutputImpl }
+            .forEach { output ->
+                val variant = this.buildType.name
+                var apkName = "RIDReceiver_" + this.versionName
+                val dateFormat = SimpleDateFormat("yyyyMMddHHmm", Locale.getDefault())
+                if (variant.isNotEmpty()) apkName += "_${variant}_"
+                apkName += dateFormat.format(Date()) + ".apk"
+                println("ApkName=$apkName ${this.buildType.name}")
+                output.outputFileName = apkName
+
+                // 将构建后的 APK 文件移动到 app 文件夹下
+                // 在构建任务完成后执行文件复制操作
+                tasks.named(
+                    "assemble${
+                        variant.replaceFirstChar {
+                            if (it.isLowerCase()) it.uppercase()
+                            else it.toString()
+                        }
+                    }"
+                ).configure {
+                    doLast {
+                        val outputDir =
+                            layout.buildDirectory.dir("outputs/apk/${variant}").get().asFile
+                        val destinationDir = file("${project.projectDir}/output")
+                        copy {
+                            from(outputDir)
+                            into(destinationDir)
+                            include(apkName)
+                        }
+                    }
+                }
+            }
     }
 }
 

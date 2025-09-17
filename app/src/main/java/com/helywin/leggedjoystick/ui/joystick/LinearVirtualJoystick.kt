@@ -52,7 +52,7 @@ fun LinearVirtualJoystick(
     height: Dp = 80.dp,
     maxVelocity: Float = 1f,
     knobSize: Dp = 40.dp,
-    backgroundColor: Color = MaterialTheme.colorScheme.surface,
+    backgroundColor: Color = MaterialTheme.colorScheme.surface.copy(0.4f),
     knobColor: Color = MaterialTheme.colorScheme.primary,
     borderColor: Color = MaterialTheme.colorScheme.outline,
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,

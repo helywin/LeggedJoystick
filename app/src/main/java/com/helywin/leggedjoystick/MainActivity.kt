@@ -1,8 +1,11 @@
 package com.helywin.leggedjoystick
 
+import android.content.Context
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +19,7 @@ import com.helywin.leggedjoystick.controller.Controller
 import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
+import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.input.GamepadInputHandler
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
@@ -25,9 +29,13 @@ import timber.log.Timber
 class MainActivity : ComponentActivity() {
     private lateinit var controller: Controller
     private lateinit var gamepadInputHandler: GamepadInputHandler
+    private var wakeLock: PowerManager.WakeLock? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 初始化WakeLock
+        initializeWakeLock()
         
         // 初始化机器人控制器，传入Context
         controller = RobotControllerImpl(this)
@@ -43,6 +51,11 @@ class MainActivity : ComponentActivity() {
         
         enableEdgeToEdge()
         setContent {
+            // 监听连接状态变化
+            LaunchedEffect(settingsState.connectionState) {
+                updateWakeLockState(settingsState.connectionState)
+            }
+            
             LeggedJoystickTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -56,8 +69,68 @@ class MainActivity : ComponentActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
+        releaseWakeLock()
         gamepadInputHandler.reset()
         controller.cleanup()
+    }
+    
+    /**
+     * 初始化WakeLock
+     */
+    private fun initializeWakeLock() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "LeggedJoystick::ScreenWakeLock"
+        )
+    }
+    
+    /**
+     * 根据连接状态更新WakeLock状态
+     */
+    private fun updateWakeLockState(connectionState: ConnectionState) {
+        when (connectionState) {
+            ConnectionState.CONNECTED -> {
+                acquireWakeLock()
+                Timber.i("[MainActivity] 已连接，启用屏幕保持唤醒")
+            }
+            else -> {
+                releaseWakeLock()
+                Timber.i("[MainActivity] 未连接，释放屏幕保持唤醒")
+            }
+        }
+    }
+    
+    /**
+     * 获取WakeLock，保持屏幕唤醒
+     */
+    private fun acquireWakeLock() {
+        try {
+            wakeLock?.let { lock ->
+                if (!lock.isHeld) {
+                    lock.acquire()
+                    Timber.d("[MainActivity] WakeLock已获取")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "[MainActivity] 获取WakeLock失败")
+        }
+    }
+    
+    /**
+     * 释放WakeLock
+     */
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let { lock ->
+                if (lock.isHeld) {
+                    lock.release()
+                    Timber.d("[MainActivity] WakeLock已释放")
+                }
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "[MainActivity] 释放WakeLock失败")
+        }
     }
     
     /**
