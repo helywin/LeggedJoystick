@@ -33,9 +33,12 @@ import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.input.GamepadInputHandler
+import com.helywin.leggedjoystick.input.GamepadInputState
 import legged_driver.ControlMode
 import legged_driver.Mode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
+import com.helywin.leggedjoystick.ui.components.GamepadStatusIndicator
 import com.helywin.leggedjoystick.ui.joystick.*
 
 /**
@@ -45,6 +48,7 @@ import com.helywin.leggedjoystick.ui.joystick.*
 @Composable
 fun MainControlScreen(
     controller: Controller,
+    gamepadInputState: GamepadInputState? = null,
     onSettingsClick: () -> Unit
 ) {
     val currentMode = settingsState.robotCtrlMode
@@ -92,6 +96,7 @@ fun MainControlScreen(
             connectionState = connectionState,
             mode = controlMode,
             isRageModeEnabled = isRageModeEnabled,
+            gamepadInputState = gamepadInputState,
             onConnectClick = {
                 when (connectionState) {
                     ConnectionState.CONNECTED -> {
@@ -192,6 +197,7 @@ private fun TopStatusBar(
     connectionState: ConnectionState,
     mode: Mode,
     isRageModeEnabled: Boolean,
+    gamepadInputState: GamepadInputState?,
     onConnectClick: () -> Unit,
     onModeClick: (Mode) -> Unit,
     onSettingsClick: () -> Unit
@@ -201,8 +207,22 @@ private fun TopStatusBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左侧电量显示
-        BatteryIndicator(batteryLevel = batteryLevel)
+        // 左侧状态显示
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 电量显示
+            BatteryIndicator(batteryLevel = batteryLevel)
+            
+            // 游戏手柄状态显示
+            if (gamepadInputState != null) {
+                GamepadStatusIndicator(
+                    isConnected = gamepadInputState.isGamepadConnected,
+                    deviceName = gamepadInputState.connectedDevice?.name
+                )
+            }
+        }
 
         // 右侧控制按钮
         Row(
