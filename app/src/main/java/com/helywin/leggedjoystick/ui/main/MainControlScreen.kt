@@ -41,6 +41,7 @@ import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.GamepadInputHandler
 import com.helywin.leggedjoystick.input.GamepadInputState
 import legged_driver.ControlMode
@@ -75,7 +76,7 @@ fun MainControlScreen(
     val controlMode = settingsState.robotMode
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
-    val isRageModeEnabled = settingsState.settings.isRageModeEnabled
+    val speedLevel = settingsState.settings.speedLevel
     val isRobotModeChanging = settingsState.isRobotCtrlModeChanging
     val isRobotCtrlModeChanging = settingsState.isRobotCtrlModeChanging
     val mainTitle = settingsState.settings.mainTitle
@@ -130,7 +131,6 @@ fun MainControlScreen(
                 batteryLevel = batteryLevel,
                 connectionState = connectionState,
                 mode = controlMode,
-                isRageModeEnabled = isRageModeEnabled,
                 gamepadInputState = gamepadInputState,
                 onVideoClick = onVideoClick,
                 onConnectClick = {
@@ -194,11 +194,11 @@ fun MainControlScreen(
                     }
                 )
 
-                // 中间狂暴模式按钮
-                RageModeButton(
-                    isEnabled = isRageModeEnabled,
-                    onClick = {
-                        controller.toggleRageMode()
+                // 中间速度档位选择按钮
+                SpeedLevelSelector(
+                    currentLevel = speedLevel,
+                    onLevelSelected = { level ->
+                        controller.setSpeedLevel(level)
                     }
                 )
 
@@ -233,7 +233,6 @@ private fun TopStatusBar(
     batteryLevel: Int,
     connectionState: ConnectionState,
     mode: Mode,
-    isRageModeEnabled: Boolean,
     gamepadInputState: GamepadInputState?,
     onVideoClick: () -> Unit,
     onConnectClick: () -> Unit,
@@ -504,28 +503,69 @@ private fun ModeButton(
 }
 
 /**
- * 狂暴模式按钮
+ * 速度档位选择器
  */
 @Composable
-private fun RageModeButton(
-    isEnabled: Boolean,
+private fun SpeedLevelSelector(
+    currentLevel: SpeedLevel,
+    onLevelSelected: (SpeedLevel) -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "速度档位",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SpeedLevel.entries.forEach { level ->
+                SpeedLevelButton(
+                    level = level,
+                    isSelected = currentLevel == level,
+                    onClick = { onLevelSelected(level) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 单个速度档位按钮
+ */
+@Composable
+private fun SpeedLevelButton(
+    level: SpeedLevel,
+    isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val backgroundColor = when {
+        isSelected -> when (level) {
+            SpeedLevel.SLOW -> Color(0xFF4CAF50)  // 绿色
+            SpeedLevel.MEDIUM -> Color(0xFFFF9800)  // 橙色
+            SpeedLevel.FAST -> Color(0xFFF44336)  // 红色
+        }
+        else -> MaterialTheme.colorScheme.surface
+    }
+
     Card(
         modifier = Modifier
             .selectable(
-                selected = isEnabled,
+                selected = isSelected,
                 onClick = onClick
             )
-            .size(80.dp),
+            .width(60.dp)
+            .height(50.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isEnabled)
-                Color.Red.copy(alpha = 0.8f)
-            else
-                MaterialTheme.colorScheme.surface
+            containerColor = backgroundColor
         ),
         elevation = CardDefaults.cardElevation(
-            defaultElevation = if (isEnabled) 8.dp else 2.dp
+            defaultElevation = if (isSelected) 6.dp else 2.dp
         )
     ) {
         Column(
@@ -533,17 +573,16 @@ private fun RageModeButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(
-                imageVector = if (isEnabled) Icons.Default.Whatshot else Icons.Default.LocalFireDepartment,
-                contentDescription = "狂暴模式",
-                modifier = Modifier.size(24.dp),
-                tint = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface
+            Text(
+                text = level.displayName,
+                fontSize = 12.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = (if (isEnabled) "狂暴" else "普通") + "模式",
+                text = "${level.maxLinearSpeed}m/s",
                 fontSize = 10.sp,
-                color = if (isEnabled) Color.White else MaterialTheme.colorScheme.onSurface,
-                fontWeight = if (isEnabled) FontWeight.Bold else FontWeight.Normal
+                color = if (isSelected) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
         }
     }
@@ -566,7 +605,7 @@ fun MainControlScreenPreview() {
             override fun onRightJoystickReleased() {}
             override fun onLeftJoystickPressed() {}
             override fun onRightJoystickPressed() {}
-            override fun toggleRageMode() {}
+            override fun setSpeedLevel(level: SpeedLevel) {}
             override fun updateSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
             override fun loadSettings() {}
             override fun saveSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}

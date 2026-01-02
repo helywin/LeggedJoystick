@@ -20,6 +20,7 @@ import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.GamepadInputHandler
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
@@ -240,9 +241,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
             KeyEvent.KEYCODE_BUTTON_B -> {
-                // B按钮 - 可以设置为切换狂暴模式
+                // B按钮 - 循环切换速度档位（慢速 -> 中速 -> 快速 -> 慢速）
                 if (isPressed) {
-                    controller.toggleRageMode()
+                    val currentLevel = settingsState.settings.speedLevel
+                    val nextLevel = when (currentLevel) {
+                        SpeedLevel.SLOW -> SpeedLevel.MEDIUM
+                        SpeedLevel.MEDIUM -> SpeedLevel.FAST
+                        SpeedLevel.FAST -> SpeedLevel.SLOW
+                    }
+                    controller.setSpeedLevel(nextLevel)
                 }
             }
             // 可以根据需要添加更多按钮映射
@@ -321,7 +328,7 @@ fun LeggedJoystickAppPreview() {
             override fun onRightJoystickReleased() {}
             override fun onLeftJoystickPressed() {}
             override fun onRightJoystickPressed() {}
-            override fun toggleRageMode() {}
+            override fun setSpeedLevel(level: SpeedLevel) {}
             override fun updateSettings(settings: AppSettings) {}
             override fun loadSettings() {}
             override fun saveSettings(settings: AppSettings) {}

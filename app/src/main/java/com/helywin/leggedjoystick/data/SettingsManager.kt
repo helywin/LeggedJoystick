@@ -22,7 +22,7 @@ class SettingsManager(context: Context) {
         private const val PREFS_NAME = "legged_joystick_settings"
         private const val KEY_ZMQ_IP = "zmq_ip"
         private const val KEY_ZMQ_PORT = "zmq_port"
-        private const val KEY_RAGE_MODE_ENABLED = "rage_mode_enabled"
+        private const val KEY_SPEED_LEVEL = "speed_level"
         private const val KEY_RTSP_URL = "rtsp_url"
         private const val KEY_MAIN_TITLE = "main_title"
         private const val KEY_LOGO_PATH = "logo_path"
@@ -31,7 +31,6 @@ class SettingsManager(context: Context) {
         // 默认配置
         private const val DEFAULT_ZMQ_IP = "127.0.0.1"
         private const val DEFAULT_ZMQ_PORT = 33445
-        private const val DEFAULT_RAGE_MODE_ENABLED = false
         private const val DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
         private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
         private const val DEFAULT_LOGO_PATH = ""
@@ -49,7 +48,7 @@ class SettingsManager(context: Context) {
             sharedPreferences.edit {
                 putString(KEY_ZMQ_IP, settings.zmqIp)
                 putInt(KEY_ZMQ_PORT, settings.zmqPort)
-                putBoolean(KEY_RAGE_MODE_ENABLED, settings.isRageModeEnabled)
+                putString(KEY_SPEED_LEVEL, settings.speedLevel.name)
                 putString(KEY_RTSP_URL, settings.rtspUrl)
                 putString(KEY_MAIN_TITLE, settings.mainTitle)
                 putString(KEY_LOGO_PATH, settings.logoPath)
@@ -67,10 +66,18 @@ class SettingsManager(context: Context) {
      */
     fun loadSettings(): AppSettings {
         return try {
+            val speedLevelName = sharedPreferences.getString(KEY_SPEED_LEVEL, SpeedLevel.MEDIUM.name)
+            val speedLevel = try {
+                SpeedLevel.valueOf(speedLevelName ?: SpeedLevel.MEDIUM.name)
+            } catch (e: IllegalArgumentException) {
+                Timber.w("无效的速度档位: $speedLevelName，使用默认值")
+                SpeedLevel.MEDIUM
+            }
+
             AppSettings(
                 zmqIp = sharedPreferences.getString(KEY_ZMQ_IP, DEFAULT_ZMQ_IP) ?: DEFAULT_ZMQ_IP,
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
-                isRageModeEnabled = sharedPreferences.getBoolean(KEY_RAGE_MODE_ENABLED, DEFAULT_RAGE_MODE_ENABLED),
+                speedLevel = speedLevel,
                 rtspUrl = sharedPreferences.getString(KEY_RTSP_URL, DEFAULT_RTSP_URL) ?: DEFAULT_RTSP_URL,
                 mainTitle = sharedPreferences.getString(KEY_MAIN_TITLE, DEFAULT_MAIN_TITLE) ?: DEFAULT_MAIN_TITLE,
                 logoPath = sharedPreferences.getString(KEY_LOGO_PATH, DEFAULT_LOGO_PATH) ?: DEFAULT_LOGO_PATH,

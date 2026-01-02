@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SettingsManager
+import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.proto.MessageUtils
 import legged_driver.*
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
@@ -33,30 +34,30 @@ class ControllerState {
     // 连接状态
     var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
         private set
-    
+
     // 机器人模式（自动/手动）
     var robotMode by mutableStateOf(Mode.MODE_AUTO)
         private set
-        
+
     // 机器人控制模式（站立/趴下/阻尼）
     var robotCtrlMode by mutableStateOf(ControlMode.CONTROL_MODE_STAND_UP)
         private set
-    
+
     // 电池电量
     var batteryLevel by mutableStateOf(0)
         private set
-    
+
     // 应用设置
     var settings by mutableStateOf(AppSettings())
         private set
-        
+
     // 模式切换状态
     var isRobotModeChanging by mutableStateOf(false)
         private set
-        
+
     var isRobotCtrlModeChanging by mutableStateOf(false)
         private set
-    
+
     // 衍生状态
     val isConnected: Boolean
         get() = connectionState == ConnectionState.CONNECTED
@@ -65,7 +66,7 @@ class ControllerState {
     fun updateConnectionState(newState: ConnectionState) {
         connectionState = newState
     }
-    
+
     fun updateRobotMode(newMode: Mode) {
         robotMode = newMode
         // 模式更新时清除切换状态
@@ -73,7 +74,7 @@ class ControllerState {
             isRobotModeChanging = false
         }
     }
-    
+
     fun updateRobotCtrlMode(newMode: ControlMode) {
         robotCtrlMode = newMode
         // 控制模式更新时清除切换状态
@@ -81,25 +82,25 @@ class ControllerState {
             isRobotCtrlModeChanging = false
         }
     }
-    
+
     fun updateBatteryLevel(level: Int) {
         batteryLevel = level.coerceIn(0, 100)
     }
-    
+
     fun updateSettings(newSettings: AppSettings) {
         settings = newSettings
     }
-    
+
     fun updateRobotModeChangingState(changing: Boolean) {
         isRobotModeChanging = changing
     }
-    
+
     fun updateRobotCtrlModeChangingState(changing: Boolean) {
         isRobotCtrlModeChanging = changing
     }
-    
-    fun toggleRageMode() {
-        settings = settings.copy(isRageModeEnabled = !settings.isRageModeEnabled)
+
+    fun setSpeedLevel(level: SpeedLevel) {
+        settings = settings.copy(speedLevel = level)
     }
 }
 
@@ -123,7 +124,7 @@ interface Controller {
     fun onRightJoystickReleased()
     fun onLeftJoystickPressed()
     fun onRightJoystickPressed()
-    fun toggleRageMode()
+    fun setSpeedLevel(level: SpeedLevel)
     fun updateSettings(settings: AppSettings)
     fun isConnected(): Boolean
     fun cleanup()
@@ -142,10 +143,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
         private const val VIBRATION_AMPLITUDE_PRESS = 180       // 按下震动强度
         private const val VIBRATION_AMPLITUDE_RELEASE = 150     // 释放震动强度
     }
-    
+
     private val zmqClient = NewZmqClient()
     private val settingsManager = SettingsManager(context)
-    
+
     // 震动管理器
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -156,22 +157,22 @@ class RobotControllerImpl(private val context: Context) : Controller {
             context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
     }
-    
+
     // 协程相关
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main + supervisorJob)
-    
+
     // 连接任务
     private var connectJob: Job? = null
-    
+
     // 摇杆状态
     private var currentLeftJoystick = JoystickValue.ZERO  // 左摇杆：vx, vy
     private var currentRightJoystick = JoystickValue.ZERO  // 右摇杆：yawRate
     private var lastCommandSent = false  // 跟踪是否发送过速度指令
-    
+
     // 速度发送任务
     private var velocitySendJob: Job? = null
-    
+
     init {
         // 设置ZMQ客户端回调
         zmqClient.setMessageCallback { message ->
@@ -181,11 +182,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
         zmqClient.setConnectionStateCallback {
             handleConnectionState(it)
         }
-        
+
         // 启动时加载设置
         loadSettings()
     }
-    
+
     /**
      * 处理接收到的消息
      */
@@ -247,31 +248,31 @@ class RobotControllerImpl(private val context: Context) : Controller {
             Timber.w("[Controller] 正在连接中，忽略重复连接请求")
             return
         }
-        
+
         if (settingsState.connectionState == ConnectionState.CONNECTED) {
             Timber.w("[Controller] 已经连接，忽略重复连接请求")
             return
         }
-        
+
         cancelConnection() // 取消之前的连接任务
-        
+
         settingsState.updateConnectionState(ConnectionState.CONNECTING)
-        
+
         connectJob = scope.launch {
             try {
                 Timber.i("[Controller] 开始连接到机器人...")
-                
+
                 // 构建连接地址
                 val endpoint = "tcp://${settingsState.settings.zmqIp}:${settingsState.settings.zmqPort}"
                 Timber.i("[Controller] 连接地址: $endpoint")
-                
+
                 // 设置连接地址
                 zmqClient.setEndpoint(endpoint)
-                
+
                 // 进行连接
                 zmqClient.connect()
 
-                
+
             } catch (e: CancellationException) {
                 settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
                 Timber.i("[Controller] 连接已取消")
@@ -281,7 +282,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
         }
     }
-    
+
     /**
      * 断开连接
      */
@@ -292,7 +293,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         Timber.i("[Controller] 已断开连接")
     }
-    
+
     /**
      * 取消连接
      */
@@ -300,7 +301,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         connectJob?.cancel()
         connectJob = null
     }
-    
+
     /**
      * 设置机器人模式（自动/手动）
      */
@@ -309,14 +310,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
             Timber.w("[Controller] 未连接，无法设置模式")
             return
         }
-        
+
         if (settingsState.isRobotModeChanging) {
             Timber.w("[Controller] 正在切换模式中，请等待")
             return
         }
-        
+
         settingsState.updateRobotModeChangingState(true)
-        
+
         scope.launch {
             try {
                 val success = zmqClient.setMode(mode)
@@ -333,7 +334,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
         }
     }
-    
+
     /**
      * 设置机器人控制模式（站立/趴下/阻尼）
      */
@@ -342,14 +343,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
             Timber.w("[Controller] 未连接，无法设置控制模式")
             return
         }
-        
+
         if (settingsState.isRobotCtrlModeChanging) {
             Timber.w("[Controller] 正在切换控制模式中，请等待")
             return
         }
-        
+
         settingsState.updateRobotCtrlModeChangingState(true)
-        
+
         scope.launch {
             try {
                 val success = zmqClient.setControlMode(controlMode)
@@ -366,7 +367,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
         }
     }
-    
+
     /**
      * 更新左摇杆（移动控制：vx, vy）
      */
@@ -374,7 +375,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         currentLeftJoystick = joystickValue
         Timber.v("[Controller] 左摇杆更新: vx=${joystickValue.x}, vy=${joystickValue.y}")
     }
-    
+
     /**
      * 更新右摇杆（转向控制：yawRate）
      */
@@ -382,7 +383,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         currentRightJoystick = joystickValue
         Timber.v("[Controller] 右摇杆更新: yawRate=${joystickValue.x}")
     }
-    
+
     /**
      * 左摇杆释放回调
      */
@@ -391,7 +392,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         triggerVibration(JOYSTICK_RELEASE_VIBRATION_MS, VIBRATION_AMPLITUDE_RELEASE)
         Timber.d("[Controller] 左摇杆已释放，触发震动反馈")
     }
-    
+
     /**
      * 右摇杆释放回调
      */
@@ -416,18 +417,17 @@ class RobotControllerImpl(private val context: Context) : Controller {
         triggerVibration(JOYSTICK_PRESS_VIBRATION_MS, VIBRATION_AMPLITUDE_PRESS)
         Timber.d("[Controller] 右摇杆已按下，触发震动反馈")
     }
-    
+
     /**
-     * 切换狂暴模式
+     * 设置速度档位
      */
-    override fun toggleRageMode() {
-        settingsState.toggleRageMode()
+    override fun setSpeedLevel(level: SpeedLevel) {
+        settingsState.setSpeedLevel(level)
         // 自动保存更新后的设置
         saveSettings(settingsState.settings)
-        val mode = if (settingsState.settings.isRageModeEnabled) "狂暴模式" else "普通模式"
-        Timber.i("[Controller] 已切换到${mode}并保存设置")
+        Timber.i("[Controller] 已切换到${level.displayName}并保存设置")
     }
-    
+
     /**
      * 更新设置
      */
@@ -437,7 +437,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         saveSettings(settings)
         Timber.d("[Controller] 设置已更新并保存")
     }
-    
+
     /**
      * 加载设置
      */
@@ -450,7 +450,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             Timber.e(e, "[Controller] 加载设置失败，使用默认设置")
         }
     }
-    
+
     /**
      * 保存设置
      */
@@ -462,20 +462,20 @@ class RobotControllerImpl(private val context: Context) : Controller {
             Timber.e(e, "[Controller] 保存设置失败")
         }
     }
-    
+
     /**
      * 检查是否连接
      */
     override fun isConnected(): Boolean {
         return settingsState.isConnected
     }
-    
+
     /**
      * 开始速度发送循环
      */
     private fun startVelocityLoop() {
         stopVelocityLoop()
-        
+
         velocitySendJob = scope.launch {
             while (isActive && settingsState.isConnected) {
                 try {
@@ -484,15 +484,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         // 检查是否有摇杆被按下（不在中心位置）
                         val leftJoystickPressed = !currentLeftJoystick.isCenter
                         val rightJoystickPressed = !currentRightJoystick.isCenter
-                        
+
                         // 只有当至少有一个摇杆被按下时才发送速度指令
                         if (leftJoystickPressed || rightJoystickPressed) {
-                            // 计算速度参数
-                            val maxSpeed = if (settingsState.settings.isRageModeEnabled) 2f else 1f
+                            // 计算速度参数，使用速度档位设置的最大线速度
+                            val maxSpeed = settingsState.settings.speedLevel.maxLinearSpeed
                             val vx = -currentLeftJoystick.y * maxSpeed
                             val vy = -currentLeftJoystick.x * maxSpeed
                             val yawRate = -currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
-                            
+
                             // 发送速度指令
                             zmqClient.sendVelocityCommand(vx, vy, yawRate)
                             Timber.v("[Controller] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
@@ -505,9 +505,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         }
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
                     }
-                    
+
                     delay(50) // 20Hz发送频率
-                    
+
                 } catch (e: CancellationException) {
                     break
                 } catch (e: Exception) {
@@ -517,7 +517,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
         }
     }
-    
+
     /**
      * 停止速度发送循环
      */
@@ -526,7 +526,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         velocitySendJob = null
         lastCommandSent = false  // 重置命令发送标志
     }
-    
+
     /**
      * 清理资源
      */
@@ -562,4 +562,3 @@ class RobotControllerImpl(private val context: Context) : Controller {
         }
     }
 }
-

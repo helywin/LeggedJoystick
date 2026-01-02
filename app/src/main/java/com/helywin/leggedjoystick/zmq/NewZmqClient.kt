@@ -61,7 +61,8 @@ class NewZmqClient(
         private const val MAX_SEND_QUEUE_SIZE = 1000 // 限制发送队列大小
         private const val THREAD_SHUTDOWN_TIMEOUT_MS = 5000L
         private const val MAX_CONSECUTIVE_FAILURES = 3
-        private const val CONNECTION_VERIFY_TIMEOUT_MS = 3000L // 连接验证超时时间
+        private const val CONNECTION_VERIFY_TIMEOUT_MS = 2000L // 连接验证超时时间
+        private const val HEARTBEAT_RESPONSE_TIMEOUT_MS = 2500L // 心跳响应超时时间，超过此时间未收到服务器心跳则判断连接丢失
     }
 
     // ZMQ相关
@@ -89,6 +90,7 @@ class NewZmqClient(
 
     // 统计信息
     private val lastHeartbeatTime = AtomicLong(0)
+    private val lastServerHeartbeatTime = AtomicLong(0) // 上次收到服务器心跳的时间
     private val consecutiveFailures = AtomicInteger(0)
 
     // 客户端信息
@@ -373,6 +375,7 @@ class NewZmqClient(
     private fun resetConnectionState() {
         consecutiveFailures.set(0)
         lastHeartbeatTime.set(0)
+        lastServerHeartbeatTime.set(0) // 重置服务器心跳时间
         serverConnected.set(false)
         sendQueue.clear()
     }
@@ -552,6 +555,21 @@ class NewZmqClient(
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 sendHeartbeat()
                 lastHeartbeatTime.set(System.currentTimeMillis())
+
+                // 检查服务器心跳响应超时
+                // 只有在已连接状态下才检测超时
+                if (connectionState.get() == ConnectionState.CONNECTED) {
+                    val lastServerTime = lastServerHeartbeatTime.get()
+                    val currentTime = System.currentTimeMillis()
+
+                    // 如果上次收到服务器心跳的时间不为0（已经收到过心跳），且超时
+                    if (lastServerTime > 0 && (currentTime - lastServerTime) > HEARTBEAT_RESPONSE_TIMEOUT_MS) {
+                        Timber.w("[NewZmqClient] 服务器心跳响应超时，距离上次心跳已超过 ${HEARTBEAT_RESPONSE_TIMEOUT_MS}ms，判断连接丢失")
+                        handleConnectionLost()
+                        break
+                    }
+                }
+
                 Thread.sleep(heartbeatIntervalMs)
             }
         } catch (e: InterruptedException) {
@@ -623,6 +641,8 @@ class NewZmqClient(
     private fun handleHeartbeatMessage(message: LeggedDriverMessage) {
         message.heartbeat?.let { heartbeat ->
             serverConnected.set(heartbeat.is_connected)
+            // 记录收到服务器心跳的时间
+            lastServerHeartbeatTime.set(System.currentTimeMillis())
 //            Timber.d("[NewZmqClient] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
         }
     }

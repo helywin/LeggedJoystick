@@ -10,17 +10,31 @@
 package com.helywin.leggedjoystick.data
 
 /**
+ * 速度档位枚举
+ */
+enum class SpeedLevel(val displayName: String, val maxLinearSpeed: Float) {
+    SLOW("慢速", 0.5f),
+    MEDIUM("中速", 1.0f),
+    FAST("快速", 2.0f)
+}
+
+/**
  * 应用设置数据类
  */
 data class AppSettings(
     val zmqIp: String = "127.0.0.1",
     val zmqPort: Int = 33445,
-    val isRageModeEnabled: Boolean = false,
+    val speedLevel: SpeedLevel = SpeedLevel.MEDIUM,
     val rtspUrl: String = "rtsp://192.168.234.1:8554/test",
     val mainTitle: String = "机器狗遥控器",
     val logoPath: String = "",
     val keepScreenOn: Boolean = true
-)
+) {
+    // 保持向后兼容的属性，狂暴模式现在等同于快速模式
+    val isRageModeEnabled: Boolean
+        get() = speedLevel == SpeedLevel.FAST
+}
+
 /**
  * 连接状态枚举
  */
