@@ -15,7 +15,11 @@ package com.helywin.leggedjoystick.data
 data class AppSettings(
     val zmqIp: String = "127.0.0.1",
     val zmqPort: Int = 33445,
-    val isRageModeEnabled: Boolean = false
+    val isRageModeEnabled: Boolean = false,
+    val rtspUrl: String = "rtsp://192.168.234.1:8554/test",
+    val mainTitle: String = "机器狗遥控器",
+    val logoPath: String = "",
+    val keepScreenOn: Boolean = true
 )
 /**
  * 连接状态枚举

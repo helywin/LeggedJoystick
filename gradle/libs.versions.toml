@@ -13,6 +13,8 @@ materialIconsExtended = "1.7.6"
 timber = "5.0.1"
 gson = "2.11.0"
 wire = "5.4.0"
+coil = "2.6.0"
+vlc = "3.6.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -34,6 +36,8 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
+vlc-android = { module = "org.videolan.android:libvlc-all", version.ref = "vlc" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -41,4 +45,3 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 wire = { id = "com.squareup.wire", version.ref = "wire" }
-

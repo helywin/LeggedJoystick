@@ -24,38 +24,44 @@ import com.helywin.leggedjoystick.input.GamepadInputHandler
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
 import com.helywin.leggedjoystick.ui.theme.LeggedJoystickTheme
+import com.helywin.leggedjoystick.ui.video.VideoStreamScreen
 import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
     private lateinit var controller: Controller
     private lateinit var gamepadInputHandler: GamepadInputHandler
     private var wakeLock: PowerManager.WakeLock? = null
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // 初始化WakeLock
         initializeWakeLock()
-        
+
         // 初始化机器人控制器，传入Context
         controller = RobotControllerImpl(this)
-        
+
         // 初始化游戏手柄输入处理器
         gamepadInputHandler = GamepadInputHandler()
-        
+
         // 设置游戏手柄输入回调
         setupGamepadCallbacks()
-        
+
         // 检测可用的游戏手柄设备
         gamepadInputHandler.detectGamepadDevices()
-        
+
         enableEdgeToEdge()
         setContent {
             // 监听连接状态变化
             LaunchedEffect(settingsState.connectionState) {
                 updateWakeLockState(settingsState.connectionState)
             }
-            
+
+            // 监听屏幕常亮设置变化
+            LaunchedEffect(settingsState.settings.keepScreenOn) {
+                updateScreenOnFlag(settingsState.settings.keepScreenOn)
+            }
+
             LeggedJoystickTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -66,14 +72,26 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    
+
+    override fun onResume() {
+        super.onResume()
+        // 应用恢复到前台时，根据设置更新屏幕常亮状态
+        updateScreenOnFlag(settingsState.settings.keepScreenOn)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 应用进入后台时，清除屏幕常亮标志
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         releaseWakeLock()
         gamepadInputHandler.reset()
         controller.cleanup()
     }
-    
+
     /**
      * 初始化WakeLock
      */
@@ -84,7 +102,7 @@ class MainActivity : ComponentActivity() {
             "LeggedJoystick::ScreenWakeLock"
         )
     }
-    
+
     /**
      * 根据连接状态更新WakeLock状态
      */
@@ -100,7 +118,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    
+
     /**
      * 获取WakeLock，保持屏幕唤醒
      */
@@ -116,7 +134,7 @@ class MainActivity : ComponentActivity() {
             Timber.e(e, "[MainActivity] 获取WakeLock失败")
         }
     }
-    
+
     /**
      * 释放WakeLock
      */
@@ -132,25 +150,42 @@ class MainActivity : ComponentActivity() {
             Timber.e(e, "[MainActivity] 释放WakeLock失败")
         }
     }
-    
+
+    /**
+     * 根据设置更新屏幕常亮标志
+     */
+    private fun updateScreenOnFlag(keepScreenOn: Boolean) {
+        try {
+            if (keepScreenOn) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                Timber.d("[MainActivity] 已启用屏幕常亮")
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                Timber.d("[MainActivity] 已禁用屏幕常亮")
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "[MainActivity] 更新屏幕常亮标志失败")
+        }
+    }
+
     /**
      * 处理运动事件（游戏手柄摇杆输入）
      */
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         return gamepadInputHandler.handleMotionEvent(event) || super.onGenericMotionEvent(event)
     }
-    
+
     /**
      * 处理按键事件（游戏手柄按钮输入）
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         return gamepadInputHandler.handleKeyEvent(event) || super.onKeyDown(keyCode, event)
     }
-    
+
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         return gamepadInputHandler.handleKeyEvent(event) || super.onKeyUp(keyCode, event)
     }
-    
+
     /**
      * 设置游戏手柄输入回调
      */
@@ -160,19 +195,19 @@ class MainActivity : ComponentActivity() {
             controller.updateLeftJoystick(joystickValue)
             Timber.v("[MainActivity] 物理左摇杆更新: x=${joystickValue.x}, y=${joystickValue.y}")
         }
-        
+
         // 右摇杆回调
         gamepadInputHandler.setRightJoystickCallback { joystickValue ->
             controller.updateRightJoystick(joystickValue)
             Timber.v("[MainActivity] 物理右摇杆更新: x=${joystickValue.x}, y=${joystickValue.y}")
         }
-        
+
         // 按键事件回调
         gamepadInputHandler.setKeyEventCallback { keyCode, isPressed ->
             handleGamepadButtonEvent(keyCode, isPressed)
         }
     }
-    
+
     /**
      * 处理游戏手柄按钮事件
      */
@@ -212,11 +247,11 @@ class MainActivity : ComponentActivity() {
             }
             // 可以根据需要添加更多按钮映射
         }
-        
+
         val action = if (isPressed) "按下" else "释放"
         Timber.d("[MainActivity] 游戏手柄按钮事件: ${getButtonName(keyCode)} $action")
     }
-    
+
     /**
      * 获取按钮名称（用于日志）
      */
@@ -240,21 +275,32 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LeggedJoystickApp(controller: Controller, gamepadInputHandler: GamepadInputHandler) {
     var showSettings by remember { mutableStateOf(false) }
-    
-    if (showSettings) {
-        SettingsScreen(
-            currentSettings = settingsState.settings,
-            onSettingsChange = { newSettings ->
-                controller.updateSettings(newSettings)
-            },
-            onBackClick = { showSettings = false }
-        )
-    } else {
-        MainControlScreen(
-            controller = controller,
-            gamepadInputState = gamepadInputHandler.inputState,
-            onSettingsClick = { showSettings = true }
-        )
+    var showVideoStream by remember { mutableStateOf(false) }
+
+    when {
+        showVideoStream -> {
+            VideoStreamScreen(
+                rtspUrl = settingsState.settings.rtspUrl,
+                onBackClick = { showVideoStream = false }
+            )
+        }
+        showSettings -> {
+            SettingsScreen(
+                currentSettings = settingsState.settings,
+                onSettingsChange = { newSettings ->
+                    controller.updateSettings(newSettings)
+                },
+                onBackClick = { showSettings = false }
+            )
+        }
+        else -> {
+            MainControlScreen(
+                controller = controller,
+                gamepadInputState = gamepadInputHandler.inputState,
+                onSettingsClick = { showSettings = true },
+                onVideoClick = { showVideoStream = true }
+            )
+        }
     }
 }
 

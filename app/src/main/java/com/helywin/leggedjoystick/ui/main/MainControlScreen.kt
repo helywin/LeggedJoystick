@@ -10,6 +10,7 @@
 package com.helywin.leggedjoystick.ui.main
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -27,12 +28,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
 import com.helywin.leggedjoystick.controller.Controller
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.controller.RobotControllerImpl
@@ -65,7 +68,8 @@ data class GradientPoint(
 fun MainControlScreen(
     controller: Controller,
     gamepadInputState: GamepadInputState? = null,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onVideoClick: () -> Unit
 ) {
     val currentMode = settingsState.robotCtrlMode
     val controlMode = settingsState.robotMode
@@ -74,6 +78,8 @@ fun MainControlScreen(
     val isRageModeEnabled = settingsState.settings.isRageModeEnabled
     val isRobotModeChanging = settingsState.isRobotCtrlModeChanging
     val isRobotCtrlModeChanging = settingsState.isRobotCtrlModeChanging
+    val mainTitle = settingsState.settings.mainTitle
+    val logoPath = settingsState.settings.logoPath
 
     // 连接状态对话框
     ConnectionDialog(
@@ -100,8 +106,20 @@ fun MainControlScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
+                // Logo 图片（仅在设置了路径时显示）
+                if (logoPath.isNotEmpty()) {
+                    Image(
+                        painter = rememberAsyncImagePainter(logoPath),
+                        contentDescription = "Logo",
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
                 Text(
-                    text = "天马智行机器狗遥控器",
+                    text = mainTitle.ifEmpty { "天马智行机器狗遥控器" },
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -114,6 +132,7 @@ fun MainControlScreen(
                 mode = controlMode,
                 isRageModeEnabled = isRageModeEnabled,
                 gamepadInputState = gamepadInputState,
+                onVideoClick = onVideoClick,
                 onConnectClick = {
                     when (connectionState) {
                         ConnectionState.CONNECTED -> {
@@ -216,6 +235,7 @@ private fun TopStatusBar(
     mode: Mode,
     isRageModeEnabled: Boolean,
     gamepadInputState: GamepadInputState?,
+    onVideoClick: () -> Unit,
     onConnectClick: () -> Unit,
     onModeClick: (Mode) -> Unit,
     onSettingsClick: () -> Unit
@@ -286,6 +306,11 @@ private fun TopStatusBar(
                         else -> "连接"
                     }
                 )
+            }
+
+            // 视频流按钮
+            IconButton(onClick = onVideoClick) {
+                Icon(Icons.Filled.CameraAlt, contentDescription = "视频流")
             }
 
             // 设置按钮
@@ -552,7 +577,8 @@ fun MainControlScreenPreview() {
 
     MainControlScreen(
         controller = dummyController,
-        onSettingsClick = {}
+        onSettingsClick = {},
+        onVideoClick = {}
     )
 }
 
@@ -623,7 +649,7 @@ fun MultiPointGradientBackground(
         val density = LocalDensity.current
         val screenWidth = with(density) { maxWidth.toPx() }
         val screenHeight = with(density) { maxHeight.toPx() }
-        
+
         // 为每个渐变点创建一层背景
         gradientPoints.forEach { point ->
             Box(

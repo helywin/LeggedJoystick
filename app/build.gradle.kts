@@ -125,6 +125,8 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.gson)
     implementation(libs.wire.runtime)
+    implementation(libs.coil.compose)
+    implementation(libs.vlc.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
