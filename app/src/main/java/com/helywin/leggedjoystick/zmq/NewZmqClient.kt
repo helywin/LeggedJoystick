@@ -54,7 +54,7 @@ class NewZmqClient(
     val heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
 ) {
     companion object {
-        private const val DEFAULT_TCP_ENDPOINT = "tcp://127.0.0.1:33445"
+        private const val DEFAULT_TCP_ENDPOINT = "tcp://192.168.234.1:33445"
         private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
         private const val SOCKET_RECV_TIMEOUT_MS = 100
         private const val SOCKET_SEND_TIMEOUT_MS = 1000

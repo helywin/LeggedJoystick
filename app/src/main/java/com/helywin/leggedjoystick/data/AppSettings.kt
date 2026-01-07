@@ -22,7 +22,7 @@ enum class SpeedLevel(val displayName: String, val maxLinearSpeed: Float) {
  * 应用设置数据类
  */
 data class AppSettings(
-    val zmqIp: String = "127.0.0.1",
+    val zmqIp: String = "192.168.234.1",
     val zmqPort: Int = 33445,
     val speedLevel: SpeedLevel = SpeedLevel.MEDIUM,
     val rtspUrl: String = "rtsp://192.168.234.1:8554/test",

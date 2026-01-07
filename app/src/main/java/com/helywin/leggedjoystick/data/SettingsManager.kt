@@ -29,7 +29,7 @@ class SettingsManager(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
 
         // 默认配置
-        private const val DEFAULT_ZMQ_IP = "127.0.0.1"
+        private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
         private const val DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
         private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
