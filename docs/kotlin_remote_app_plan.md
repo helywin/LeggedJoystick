@@ -1,0 +1,246 @@
+# Kotlin 遥控 App 重写方案
+
+## 目标
+
+重写一个新的 Android 遥控 App，使用 Kotlin 实现，主页面布局参考 GenisDog 当前主控页，通信协议套用 `/home/jiang/code/legged_driver`。现有 `LeggedJoystick` 只作为依赖选型和历史参考，不作为 UI 与业务结构的主依据。
+
+新方案不考虑原遥控器硬件，也不接入 Skydroid/G20/AR8030 这类厂商遥控 SDK。所有控制输入都来自触屏虚拟控件，必要时再扩展 Android 标准手柄输入。
+
+## 已整理素材
+
+可用素材已从 GenisDog APK 和当前运行界面整理到 `docs/assets/genisdog/`。
+
+| 文件 | 用途 |
+| --- | --- |
+| `main-reference.png` | 主控页布局参考，包含全屏视频背景、顶部模式栏、左侧速度、右侧工具、底部动作栏 |
+| `settings-reference.png` | 设置页视觉参考，仅作灰色面板和控件风格参考 |
+| `icon_stand*.png` | 站立动作按钮 |
+| `icon_crawl*.png` | 匍匐动作按钮 |
+| `icon_lie_down*.png` | 卧倒动作按钮 |
+| `icon_over_mouse*.png` | 过挡鼠板动作按钮 |
+| `icon_small_spinning_top*.png` | 扭一扭动作按钮 |
+| `icon_high_platform*.png` | 爬高墙动作按钮 |
+| `icon_slim*.png` | 过窄墙动作按钮 |
+| `icon_lock*.png` | 锁定动作按钮 |
+| `icon_btn_speed_*.png` | 低速/中速/高速按钮视觉素材 |
+| `icon_light*.png` | 补光灯按钮视觉素材 |
+| `icon_photo*.png`, `icon_video*.png` | 拍照/录像按钮视觉素材 |
+| `icon_setting.png`, `icon_back.png` | 设置和返回按钮 |
+| `icon_mode_*.png`, `icon_title_bg.png`, `icon_speed_bg.png` | 模式、标题和速度状态装饰素材 |
+
+未纳入方案的素材：充电桩、厂商配网、厂商 SDK 状态、原遥控器硬件按键映射、AR8030/Skydroid 图标和逻辑。
+
+## 技术路线
+
+| 方面 | 决策 |
+| --- | --- |
+| 语言与 UI | Kotlin + Jetpack Compose |
+| 日志 | Timber |
+| 协议 | 以 `/home/jiang/code/legged_driver/proto/message.proto` 为唯一真源 |
+| Protobuf | Wire 生成 Kotlin 类型 |
+| 网络 | JeroMQ，Android 端作为 ZMQ DEALER 客户端 |
+| 服务端 | `legged_driver` 的 ROUTER 服务，默认监听 `tcp://0.0.0.0:33445` |
+| App 端设备类型 | `DEVICE_TYPE_REMOTE_CONTROLLER` |
+| 控制输入 | 触摸虚拟摇杆、按钮、开关；可选接入外部摇杆通道数据 |
+| 视频 | 不属于 `legged_driver` 协议，单独作为可插拔视频源处理 |
+
+当前仓库里的 `proto/message.proto` 是旧版协议，字段包括 `MODE_SET`、`VELOCITY_COMMAND` 等；`legged_driver` 当前协议已经变为 `COMMAND_REQUEST`、`SUBSCRIPTION_REQUEST`、`ROBOT_STATE` 等结构。新 App 不应沿用当前仓库旧 proto，应从 `legged_driver/proto/message.proto` 同步或引用生成。
+
+## 协议接入要点
+
+Android 端连接 `legged_driver` 服务时，需要做四件事：
+
+| 动作 | 说明 |
+| --- | --- |
+| 建立连接 | 使用 ZMQ DEALER 连接服务端 endpoint，客户端 identity 使用遥控器设备 ID |
+| 心跳 | 每 1000ms 发送 `MESSAGE_TYPE_HEARTBEAT` |
+| 订阅状态 | 启动后订阅 heartbeat、connection_state、app_mode_state、robot_state、motion_data、fault_data、odometry |
+| 命令发送 | 所有按钮和摇杆最终封装成 `MESSAGE_TYPE_COMMAND_REQUEST` |
+
+消息外层统一是 `LeggedDriverMessage`，必须包含时间戳、设备类型、设备 ID、消息类型、payload 和 CRC32。CRC32 计算方式要和 C++ `MessageUtils` 一致：计算前将 `crc32` 置 0，序列化后计算，再写回消息。
+
+建议连接状态机：
+
+| 状态 | 触发 |
+| --- | --- |
+| Disconnected | 未连接或主动断开 |
+| Connecting | 正在创建 socket 并发出首次心跳 |
+| Handshaking | 等待服务端 heartbeat 或 connection_state |
+| Connected | 收到有效服务端状态 |
+| Reconnecting | 心跳超时、socket 异常或网络切换 |
+
+## 控制映射
+
+主控页先做手动控制闭环，围绕 `COMMAND_CODE_TAKE_CONTROL`、`COMMAND_CODE_SET_APP_MODE`、`COMMAND_CODE_MOVE`、动作命令和灯光命令。
+
+| UI 控件 | 协议命令 |
+| --- | --- |
+| 接管控制 | `COMMAND_CODE_TAKE_CONTROL` |
+| 释放控制 | `COMMAND_CODE_RELEASE_CONTROL` |
+| 手动/自动模式 | `COMMAND_CODE_SET_APP_MODE` |
+| 低速/中速/高速 | `COMMAND_CODE_SET_SPEED_LEVEL` |
+| 底部动作组开关 | 本地 UI 状态 `actionsExpanded`，不发送协议命令 |
+| 运动模式：普通/原地/楼梯 | `COMMAND_CODE_SET_SPORT_MODE` |
+| 左摇杆前后 | `MoveCommandParams.forward_back` |
+| 左摇杆左右 | `MoveCommandParams.left_right` |
+| 右摇杆或旋转控件 | `MoveCommandParams.yaw` |
+| 站立 | `COMMAND_CODE_STAND_UP` |
+| 卧倒 | `COMMAND_CODE_LIE_DOWN` |
+| 匍匐 | `COMMAND_CODE_CRAWL` |
+| 爬高墙 | `COMMAND_CODE_CLIMB` |
+| 扭一扭 | `COMMAND_CODE_GAIT` |
+| 过窄墙 | `COMMAND_CODE_SLIM` |
+| 锁定 | `COMMAND_CODE_LOCKED` |
+| 前补光灯 | `COMMAND_CODE_FRONT_LIGHT` |
+| 后补光灯 | `COMMAND_CODE_BACK_LIGHT` |
+| 自动补光 | `COMMAND_CODE_AUTO_MODE_LIGHT` |
+| 头部控制 | `COMMAND_CODE_CONTROL_HEAD` |
+| 高低姿态 | `COMMAND_CODE_HIGH_LOW_STANCE` |
+| 急停 | `COMMAND_CODE_SOFT_EMERGENCY_STOP` |
+
+移动命令必须做连续发送。`legged_driver` 服务端有 200ms 速度超时保护，所以 App 摇杆按下时建议以 20Hz 到 30Hz 发送移动命令；摇杆释放、页面暂停、断连、失去焦点时立即发送零速度并停止循环。
+
+## 摇杆输入接入方案
+
+`docs/joystick_protocol.md` 记录的是 UniRC 10 Pro 原始通道帧协议。这个协议暂时不要直接耦合到 `legged_driver` 命令层，应先落到 App 自己的输入层，再由输入层统一生成移动意图。
+
+### 分层边界
+
+| 层 | 职责 |
+| --- | --- |
+| 原始输入源 | 触屏虚拟摇杆、UniRC 通道帧、可选 Android 广播 |
+| 输入解析 | 校验帧、提取 16 路通道、记录时间戳和序列号 |
+| 输入归一化 | 把 1050 到 1950 的通道值转换为 -1.0 到 1.0，并处理死区、反向、限幅 |
+| 输入仲裁 | 决定当前使用触屏输入还是外部摇杆输入，处理输入超时和优先级 |
+| 控制意图 | 输出 forward_back、left_right、yaw、速度挡位、动作按钮边沿事件 |
+| 协议发送 | 按 `legged_driver` 协议发送 `COMMAND_CODE_MOVE`、动作命令和零速度保护 |
+
+这样即使后面决定把摇杆数据做成 Android 广播，广播也只是“原始输入源”的一种实现，不会影响 UI、控制权、速度限幅、ZMQ 协议和安全策略。
+
+### Android 广播取舍
+
+| 方案 | 适用场景 | 处理方式 |
+| --- | --- | --- |
+| 不使用广播 | 摇杆数据只给本 App 使用 | 在同进程内直接接入输入解析模块，延迟最低，状态最清晰 |
+| 使用广播 | 摇杆数据需要和其他 App 共用 | 本 App 增加一个只负责接收的输入适配器，收到通道帧后进入同一套输入归一化流程 |
+
+如果采用广播，建议把广播约束为显式 action、固定 package、签名级权限或同签名应用，避免其他应用伪造摇杆数据。广播接收器不能直接发送机器人命令，只能更新输入层状态；真正的命令发送仍由控制权、安全状态和移动命令循环统一决定。
+
+### 通道映射
+
+UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把物理通道写死到机器人运动轴，建议提供可配置映射并带默认值：
+
+| 机器人输入 | 默认候选通道 | 说明 |
+| --- | --- | --- |
+| left_right | CH1 | 横向或左右平移，按实机方向校准反向 |
+| forward_back | CH2 或 CH3 | 取决于摇杆手感和遥控器配置，联调时确认 |
+| yaw | CH4 | 转向通道，按实机方向校准反向 |
+| speed_level | CH5 或 CH6 | 三挡开关可映射为低/中/高速 |
+| action buttons | CH11 到 CH16 | 功能按键只识别边沿变化，避免长按重复触发动作 |
+
+输入归一化建议使用可配置参数：
+
+| 参数 | 用途 |
+| --- | --- |
+| center | 通道中位，默认 1500 |
+| min/max | 通道最小/最大，默认 1050/1950 |
+| dead_zone | 中位附近死区，避免摇杆轻微抖动 |
+| invert | 单轴反向配置 |
+| stale_timeout_ms | 外部摇杆数据超时后强制输出零速度 |
+
+外部摇杆输入频率可以高于移动命令发送频率。输入层保留最新帧，移动命令循环仍按 20Hz 到 30Hz 发送；超过超时时间没有新帧时，应立即把运动轴置零。
+
+## 主页面布局
+
+主页面按横屏优先设计，参考 `docs/assets/genisdog/main-reference.png`。
+详细坐标和层级规格见 `docs/genisdog_main_screen_layout.md`。
+
+| 区域 | 内容 |
+| --- | --- |
+| 背景层 | 视频画面或占位画面，全屏铺满 |
+| 顶部左侧 | 返回/退出控制、连接状态 |
+| 顶部中间 | 运动模式选择，默认普通模式，支持普通/原地/楼梯 |
+| 顶部右侧 | 网络状态、补光灯、拍照/录像、设置入口 |
+| 左侧中部 | 速度等级按钮，显示低速/中速/高速；点击后显示三段垂直速度选择器 |
+| 左侧下部 | 当前线速度读数 |
+| 底部居中 | 第一个按钮负责展开/收缩动作组；展开后显示站立、匍匐、卧倒、过挡鼠板、扭一扭、爬高墙、过窄墙、锁定 |
+| 左右触控区 | 虚拟摇杆区，常态可以半透明隐藏，触摸时显示 |
+| 状态浮层 | 电量、故障、控制权、急停状态，用小型 toast/banner 呈现 |
+
+视觉风格可以继承 GenisDog 主控页的关键特征：暗色半透明浮层、青色高亮、圆形图标按钮、底部半透明动作条、顶部居中的模式胶囊。不要照搬充电桩和厂商设置页的信息结构。
+
+## 页面与模块
+
+建议新 App 结构：
+
+| 模块 | 职责 |
+| --- | --- |
+| `protocol` | Wire 生成类型、CRC32、消息 envelope 构造、命令封装 |
+| `transport` | ZMQ DEALER 客户端、发送队列、接收循环、重连、心跳 |
+| `domain` | 控制权、AppMode、速度等级、运动模式、动作命令、状态缓存 |
+| `input` | 触屏虚拟摇杆、外部摇杆通道接收、按钮节流、输入仲裁、移动命令循环、零速度保护 |
+| `ui` | Compose 主控页、设置页、状态浮层、素材加载 |
+| `media` | 可选视频流播放，和控制协议解耦 |
+| `settings` | 机器狗 IP、端口、速度限幅、视频地址、调试开关 |
+
+`transport` 层不直接依赖 Compose；UI 只观察 domain 层状态并发出意图。这样后续可以替换视频、输入设备或协议细节，不影响主页面。
+
+## 状态与安全策略
+
+| 场景 | 策略 |
+| --- | --- |
+| App 启动 | 默认不发送运动命令，只连接和订阅状态 |
+| 用户点击接管 | 发送 take control，成功后允许摇杆输出 |
+| 未接管控制 | 动作按钮可以禁用或弹出提示，移动命令必须拦截 |
+| 摇杆移动 | 应用死区、速度等级倍率和限幅后发送 move |
+| 摇杆释放 | 立即发送零速度 |
+| App 进入后台 | 发送零速度，暂停连续命令，必要时释放控制 |
+| 连接中断 | 清空发送队列，进入重连；UI 标红或置灰控制区 |
+| 急停 | 急停按钮需要二次确认或长按触发，触发后停止所有移动循环 |
+| 故障状态 | 高级别故障时禁用运动按钮，保留释放控制和急停恢复入口 |
+
+速度限幅应从配置读取，默认参考 `legged_driver/config/legged_driver.json`：前后、左右、yaw 分别做最大值和非零最小值处理。
+
+## 设置页
+
+设置页不要复刻 GenisDog 的厂商项，只保留新 App 需要的内容：
+
+| 设置项 | 说明 |
+| --- | --- |
+| 机器狗地址 | ZMQ 服务端 IP |
+| ZMQ 端口 | 默认 33445 |
+| 视频地址 | 可选，和控制协议解耦 |
+| 速度限幅 | 低/中/高速倍率、最大 vx/vy/yaw |
+| 摇杆死区 | 触控输入过滤 |
+| 摇杆来源 | 触屏、外部摇杆或自动选择 |
+| 通道映射 | 外部摇杆 CH1 到 CH16 的轴/按钮映射、反向、死区 |
+| 自动接管 | 可选，默认关闭 |
+| 调试信息 | 显示原始摇杆值、最后命令、连接状态、最近错误 |
+
+## 实施顺序
+
+1. 固化协议真源：把 `legged_driver/proto/message.proto` 同步到新 App，重新生成 Wire Kotlin 类型。
+2. 重写协议工具：按 C++ `MessageUtils` 实现设备 ID、时间戳、CRC32、heartbeat、subscription、command request。
+3. 重写 ZMQ 客户端：保留 JeroMQ，使用 DEALER、独立收发循环、心跳、重连和状态回调。
+4. 做主控页静态骨架：横屏强制、全屏背景、顶部栏、左侧速度三段选择器、底部动作组展开/收缩、右侧工具区。
+5. 接入输入层：先完成触屏虚拟摇杆，再接入可选外部摇杆通道数据，实现死区、归一化、速度倍率、输入仲裁、连续发送和释放零速度。
+6. 接入动作按钮：先完成站立、卧倒、匍匐、锁定、速度等级、运动模式、灯光。
+7. 接入状态订阅：显示连接、AppMode、RobotState、Fault、MotionData。
+8. 接入设置页：支持 IP/端口/限幅保存，变更后重连。
+9. 做联调模式：先连 `legged_driver` mock 服务，再连真实机器狗环境。
+10. 收尾安全测试：后台、断网、杀进程、摇杆释放、急停、控制权丢失都要验证零速度和 UI 状态。
+
+## 主要风险
+
+| 风险 | 处理 |
+| --- | --- |
+| 当前仓库 proto 过旧 | 不复用旧 proto，以 `legged_driver` 当前 proto 为准 |
+| 视频不在协议内 | 单独配置视频地址，第一阶段不阻塞控制闭环 |
+| 触控摇杆误触 | 只在接管成功后输出移动命令，加入死区和可视反馈 |
+| 断连后继续运动 | App 端释放发送零速度，服务端已有 200ms 超时保护 |
+| 命令频率过低 | 移动命令保持 20Hz 到 30Hz |
+| 素材授权不明确 | 素材仅作为内部参考和临时开发资源；正式发布前替换为自有资产 |
+
+## 推荐结论
+
+新 App 不要从 GenisDog 反编译源码继续改，也不要复用厂商遥控器 SDK。更稳的路线是：用 GenisDog 主页面做视觉和交互参考，用整理出的图标素材快速搭建第一版 UI，用 `legged_driver` 当前 proto 和 ZMQ 协议实现完整控制闭环。这样后续协议变化只影响 `protocol/transport/domain`，不会把 UI 绑死在厂商 App 或旧项目结构上。
