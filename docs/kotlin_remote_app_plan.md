@@ -4,7 +4,7 @@
 
 重写一个新的 Android 遥控 App，使用 Kotlin 实现，主页面布局参考 GenisDog 当前主控页，通信协议套用 `/home/jiang/code/legged_driver`。现有 `LeggedJoystick` 只作为依赖选型和历史参考，不作为 UI 与业务结构的主依据。
 
-新方案不考虑原遥控器硬件，也不接入 Skydroid/G20/AR8030 这类厂商遥控 SDK。所有控制输入都来自触屏虚拟控件，必要时再扩展 Android 标准手柄输入。
+新方案不接入 Skydroid/G20/AR8030 这类厂商遥控 SDK。当前正式移动输入来自 UniRC UDP 外部摇杆；屏幕只负责模式、速度、动作、状态和调试入口，不做触屏虚拟摇杆。
 
 ## 已整理素材
 
@@ -29,21 +29,32 @@
 
 未纳入方案的素材：充电桩、厂商配网、厂商 SDK 状态、原遥控器硬件按键映射、AR8030/Skydroid 图标和逻辑、`icon_over_mouse*.png`。`过挡鼠板` 在 `legged_driver` 官方 SDK 中没有对应接口，新 App 不实现。
 
+抓取素材只用于内部联调和布局还原。正式发布前需要替换为自有或已授权素材；可以使用 imagegen 生成部分图标，但项目内最终使用的文件必须是透明背景 PNG。生成流程优先使用纯色背景生成，再用本地去色键工具转换为带 alpha 通道的 PNG，不能直接把带纯色背景的生成图放进 App。
+
 ## 技术路线
 
 | 方面 | 决策 |
 | --- | --- |
 | 语言与 UI | Kotlin + Jetpack Compose |
+| 构建系统 | Gradle 9.6.0 + Android Gradle Plugin 9.2.1 |
 | 日志 | Timber |
 | 协议 | 以 `/home/jiang/code/legged_driver/proto/message.proto` 为唯一真源 |
 | Protobuf | Wire 生成 Kotlin 类型 |
 | 网络 | JeroMQ，Android 端作为 ZMQ DEALER 客户端 |
 | 服务端 | `legged_driver` 的 ROUTER 服务，默认监听 `tcp://0.0.0.0:33445` |
 | App 端设备类型 | `DEVICE_TYPE_REMOTE_CONTROLLER` |
-| 控制输入 | 触摸虚拟摇杆、按钮、开关；可选接入外部摇杆通道数据 |
+| 控制输入 | UniRC UDP 外部摇杆、屏幕按钮、开关 |
 | 视频 | 不属于 `legged_driver` 协议，单独作为可插拔视频源处理 |
 
 当前仓库里的 `proto/message.proto` 是旧版协议，字段包括 `MODE_SET`、`VELOCITY_COMMAND` 等；`legged_driver` 当前协议已经变为 `COMMAND_REQUEST`、`SUBSCRIPTION_REQUEST`、`ROBOT_STATE` 等结构。新 App 不应沿用当前仓库旧 proto，应从 `legged_driver/proto/message.proto` 同步或引用生成。
+
+### 工程和依赖升级策略
+
+新 App 继续使用当前仓库的单 `app` 模块工程壳，不新建独立 Android 工程。旧 UI、旧协议、旧虚拟摇杆和厂商相关入口不作为新实现依赖；后续实现时先把旧主流程从新主流程隔离，再按 `protocol`、`transport`、`domain`、`input`、`ui`、`media`、`settings` 分层重建。
+
+构建栈先升级到当前稳定线：Gradle 9.6.0、Android Gradle Plugin 9.2.1、Kotlin 2.4.0、Compose BOM 2026.06.00、Wire 6.4.0，并把 `compileSdk` 升到 37 以满足最新 AndroidX 元数据要求。`targetSdk` 暂不随本次升级改变，避免引入和依赖升级无关的运行时行为变化。
+
+依赖升级只采用稳定版；Maven metadata 中标记为 alpha、beta、RC、EAP、snapshot 或 nightly 的版本不进入第一版。AGP 9 已内置 Kotlin 支持，不再应用 `org.jetbrains.kotlin.android` 插件；旧的 `kotlinOptions` 和 `applicationVariants` DSL 已迁移到 Kotlin `compilerOptions` 和 Android Components API。
 
 ## 协议接入要点
 
@@ -80,9 +91,9 @@ Android 端连接 `legged_driver` 服务时，需要做四件事：
 | 低速/中速/高速 | `COMMAND_CODE_SET_SPEED_LEVEL` |
 | 底部动作组开关 | 本地 UI 状态 `actionsExpanded`，不发送协议命令 |
 | 运动模式：普通/原地/楼梯 | `COMMAND_CODE_SET_SPORT_MODE` |
-| 左摇杆前后 | `MoveCommandParams.forward_back` |
-| 左摇杆左右 | `MoveCommandParams.left_right` |
-| 右摇杆或旋转控件 | `MoveCommandParams.yaw` |
+| 外部左手摇杆前后 | `MoveCommandParams.forward_back` |
+| 外部左手摇杆左右 | `MoveCommandParams.left_right` |
+| 外部右手摇杆转向 | `MoveCommandParams.yaw` |
 | 站立 | `COMMAND_CODE_STAND_UP` |
 | 卧倒 | `COMMAND_CODE_LIE_DOWN` |
 | 匍匐 | `COMMAND_CODE_CRAWL` |
@@ -106,11 +117,11 @@ Android 端连接 `legged_driver` 服务时，需要做四件事：
 
 | 层 | 职责 |
 | --- | --- |
-| 原始输入源 | 触屏虚拟摇杆、UniRC 通道帧、可选 Android 广播 |
+| 原始输入源 | UniRC UDP 通道帧、可选 Android 广播 |
 | 输入解析 | 校验帧、提取 16 路通道、记录时间戳和序列号 |
 | 输入归一化 | 把 1050 到 1950 的通道值转换为 -1.0 到 1.0，并处理死区、反向、限幅 |
-| 输入仲裁 | 决定当前使用触屏输入还是外部摇杆输入，处理输入超时和优先级 |
-| 控制意图 | 输出 forward_back、left_right、yaw、速度挡位、动作按钮边沿事件 |
+| 输入状态 | 处理外部摇杆输入超时、链路自恢复和调试状态 |
+| 控制意图 | 输出 forward_back、left_right 和 yaw |
 | 协议发送 | 按 `legged_driver` 协议发送 `COMMAND_CODE_MOVE`、动作命令和零速度保护 |
 
 这样即使后面决定把摇杆数据做成 Android 广播，广播也只是“原始输入源”的一种实现，不会影响 UI、控制权、速度限幅、ZMQ 协议和安全策略。
@@ -132,11 +143,10 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 
 | 机器人输入 | 默认候选通道 | 说明 |
 | --- | --- | --- |
-| left_right | CH1 | 横向或左右平移，按实机方向校准反向 |
-| forward_back | CH2 或 CH3 | 取决于摇杆手感和遥控器配置，联调时确认 |
-| yaw | CH4 | 转向通道，按实机方向校准反向 |
-| speed_level | CH5 或 CH6 | 三挡开关可映射为低/中/高速 |
-| action buttons | CH11 到 CH16 | 功能按键只识别边沿变化，避免长按重复触发动作 |
+| forward_back | CH3 | 左手前后 |
+| left_right | CH4 | 左手左右平移 |
+| yaw | CH1 | 右手转向 |
+速度等级只由屏幕左侧速度选择器设置，不解析 L1/L2/L3，也不从外部摇杆通道切换速度档。
 
 输入归一化建议使用可配置参数：
 
@@ -164,7 +174,6 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 | 左侧中部 | 速度等级按钮，显示低速/中速/高速；点击后显示三段垂直速度选择器 |
 | 左侧下部 | 当前线速度读数 |
 | 底部居中 | 第一个按钮负责展开/收缩动作组；展开后显示站立、匍匐、卧倒、扭一扭、爬高墙、过窄墙、锁定 |
-| 左右触控区 | 虚拟摇杆区，常态可以半透明隐藏，触摸时显示 |
 | 状态浮层 | 电量、故障、控制权、停止保护状态，用小型 toast/banner 呈现 |
 
 视觉风格可以继承 GenisDog 主控页的关键特征：暗色半透明浮层、青色高亮、圆形图标按钮、底部半透明动作条、顶部居中的模式胶囊。不要照搬充电桩和厂商设置页的信息结构。
@@ -178,7 +187,7 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 | `protocol` | Wire 生成类型、CRC32、消息 envelope 构造、命令封装 |
 | `transport` | ZMQ DEALER 客户端、发送队列、接收循环、重连、心跳 |
 | `domain` | 控制权、AppMode、速度等级、运动模式、动作命令、状态缓存 |
-| `input` | 触屏虚拟摇杆、外部摇杆通道接收、按钮节流、输入仲裁、移动命令循环、零速度保护 |
+| `input` | 外部摇杆通道接收、按钮节流、输入超时、自恢复、移动命令循环、零速度保护 |
 | `ui` | Compose 主控页、设置页、状态浮层、素材加载 |
 | `media` | 可选视频流播放，和控制协议解耦 |
 | `settings` | 机器狗 IP、端口、速度限幅、视频地址、调试开关 |
@@ -211,9 +220,7 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 | ZMQ 端口 | 默认 33445 |
 | 视频地址 | 可选，和控制协议解耦 |
 | 速度限幅 | 低/中/高速倍率、最大 vx/vy/yaw |
-| 摇杆死区 | 触控输入过滤 |
-| 摇杆来源 | 触屏、外部摇杆或自动选择 |
-| 通道映射 | 外部摇杆 CH1 到 CH16 的轴/按钮映射、反向、死区 |
+| 工程调试入口 | 外部摇杆 CH1 到 CH16 原始值、轴值、UDP 状态、串口探测 |
 | 自动接管 | 可选，默认关闭 |
 | 调试信息 | 显示原始摇杆值、最后命令、连接状态、最近错误 |
 
@@ -223,7 +230,7 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 2. 重写协议工具：按 C++ `MessageUtils` 实现设备 ID、时间戳、CRC32、heartbeat、subscription、command request。
 3. 重写 ZMQ 客户端：保留 JeroMQ，使用 DEALER、独立收发循环、心跳、重连和状态回调。
 4. 做主控页静态骨架：横屏强制、全屏背景、顶部栏、左侧速度三段选择器、底部动作组展开/收缩、右侧工具区。
-5. 接入输入层：先完成触屏虚拟摇杆，再接入可选外部摇杆通道数据，实现死区、归一化、速度倍率、输入仲裁、连续发送和释放零速度。
+5. 接入输入层：接入 UniRC UDP 外部摇杆通道数据，实现死区、归一化、当前 UI 速度档倍率、输入超时、自恢复、连续发送和释放归零。
 6. 接入动作按钮：先完成站立、卧倒、匍匐、锁定、速度等级、运动模式、灯光。
 7. 接入状态订阅：显示连接、AppMode、RobotState、Fault、MotionData。
 8. 接入设置页：支持 IP/端口/限幅保存，变更后重连。
@@ -236,7 +243,7 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 | --- | --- |
 | 当前仓库 proto 过旧 | 不复用旧 proto，以 `legged_driver` 当前 proto 为准 |
 | 视频不在协议内 | 单独配置视频地址，第一阶段不阻塞控制闭环 |
-| 触控摇杆误触 | 只在接管成功后输出移动命令，加入死区和可视反馈 |
+| 外部摇杆链路异常 | 检测帧率、超时和自恢复次数，持续失败时停止移动输出 |
 | 断连后继续运动 | App 端释放发送零速度，服务端已有 200ms 超时保护 |
 | 命令频率过低 | 移动命令保持 20Hz 到 30Hz |
 | 素材授权不明确 | 素材仅作为内部参考和临时开发资源；正式发布前替换为自有资产 |

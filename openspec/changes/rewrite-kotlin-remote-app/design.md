@@ -14,9 +14,10 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 **Goals:**
 
 - 使用 Kotlin 和 Jetpack Compose 重写主控 App。
+- 继续使用当前仓库单 `app` 模块工程壳，并升级到当前稳定构建栈。
 - 用 GenisDog 主屏作为布局参考，实现可操作的遥控主界面。
 - 接入 `legged_driver` ZMQ 协议，完成控制权、心跳、订阅、移动命令和动作命令。
-- 建立统一输入层，支持触屏虚拟摇杆，并为 UniRC 通道数据和多 App 共用保留入口。
+- 建立统一输入层，支持 UniRC UDP 外部摇杆，并为多 App 共用保留入口；当前不做触屏虚拟摇杆。
 - 保证零速度、安全断连、输入超时、后台暂停等保护。
 
 **Non-Goals:**
@@ -37,8 +38,8 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 
 ### 输入层
 
-- 触屏虚拟摇杆、UniRC 通道帧、可选 Android 分发数据都进入 `input` 层。
-- 输入层负责帧校验、通道解析、归一化、死区、反向、限幅和输入仲裁。
+- UniRC UDP 通道帧和可选 Android 分发数据都进入 `input` 层。
+- 输入层负责帧校验、通道解析、归一化、死区、反向、限幅、输入超时和链路自恢复。
 - 同端口 UDP 复用已经本机实测不可依赖：20 个单播测试包全部进入后绑定接收者，另一个接收者收到 0 个。
 - 多 App 共用优先验证不同客户端 UDP 端口订阅；若 UniRC 只支持单订阅者，则使用一个采集者独占 UDP 或串口，再通过绑定服务或受限广播分发。
 
@@ -50,9 +51,17 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 底部第一个按钮只控制动作组展开/收缩，不发送机器人命令。
 - 电量和机器状态面板映射到 `RobotStateMessage`。
 
+### 工程层
+
+- 当前仓库保留单 `app` 模块，不新建独立 Android 工程。
+- 构建栈使用稳定版：Gradle 9.6.0、Android Gradle Plugin 9.2.1、Kotlin 2.4.0、Compose BOM 2026.06.00、Wire 6.4.0。
+- `compileSdk` 使用 37，以满足最新 AndroidX 依赖元数据要求；`targetSdk` 暂不因依赖升级同步改变。
+- AGP 9 内置 Kotlin 支持，构建脚本不得继续应用 `org.jetbrains.kotlin.android` 插件。
+- 旧 UI、旧协议、旧虚拟摇杆和厂商相关入口不作为新主流程依赖。
+
 ### 设置层
 
-- 设置页保留机器狗地址、ZMQ 端口、视频地址、速度限幅、摇杆死区、输入来源、通道映射和调试信息。
+- 普通设置页保留机器狗地址、ZMQ 端口和视频地址；工程调试页保留速度限幅、摇杆死区、通道映射、UDP 状态、串口探测和调试信息。
 - 不保留厂商配置项和充电桩相关项。
 
 ## Risks / Trade-offs
@@ -61,3 +70,4 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - UniRC UDP 是否支持多客户端订阅仍需在真实网络环境验证。
 - 串口和 UDP 是否可同时输出也需在设备上验证。
 - `legged_driver` proto 与仓库旧 proto 差异较大，必须先完成协议真源同步，否则后续实现会返工。
+- 最新稳定依赖可能带来 AGP/Gradle 迁移成本；已知迁移点包括移除 `org.jetbrains.kotlin.android`、迁移 `kotlinOptions` 和迁移旧 `applicationVariants` API。

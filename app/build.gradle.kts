@@ -1,4 +1,3 @@
-import com.android.build.gradle.internal.api.ApkVariantOutputImpl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -7,7 +6,6 @@ import java.util.Locale
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.wire)
@@ -15,7 +13,7 @@ plugins {
 
 android {
     namespace = "com.helywin.leggedjoystick"
-    compileSdk = 36
+    compileSdk = 37
 
     // 版本管理
     val versionMajor = 1
@@ -54,49 +52,46 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
     buildFeatures {
         compose = true
         buildConfig = true
     }
+}
 
-    // 自定义 APK 文件名
-    applicationVariants.all {
-        this.outputs
-            .map { it as ApkVariantOutputImpl }
-            .forEach { output ->
-                val variant = this.buildType.name
-                var apkName = "RIDReceiver_" + this.versionName
-                val dateFormat = SimpleDateFormat("yyyyMMddHHmm", Locale.getDefault())
-                if (variant.isNotEmpty()) apkName += "_${variant}_"
-                apkName += dateFormat.format(Date()) + ".apk"
-                println("ApkName=$apkName ${this.buildType.name}")
-                output.outputFileName = apkName
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_11)
+    }
+}
 
-                // 将构建后的 APK 文件移动到 app 文件夹下
-                // 在构建任务完成后执行文件复制操作
-                tasks.named(
-                    "assemble${
-                        variant.replaceFirstChar {
-                            if (it.isLowerCase()) it.uppercase()
-                            else it.toString()
-                        }
-                    }"
-                ).configure {
-                    doLast {
-                        val outputDir =
-                            layout.buildDirectory.dir("outputs/apk/${variant}").get().asFile
-                        val destinationDir = file("${project.projectDir}/output")
-                        copy {
-                            from(outputDir)
-                            into(destinationDir)
-                            include(apkName)
-                        }
+androidComponents {
+    // 自定义 APK 文件名，并在 assemble 后复制到 app/output。
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val buildTypeName = variant.name
+            val versionName = output.versionName.orNull ?: "0.0.0"
+            val dateFormat = SimpleDateFormat("yyyyMMddHHmm", Locale.getDefault())
+            val apkName = "RIDReceiver_${versionName}_${buildTypeName}_${dateFormat.format(Date())}.apk"
+            output.outputFileName.set(apkName)
+
+            val assembleTaskName = "assemble${
+                buildTypeName.replaceFirstChar {
+                    if (it.isLowerCase()) it.uppercase()
+                    else it.toString()
+                }
+            }"
+            tasks.matching { it.name == assembleTaskName }.configureEach {
+                doLast {
+                    val outputDir = layout.buildDirectory.dir("outputs/apk/${buildTypeName}").get().asFile
+                    val destinationDir = file("${project.projectDir}/output")
+                    copy {
+                        from(outputDir)
+                        into(destinationDir)
+                        include(apkName)
                     }
                 }
             }
+        }
     }
 }
 

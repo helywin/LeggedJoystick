@@ -1,5 +1,17 @@
 ## ADDED Requirements
 
+### Requirement: 新遥控 App 必须使用当前稳定构建栈
+
+新遥控 App MUST 继续使用当前仓库单 `app` 模块工程壳，并使用当前稳定版 Gradle、Android Gradle Plugin、Kotlin、AndroidX、Compose 和 Wire；第一版 MUST NOT 引入 alpha、beta、RC、EAP、snapshot 或 nightly 依赖。
+
+#### Scenario: 构建栈升级
+- **WHEN** 维护新遥控 App 构建配置
+- **THEN** 必须使用稳定版 Gradle wrapper、AGP、Kotlin、AndroidX、Compose BOM 和 Wire，并通过 Gradle 构建验证
+
+#### Scenario: AGP 9 迁移
+- **WHEN** 使用 AGP 9 或更高版本
+- **THEN** 构建脚本不得继续应用 `org.jetbrains.kotlin.android`，并必须使用 Kotlin `compilerOptions` 和 Android Components API 替代旧 DSL
+
 ### Requirement: 新遥控 App 必须使用 legged_driver 协议
 
 新遥控 App MUST 以 `/home/jiang/code/legged_driver/proto/message.proto` 为协议真源，通过 Wire 生成 Kotlin 类型，并通过 ZMQ DEALER 客户端连接 `legged_driver` 服务。
@@ -24,13 +36,13 @@
 - **WHEN** 用户点击底部第一个动作组开关
 - **THEN** App 只改变本地 `actionsExpanded` 状态，不得向机器狗发送动作命令
 
-### Requirement: 输入层必须统一处理触屏和外部摇杆
+### Requirement: 输入层必须处理 UniRC UDP 外部摇杆
 
-App MUST 将触屏虚拟摇杆、UniRC 通道帧和可选 Android 分发数据统一进入输入层，再输出标准控制意图。
+App MUST 将 UniRC UDP 通道帧和可选 Android 分发数据统一进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆作为正式移动输入。
 
-#### Scenario: 触屏摇杆移动
-- **WHEN** 用户拖动触屏虚拟摇杆
-- **THEN** 输入层必须应用死区、归一化、速度倍率和限幅，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
+#### Scenario: 外部摇杆移动
+- **WHEN** App 收到有效 UniRC `CMD_ID = 0x42` 通道帧
+- **THEN** 输入层必须应用死区、归一化、当前 UI 速度档倍率和限幅，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
 
 #### Scenario: 外部摇杆通道数据
 - **WHEN** App 收到 UniRC `CMD_ID = 0x42` 通道帧
@@ -63,3 +75,19 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 #### Scenario: 新增 OpenSpec 内容
 - **WHEN** 编写 proposal、design、tasks 或 spec 内容
 - **THEN** 除 OpenSpec 固定关键字外，实际描述必须使用中文
+
+### Requirement: 第一版功能提交必须通过验证门槛
+
+第一版 App 功能提交前 MUST 通过 OpenSpec 校验、Gradle 构建、核心单元测试和必要的 UI 截图检查；协议或输入层变更 MUST 追加协议封包、CRC 和 UniRC 帧解析测试。
+
+#### Scenario: 普通功能提交
+- **WHEN** 提交第一版普通功能改动
+- **THEN** 必须通过 `openspec validate rewrite-kotlin-remote-app --strict`、Gradle 构建和核心单元测试
+
+#### Scenario: UI 功能提交
+- **WHEN** 提交主屏或状态面板 UI 改动
+- **THEN** 必须通过工程 mock 模式主屏截图检查
+
+#### Scenario: 协议或输入层提交
+- **WHEN** 提交协议封包、CRC、UniRC 输入解析或轴映射改动
+- **THEN** 必须额外通过协议封包/CRC 测试和 UniRC 帧解析测试
