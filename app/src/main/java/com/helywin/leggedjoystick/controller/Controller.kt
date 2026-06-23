@@ -14,9 +14,16 @@ import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.ControlOwnershipState
+import com.helywin.leggedjoystick.data.DriverConnectionTelemetry
+import com.helywin.leggedjoystick.data.FaultTelemetry
 import com.helywin.leggedjoystick.data.HighLowStance
+import com.helywin.leggedjoystick.data.MotionTelemetry
+import com.helywin.leggedjoystick.data.OdometryTelemetry
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
+import com.helywin.leggedjoystick.data.toFaultTelemetry
+import com.helywin.leggedjoystick.data.toMotionTelemetry
+import com.helywin.leggedjoystick.data.toOdometryTelemetry
 import com.helywin.leggedjoystick.input.remote.MovementIntent
 import com.helywin.leggedjoystick.input.remote.RemoteInputAxisMapping
 import com.helywin.leggedjoystick.input.remote.RemoteInputChannelMapping
@@ -40,6 +47,7 @@ import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
 import legged_driver.RobotStateMessage
 import legged_driver.SportMode
+import legged_driver.ConnectionState as DriverConnectionState
 import kotlinx.coroutines.*
 import kotlin.math.hypot
 import timber.log.Timber
@@ -68,6 +76,19 @@ class ControllerState {
 
     // 当前线速度值，单位由 driver 状态消息保持一致。
     var currentSpeedValue by mutableStateOf(0.0)
+        private set
+
+    // driver 侧连接与状态订阅数据，用于调试面板和后续联调诊断。
+    var driverConnectionTelemetry by mutableStateOf(DriverConnectionTelemetry())
+        private set
+
+    var motionTelemetry by mutableStateOf(MotionTelemetry())
+        private set
+
+    var faultTelemetry by mutableStateOf(FaultTelemetry())
+        private set
+
+    var odometryTelemetry by mutableStateOf(OdometryTelemetry())
         private set
 
     // 补光灯和头部状态来自 RobotStateMessage。
@@ -151,6 +172,29 @@ class ControllerState {
 
     fun updateCurrentSpeedValue(value: Double) {
         currentSpeedValue = value.coerceAtLeast(0.0)
+    }
+
+    fun updateDriverConnectionTelemetry(
+        connectionState: DriverConnectionState,
+        robotConnected: Boolean
+    ) {
+        driverConnectionTelemetry = DriverConnectionTelemetry(
+            connectionState = connectionState,
+            robotConnected = robotConnected,
+            updatedAtMs = System.currentTimeMillis()
+        )
+    }
+
+    fun updateMotionTelemetry(telemetry: MotionTelemetry) {
+        motionTelemetry = telemetry
+    }
+
+    fun updateFaultTelemetry(telemetry: FaultTelemetry) {
+        faultTelemetry = telemetry
+    }
+
+    fun updateOdometryTelemetry(telemetry: OdometryTelemetry) {
+        odometryTelemetry = telemetry
     }
 
     fun updateRobotAuxiliaryState(robotState: RobotStateMessage) {
@@ -348,7 +392,24 @@ class RobotControllerImpl(private val context: Context) : Controller {
             MessageType.MESSAGE_TYPE_HEARTBEAT -> {
                 message.heartbeat?.let { heartbeat ->
                     settingsState.updateRobotMode(heartbeat.app_mode)
+                    settingsState.updateDriverConnectionTelemetry(
+                        connectionState = heartbeat.connection_state,
+                        robotConnected = heartbeat.robot_connected
+                    )
                     Timber.d("[Controller] 收到服务器心跳，机器连接状态: ${heartbeat.robot_connected}")
+                }
+            }
+            MessageType.MESSAGE_TYPE_CONNECTION_STATE -> {
+                message.connection_state?.let { connectionState ->
+                    settingsState.updateDriverConnectionTelemetry(
+                        connectionState = connectionState.connection_state,
+                        robotConnected = connectionState.robot_connected
+                    )
+                    Timber.d(
+                        "[Controller] 收到连接状态: %s，机器连接: %s",
+                        connectionState.connection_state,
+                        connectionState.robot_connected
+                    )
                 }
             }
             MessageType.MESSAGE_TYPE_APP_MODE_STATE -> {
@@ -369,6 +430,24 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         robotState.sport_mode,
                         robotState.control_source
                     )
+                }
+            }
+            MessageType.MESSAGE_TYPE_MOTION_DATA -> {
+                message.motion_data?.let { motionData ->
+                    settingsState.updateMotionTelemetry(motionData.toMotionTelemetry())
+                    Timber.v("[Controller] 收到运动数据")
+                }
+            }
+            MessageType.MESSAGE_TYPE_FAULT_DATA -> {
+                message.fault_data?.let { faultData ->
+                    settingsState.updateFaultTelemetry(faultData.toFaultTelemetry())
+                    Timber.d("[Controller] 收到故障数据，数量: %d", faultData.faults.size)
+                }
+            }
+            MessageType.MESSAGE_TYPE_ODOMETRY -> {
+                message.odometry?.let { odometry ->
+                    settingsState.updateOdometryTelemetry(odometry.toOdometryTelemetry())
+                    Timber.v("[Controller] 收到里程数据")
                 }
             }
             MessageType.MESSAGE_TYPE_TAKE_CONTROL_ACK -> {

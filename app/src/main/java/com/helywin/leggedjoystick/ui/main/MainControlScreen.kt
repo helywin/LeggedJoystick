@@ -79,13 +79,20 @@ import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.ControlOwnershipState
+import com.helywin.leggedjoystick.data.DriverConnectionTelemetry
+import com.helywin.leggedjoystick.data.FaultTelemetry
 import com.helywin.leggedjoystick.data.HighLowStance
+import com.helywin.leggedjoystick.data.MotionTelemetry
+import com.helywin.leggedjoystick.data.OdometryTelemetry
 import com.helywin.leggedjoystick.data.SpeedLevel
+import com.helywin.leggedjoystick.data.Vector3Telemetry
 import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import legged_driver.AppMode
+import legged_driver.ConnectionState as DriverConnectionState
+import legged_driver.FaultLevel
 import legged_driver.SportMode
 
 private enum class RightToolPanel {
@@ -119,6 +126,10 @@ fun MainControlScreen(
     val remoteInputState = settingsState.remoteInputState
     val lastCommandName = settingsState.lastCommandName
     val lastCommandDetail = settingsState.lastCommandDetail
+    val driverConnectionTelemetry = settingsState.driverConnectionTelemetry
+    val motionTelemetry = settingsState.motionTelemetry
+    val faultTelemetry = settingsState.faultTelemetry
+    val odometryTelemetry = settingsState.odometryTelemetry
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
     val mainTitle = settingsState.settings.mainTitle
     val logoPath = settingsState.settings.logoPath
@@ -199,6 +210,10 @@ fun MainControlScreen(
                     remoteInputState = remoteInputState,
                     lastCommandName = lastCommandName,
                     lastCommandDetail = lastCommandDetail,
+                    driverConnectionTelemetry = driverConnectionTelemetry,
+                    motionTelemetry = motionTelemetry,
+                    faultTelemetry = faultTelemetry,
+                    odometryTelemetry = odometryTelemetry,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset(x = 258.dp, y = 86.dp)
@@ -501,6 +516,10 @@ private fun RemoteInputPanel(
     remoteInputState: RemoteInputRuntimeState,
     lastCommandName: String,
     lastCommandDetail: String,
+    driverConnectionTelemetry: DriverConnectionTelemetry,
+    motionTelemetry: MotionTelemetry,
+    faultTelemetry: FaultTelemetry,
+    odometryTelemetry: OdometryTelemetry,
     modifier: Modifier = Modifier
 ) {
     val snapshot = remoteInputState.latestSnapshot
@@ -516,7 +535,7 @@ private fun RemoteInputPanel(
     Surface(
         modifier = modifier
             .width(430.dp)
-            .height(282.dp),
+            .height(326.dp),
         color = Color(0xCC151B1B),
         shape = RoundedCornerShape(12.dp),
         tonalElevation = 0.dp,
@@ -573,6 +592,23 @@ private fun RemoteInputPanel(
                 ),
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = 0.68f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "驱动 ${driverConnectionTelemetry.summaryText()}  " +
+                    "机器 ${if (driverConnectionTelemetry.robotConnected) "在线" else "离线"}  " +
+                    "故障 ${faultTelemetry.summaryText()}",
+                fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.58f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "机体V ${motionTelemetry.bodyVelocity.formatTriple()}  " +
+                    "里程V ${odometryTelemetry.linearVelocity.formatTriple()}",
+                fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.58f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1688,6 +1724,35 @@ private fun List<Int>.formatChannelLine(startIndex: Int): String {
         .take(4)
         .mapIndexed { index, value -> "${startIndex + index + 1}:$value" }
         .joinToString(separator = "  ", prefix = "CH ")
+}
+
+private fun Vector3Telemetry.formatTriple(): String {
+    return "%.2f,%.2f,%.2f".format(x, y, z)
+}
+
+private fun DriverConnectionTelemetry.summaryText(): String {
+    return when (connectionState) {
+        DriverConnectionState.CONNECTION_STATE_CONNECTED -> "已连接"
+        DriverConnectionState.CONNECTION_STATE_CONNECTING -> "连接中"
+        DriverConnectionState.CONNECTION_STATE_HANDSHAKING -> "握手中"
+        DriverConnectionState.CONNECTION_STATE_RECONNECTING -> "重连中"
+        DriverConnectionState.CONNECTION_STATE_DISCONNECTING -> "断开中"
+        DriverConnectionState.CONNECTION_STATE_DISCONNECTED -> "已断开"
+    }
+}
+
+private fun FaultTelemetry.summaryText(): String {
+    if (faultCount == 0) return "0"
+
+    val level = when (highestLevel) {
+        FaultLevel.FAULT_LEVEL_FATAL_ERROR -> "FATAL"
+        FaultLevel.FAULT_LEVEL_ERROR -> "ERROR"
+        FaultLevel.FAULT_LEVEL_WARN -> "WARN"
+        FaultLevel.FAULT_LEVEL_UNKNOWN -> "UNKNOWN"
+    }
+    val message = highestMessage.ifBlank { highestCode.name.removePrefix("FAULT_CODE_") }
+
+    return "$faultCount/$level $message"
 }
 
 private fun SportMode.iconResId(): Int {
