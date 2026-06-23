@@ -38,17 +38,14 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.helywin.leggedjoystick.controller.Controller
 import com.helywin.leggedjoystick.proto.displayName
-import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SpeedLevel
-import com.helywin.leggedjoystick.input.GamepadInputHandler
-import com.helywin.leggedjoystick.input.GamepadInputState
+import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
+import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import legged_driver.AppMode
 import legged_driver.SportMode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
-import com.helywin.leggedjoystick.ui.components.GamepadStatusIndicator
-import com.helywin.leggedjoystick.ui.joystick.*
 import kotlin.random.Random
 
 /**
@@ -68,7 +65,6 @@ data class GradientPoint(
 @Composable
 fun MainControlScreen(
     controller: Controller,
-    gamepadInputState: GamepadInputState? = null,
     onSettingsClick: () -> Unit,
     onVideoClick: () -> Unit
 ) {
@@ -77,6 +73,7 @@ fun MainControlScreen(
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val speedLevel = settingsState.settings.speedLevel
+    val remoteInputState = settingsState.remoteInputState
     val isRobotModeChanging = settingsState.isRobotCtrlModeChanging
     val isRobotCtrlModeChanging = settingsState.isRobotCtrlModeChanging
     val mainTitle = settingsState.settings.mainTitle
@@ -131,7 +128,7 @@ fun MainControlScreen(
                 batteryLevel = batteryLevel,
                 connectionState = connectionState,
                 mode = appMode,
-                gamepadInputState = gamepadInputState,
+                remoteInputState = remoteInputState,
                 onVideoClick = onVideoClick,
                 onConnectClick = {
                     when (connectionState) {
@@ -168,7 +165,7 @@ fun MainControlScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // 主控制区域
+            // 主状态区域，正式移动输入由外部遥控器输入源提供。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -176,48 +173,13 @@ fun MainControlScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧摇杆区域 - 用于移动控制 (vx, vy)
-                SquareVirtualJoystick(
-                    size = 200.dp,
-                    enhancedCallback = object : EnhancedJoystickCallback {
-                        override fun onValueChanged(value: JoystickValue) {
-                            controller.updateLeftJoystick(value)
-                        }
-
-                        override fun onPressed() {
-                            controller.onLeftJoystickPressed()
-                        }
-
-                        override fun onReleased() {
-                            controller.onLeftJoystickReleased()
-                        }
-                    }
-                )
+                RemoteInputPanel(remoteInputState = remoteInputState)
 
                 // 中间速度档位选择按钮
                 SpeedLevelSelector(
                     currentLevel = speedLevel,
                     onLevelSelected = { level ->
                         controller.setSpeedLevel(level)
-                    }
-                )
-
-                // 右侧线性摇杆 - 用于转向控制 (yawRate)
-                LinearVirtualJoystick(
-                    width = 200.dp,
-                    height = 60.dp,
-                    enhancedCallback = object : EnhancedJoystickCallback {
-                        override fun onValueChanged(value: JoystickValue) {
-                            controller.updateRightJoystick(value)
-                        }
-
-                        override fun onPressed() {
-                            controller.onRightJoystickPressed()
-                        }
-
-                        override fun onReleased() {
-                            controller.onRightJoystickReleased()
-                        }
                     }
                 )
             }
@@ -233,7 +195,7 @@ private fun TopStatusBar(
     batteryLevel: Int,
     connectionState: ConnectionState,
     mode: AppMode,
-    gamepadInputState: GamepadInputState?,
+    remoteInputState: RemoteInputRuntimeState,
     onVideoClick: () -> Unit,
     onConnectClick: () -> Unit,
     onModeClick: (AppMode) -> Unit,
@@ -252,13 +214,7 @@ private fun TopStatusBar(
             // 电量显示
             BatteryIndicator(batteryLevel = batteryLevel)
 
-            // 游戏手柄状态显示
-            if (gamepadInputState != null) {
-                GamepadStatusIndicator(
-                    isConnected = gamepadInputState.isGamepadConnected,
-                    deviceName = gamepadInputState.connectedDevice?.name
-                )
-            }
+            RemoteInputIndicator(remoteInputState = remoteInputState)
         }
 
         // 右侧控制按钮
@@ -359,6 +315,89 @@ private fun BatteryIndicator(batteryLevel: Int) {
                 else -> Color(0xFFF44336)
             }
         )
+    }
+}
+
+@Composable
+private fun RemoteInputIndicator(remoteInputState: RemoteInputRuntimeState) {
+    val color = when (remoteInputState.status) {
+        RemoteInputStatus.RUNNING -> Color(0xFF4CAF50)
+        RemoteInputStatus.STARTING -> Color(0xFFFF9800)
+        RemoteInputStatus.TIMEOUT, RemoteInputStatus.ERROR -> Color(0xFFF44336)
+        RemoteInputStatus.STOPPED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Sensors,
+            contentDescription = "遥控输入",
+            tint = color,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = remoteInputState.status.displayName,
+            fontSize = 12.sp,
+            color = color,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun RemoteInputPanel(remoteInputState: RemoteInputRuntimeState) {
+    val snapshot = remoteInputState.latestSnapshot
+    val intent = snapshot?.movementIntent
+
+    Card(
+        modifier = Modifier
+            .width(260.dp)
+            .height(120.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = remoteInputState.sourceName.ifEmpty { "外部遥控输入" },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "状态 ${remoteInputState.status.displayName}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = if (intent != null) {
+                    "前进 %.2f  平移 %.2f  转向 %.2f".format(
+                        intent.forward,
+                        intent.strafeRight,
+                        intent.yawRight
+                    )
+                } else {
+                    "等待通道帧"
+                },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (remoteInputState.lastError.isNotEmpty()) {
+                Text(
+                    text = remoteInputState.lastError,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
@@ -594,14 +633,10 @@ fun MainControlScreenPreview() {
             override fun cancelConnection() {}
             override fun setMode(mode: AppMode) {}
             override fun setControlMode(controlMode: SportMode) {}
-            override fun updateLeftJoystick(joystickValue: JoystickValue) {}
-            override fun updateRightJoystick(joystickValue: JoystickValue) {}
-            override fun onLeftJoystickReleased() {}
-            override fun onRightJoystickReleased() {}
-            override fun onLeftJoystickPressed() {}
-            override fun onRightJoystickPressed() {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun updateSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
+            override fun pauseMovementOutput() {}
+            override fun resumeMovementOutput() {}
             override fun loadSettings() {}
             override fun saveSettings(settings: com.helywin.leggedjoystick.data.AppSettings) {}
             override fun isConnected() = false
@@ -615,6 +650,15 @@ fun MainControlScreenPreview() {
         onVideoClick = {}
     )
 }
+
+private val RemoteInputStatus.displayName: String
+    get() = when (this) {
+        RemoteInputStatus.STOPPED -> "未启动"
+        RemoteInputStatus.STARTING -> "启动中"
+        RemoteInputStatus.RUNNING -> "接收中"
+        RemoteInputStatus.TIMEOUT -> "超时"
+        RemoteInputStatus.ERROR -> "异常"
+    }
 
 /**
  * 创建多点渐变背景

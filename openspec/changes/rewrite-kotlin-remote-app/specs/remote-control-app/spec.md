@@ -56,9 +56,13 @@
 
 App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆或 Android 广播作为正式移动输入。
 
+#### Scenario: 输入源抽象
+- **WHEN** 新增 UniRC、串口、其他 UDP 遥控器或后续单采集者分发输入
+- **THEN** 新输入实现必须适配统一 `RemoteInputSource` 抽象，并输出 `RemoteInputSnapshot` 和操作者视角的 `MovementIntent`
+
 #### Scenario: 外部摇杆移动
 - **WHEN** App 收到有效 UniRC `CMD_ID = 0x42` 通道帧
-- **THEN** 输入层必须应用死区、归一化、协议符号转换和安全 clamp，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
+- **THEN** 输入层必须应用死区、归一化和安全 clamp，输出操作者视角运动意图，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
 
 #### Scenario: 外部摇杆通道数据
 - **WHEN** App 收到 UniRC `CMD_ID = 0x42` 通道帧

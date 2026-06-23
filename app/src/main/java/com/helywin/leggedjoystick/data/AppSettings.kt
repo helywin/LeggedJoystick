@@ -29,6 +29,11 @@ data class AppSettings(
     val zmqPort: Int = 33445,
     val speedLevel: SpeedLevel = SpeedLevel.SLOW,
     val rtspUrl: String = "rtsp://192.168.234.1:8554/test",
+    val remoteInputHost: String = "192.168.144.20",
+    val remoteInputPort: Int = 19856,
+    val remoteInputLocalPort: Int = 0,
+    val remoteInputDeadZone: Float = 0.08f,
+    val remoteInputTimeoutMs: Long = 250L,
     val mainTitle: String = "机器狗遥控器",
     val logoPath: String = "",
     val keepScreenOn: Boolean = true

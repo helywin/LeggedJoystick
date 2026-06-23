@@ -10,19 +10,23 @@
 package com.helywin.leggedjoystick.controller
 
 import android.content.Context
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
-import com.helywin.leggedjoystick.ui.joystick.JoystickValue
+import com.helywin.leggedjoystick.input.remote.MovementIntent
+import com.helywin.leggedjoystick.input.remote.RemoteInputListener
+import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
+import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
+import com.helywin.leggedjoystick.input.remote.RemoteInputSnapshot
+import com.helywin.leggedjoystick.input.remote.RemoteInputSource
+import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
+import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
+import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
+import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
 import com.helywin.leggedjoystick.zmq.NewZmqClient
 import legged_driver.AppMode
-import legged_driver.CommandCode
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
 import legged_driver.RobotStateMessage
@@ -54,6 +58,10 @@ class ControllerState {
 
     // 应用设置
     var settings by mutableStateOf(AppSettings())
+        private set
+
+    // 外部遥控输入状态
+    var remoteInputState by mutableStateOf(RemoteInputRuntimeState())
         private set
 
     // 模式切换状态
@@ -107,6 +115,28 @@ class ControllerState {
     fun setSpeedLevel(level: SpeedLevel) {
         settings = settings.copy(speedLevel = level)
     }
+
+    fun updateRemoteInputStatus(
+        descriptor: RemoteInputSourceDescriptor,
+        status: RemoteInputStatus,
+        message: String = ""
+    ) {
+        remoteInputState = remoteInputState.copy(
+            status = status,
+            sourceName = descriptor.displayName,
+            lastError = message
+        )
+    }
+
+    fun updateRemoteInputSnapshot(snapshot: RemoteInputSnapshot) {
+        remoteInputState = remoteInputState.copy(
+            status = RemoteInputStatus.RUNNING,
+            sourceName = snapshot.descriptor.displayName,
+            lastFrameAtMs = snapshot.receivedAtMs,
+            lastError = "",
+            latestSnapshot = snapshot
+        )
+    }
 }
 
 /**
@@ -123,14 +153,10 @@ interface Controller {
     fun cancelConnection()
     fun setMode(mode: AppMode)
     fun setControlMode(controlMode: SportMode)
-    fun updateLeftJoystick(joystickValue: JoystickValue)
-    fun updateRightJoystick(joystickValue: JoystickValue)
-    fun onLeftJoystickReleased()
-    fun onRightJoystickReleased()
-    fun onLeftJoystickPressed()
-    fun onRightJoystickPressed()
     fun setSpeedLevel(level: SpeedLevel)
     fun updateSettings(settings: AppSettings)
+    fun pauseMovementOutput()
+    fun resumeMovementOutput()
     fun isConnected(): Boolean
     fun cleanup()
     fun loadSettings()
@@ -141,27 +167,8 @@ interface Controller {
  * 机器人控制器实现类
  */
 class RobotControllerImpl(private val context: Context) : Controller {
-    companion object {
-        // 震动反馈相关常量
-        private const val JOYSTICK_PRESS_VIBRATION_MS = 100L    // 按下震动时长
-        private const val JOYSTICK_RELEASE_VIBRATION_MS = 80L   // 释放震动时长
-        private const val VIBRATION_AMPLITUDE_PRESS = 180       // 按下震动强度
-        private const val VIBRATION_AMPLITUDE_RELEASE = 150     // 释放震动强度
-    }
-
     private val zmqClient = NewZmqClient()
     private val settingsManager = SettingsManager(context)
-
-    // 震动管理器
-    private val vibrator: Vibrator? by lazy {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            vibratorManager?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-    }
 
     // 协程相关
     private val supervisorJob = SupervisorJob()
@@ -170,9 +177,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
     // 连接任务
     private var connectJob: Job? = null
 
-    // 摇杆状态
-    private var currentLeftJoystick = JoystickValue.ZERO  // 左摇杆：vx, vy
-    private var currentRightJoystick = JoystickValue.ZERO  // 右摇杆：yawRate
+    private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
+    private var currentMovementIntent = MovementIntent.ZERO
     private var lastCommandSent = false  // 跟踪是否发送过速度指令
 
     // 速度发送任务
@@ -232,9 +238,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 return@launch
             }
             if (state == ConnectionState.CONNECTED) {
+                startRemoteInput()
                 startVelocityLoop()
             } else {
                 stopVelocityLoop()
+                stopRemoteInput()
             }
             settingsState.updateConnectionState(state)
             Timber.i("[Controller] 连接状态更新: $state")
@@ -290,6 +298,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun disconnect() {
         cancelConnection()
         stopVelocityLoop()
+        stopRemoteInput()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         Timber.i("[Controller] 已断开连接")
@@ -303,6 +312,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             zmqClient.disconnect()
+            stopRemoteInput()
             settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         }
     }
@@ -374,56 +384,6 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     /**
-     * 更新左摇杆（移动控制：vx, vy）
-     */
-    override fun updateLeftJoystick(joystickValue: JoystickValue) {
-        currentLeftJoystick = joystickValue
-        Timber.v("[Controller] 左摇杆更新: vx=${joystickValue.x}, vy=${joystickValue.y}")
-    }
-
-    /**
-     * 更新右摇杆（转向控制：yawRate）
-     */
-    override fun updateRightJoystick(joystickValue: JoystickValue) {
-        currentRightJoystick = joystickValue
-        Timber.v("[Controller] 右摇杆更新: yawRate=${joystickValue.x}")
-    }
-
-    /**
-     * 左摇杆释放回调
-     */
-    override fun onLeftJoystickReleased() {
-        currentLeftJoystick = JoystickValue.ZERO
-        triggerVibration(JOYSTICK_RELEASE_VIBRATION_MS, VIBRATION_AMPLITUDE_RELEASE)
-        Timber.d("[Controller] 左摇杆已释放，触发震动反馈")
-    }
-
-    /**
-     * 右摇杆释放回调
-     */
-    override fun onRightJoystickReleased() {
-        currentRightJoystick = JoystickValue.ZERO
-        triggerVibration(JOYSTICK_RELEASE_VIBRATION_MS, VIBRATION_AMPLITUDE_RELEASE)
-        Timber.d("[Controller] 右摇杆已释放，触发震动反馈")
-    }
-
-    /**
-     * 左摇杆按下回调
-     */
-    override fun onLeftJoystickPressed() {
-        triggerVibration(JOYSTICK_PRESS_VIBRATION_MS, VIBRATION_AMPLITUDE_PRESS)
-        Timber.d("[Controller] 左摇杆已按下，触发震动反馈")
-    }
-
-    /**
-     * 右摇杆按下回调
-     */
-    override fun onRightJoystickPressed() {
-        triggerVibration(JOYSTICK_PRESS_VIBRATION_MS, VIBRATION_AMPLITUDE_PRESS)
-        Timber.d("[Controller] 右摇杆已按下，触发震动反馈")
-    }
-
-    /**
      * 设置速度档位
      */
     override fun setSpeedLevel(level: SpeedLevel) {
@@ -441,6 +401,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun updateSettings(settings: AppSettings) {
         settingsState.updateSettings(settings)
+        rebuildRemoteInputSource(settings)
         // 自动保存设置
         saveSettings(settings)
         Timber.d("[Controller] 设置已更新并保存")
@@ -453,6 +414,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         try {
             val settings = settingsManager.loadSettings()
             settingsState.updateSettings(settings)
+            rebuildRemoteInputSource(settings)
             Timber.i("[Controller] 设置已从存储中加载: $settings")
         } catch (e: Exception) {
             Timber.e(e, "[Controller] 加载设置失败，使用默认设置")
@@ -478,6 +440,21 @@ class RobotControllerImpl(private val context: Context) : Controller {
         return settingsState.isConnected
     }
 
+    override fun pauseMovementOutput() {
+        currentMovementIntent = MovementIntent.ZERO
+        stopVelocityLoop()
+        stopRemoteInput()
+        Timber.i("[Controller] 已暂停移动输出")
+    }
+
+    override fun resumeMovementOutput() {
+        if (!settingsState.isConnected) return
+
+        startRemoteInput()
+        startVelocityLoop()
+        Timber.i("[Controller] 已恢复移动输出")
+    }
+
     /**
      * 开始速度发送循环
      */
@@ -489,23 +466,17 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 try {
                     // 只有在手动模式下才发送移动指令
                     if (settingsState.robotMode == AppMode.APP_MODE_MANUAL) {
-                        // 检查是否有摇杆被按下（不在中心位置）
-                        val leftJoystickPressed = !currentLeftJoystick.isCenter
-                        val rightJoystickPressed = !currentRightJoystick.isCenter
+                        val intent = currentMovementIntent.clamped()
 
-                        // 只有当至少有一个摇杆被按下时才发送速度指令
-                        if (leftJoystickPressed || rightJoystickPressed) {
-                            val forward = -currentLeftJoystick.y
-                            val strafeRight = currentLeftJoystick.x
-                            val yawRight = currentRightJoystick.x
-
+                        // 只有当外部遥控器有非零输入时才发送移动指令
+                        if (!intent.isZero) {
                             zmqClient.sendOperatorMoveCommand(
-                                strafeRight = strafeRight,
-                                forward = forward,
-                                yawRight = yawRight
+                                strafeRight = intent.strafeRight,
+                                forward = intent.forward,
+                                yawRight = intent.yawRight
                             )
                             Timber.v(
-                                "[Controller] 发送移动指令: forward=$forward, strafeRight=$strafeRight, yawRight=$yawRight"
+                                "[Controller] 发送移动指令: forward=${intent.forward}, strafeRight=${intent.strafeRight}, yawRight=${intent.yawRight}"
                             )
                             lastCommandSent = true
                         } else if (lastCommandSent) {
@@ -536,6 +507,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         if (lastCommandSent) {
             zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
         }
+        currentMovementIntent = MovementIntent.ZERO
         velocitySendJob?.cancel()
         velocitySendJob = null
         lastCommandSent = false  // 重置命令发送标志
@@ -549,30 +521,62 @@ class RobotControllerImpl(private val context: Context) : Controller {
         supervisorJob.cancel()
     }
 
-    /**
-     * 执行震动反馈
-     * @param durationMs 震动持续时间（毫秒）
-     * @param amplitude 震动强度（0-255）
-     */
-    private fun triggerVibration(durationMs: Long, amplitude: Int) {
-        try {
-            val currentVibrator = vibrator
-            if (currentVibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    // Android 8.0+ 使用VibrationEffect
-                    val effect = VibrationEffect.createOneShot(durationMs, amplitude)
-                    currentVibrator.vibrate(effect)
-                } else {
-                    // 兼容旧版本
-                    @Suppress("DEPRECATION")
-                    currentVibrator.vibrate(durationMs)
-                }
-                Timber.v("[Controller] 执行震动: ${durationMs}ms, 强度: $amplitude")
-            } else {
-                Timber.d("[Controller] 设备不支持震动或震动器未初始化")
+    private fun startRemoteInput() {
+        remoteInputSource.start(remoteInputListener)
+    }
+
+    private fun stopRemoteInput() {
+        remoteInputSource.stop()
+        currentMovementIntent = MovementIntent.ZERO
+    }
+
+    private fun rebuildRemoteInputSource(settings: AppSettings) {
+        val shouldRestart = settingsState.isConnected
+        if (shouldRestart) {
+            stopRemoteInput()
+        }
+
+        remoteInputSource = buildRemoteInputSource(settings)
+
+        if (shouldRestart) {
+            startRemoteInput()
+        }
+    }
+
+    private fun buildRemoteInputSource(settings: AppSettings): RemoteInputSource {
+        return UniRcUdpInputSource(
+            UniRcUdpInputConfig(
+                remoteHost = settings.remoteInputHost,
+                remotePort = settings.remoteInputPort,
+                localPort = settings.remoteInputLocalPort,
+                normalization = RemoteInputNormalizationConfig(
+                    deadZone = settings.remoteInputDeadZone,
+                    timeoutMs = settings.remoteInputTimeoutMs
+                )
+            )
+        )
+    }
+
+    private val remoteInputListener = object : RemoteInputListener {
+        override fun onStatusChanged(
+            descriptor: RemoteInputSourceDescriptor,
+            status: RemoteInputStatus,
+            message: String
+        ) {
+            if (status == RemoteInputStatus.TIMEOUT || status == RemoteInputStatus.ERROR) {
+                currentMovementIntent = MovementIntent.ZERO
             }
-        } catch (e: Exception) {
-            Timber.w(e, "[Controller] 触发震动失败")
+
+            scope.launch {
+                settingsState.updateRemoteInputStatus(descriptor, status, message)
+            }
+        }
+
+        override fun onSnapshot(snapshot: RemoteInputSnapshot) {
+            currentMovementIntent = snapshot.movementIntent.clamped()
+            scope.launch {
+                settingsState.updateRemoteInputSnapshot(snapshot)
+            }
         }
     }
 

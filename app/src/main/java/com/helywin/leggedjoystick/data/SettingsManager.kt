@@ -24,6 +24,11 @@ class SettingsManager(context: Context) {
         private const val KEY_ZMQ_PORT = "zmq_port"
         private const val KEY_SPEED_LEVEL = "speed_level"
         private const val KEY_RTSP_URL = "rtsp_url"
+        private const val KEY_REMOTE_INPUT_HOST = "remote_input_host"
+        private const val KEY_REMOTE_INPUT_PORT = "remote_input_port"
+        private const val KEY_REMOTE_INPUT_LOCAL_PORT = "remote_input_local_port"
+        private const val KEY_REMOTE_INPUT_DEAD_ZONE = "remote_input_dead_zone"
+        private const val KEY_REMOTE_INPUT_TIMEOUT_MS = "remote_input_timeout_ms"
         private const val KEY_MAIN_TITLE = "main_title"
         private const val KEY_LOGO_PATH = "logo_path"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
@@ -32,6 +37,11 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
         private const val DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
+        private const val DEFAULT_REMOTE_INPUT_HOST = "192.168.144.20"
+        private const val DEFAULT_REMOTE_INPUT_PORT = 19856
+        private const val DEFAULT_REMOTE_INPUT_LOCAL_PORT = 0
+        private const val DEFAULT_REMOTE_INPUT_DEAD_ZONE = 0.08f
+        private const val DEFAULT_REMOTE_INPUT_TIMEOUT_MS = 250L
         private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
         private const val DEFAULT_LOGO_PATH = ""
         private const val DEFAULT_KEEP_SCREEN_ON = true
@@ -50,6 +60,11 @@ class SettingsManager(context: Context) {
                 putInt(KEY_ZMQ_PORT, settings.zmqPort)
                 putString(KEY_SPEED_LEVEL, settings.speedLevel.name)
                 putString(KEY_RTSP_URL, settings.rtspUrl)
+                putString(KEY_REMOTE_INPUT_HOST, settings.remoteInputHost)
+                putInt(KEY_REMOTE_INPUT_PORT, settings.remoteInputPort)
+                putInt(KEY_REMOTE_INPUT_LOCAL_PORT, settings.remoteInputLocalPort)
+                putFloat(KEY_REMOTE_INPUT_DEAD_ZONE, settings.remoteInputDeadZone)
+                putLong(KEY_REMOTE_INPUT_TIMEOUT_MS, settings.remoteInputTimeoutMs)
                 putString(KEY_MAIN_TITLE, settings.mainTitle)
                 putString(KEY_LOGO_PATH, settings.logoPath)
                 putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
@@ -79,6 +94,21 @@ class SettingsManager(context: Context) {
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
                 speedLevel = speedLevel,
                 rtspUrl = sharedPreferences.getString(KEY_RTSP_URL, DEFAULT_RTSP_URL) ?: DEFAULT_RTSP_URL,
+                remoteInputHost = sharedPreferences.getString(KEY_REMOTE_INPUT_HOST, DEFAULT_REMOTE_INPUT_HOST)
+                    ?: DEFAULT_REMOTE_INPUT_HOST,
+                remoteInputPort = sharedPreferences.getInt(KEY_REMOTE_INPUT_PORT, DEFAULT_REMOTE_INPUT_PORT),
+                remoteInputLocalPort = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_LOCAL_PORT,
+                    DEFAULT_REMOTE_INPUT_LOCAL_PORT
+                ),
+                remoteInputDeadZone = sharedPreferences.getFloat(
+                    KEY_REMOTE_INPUT_DEAD_ZONE,
+                    DEFAULT_REMOTE_INPUT_DEAD_ZONE
+                ),
+                remoteInputTimeoutMs = sharedPreferences.getLong(
+                    KEY_REMOTE_INPUT_TIMEOUT_MS,
+                    DEFAULT_REMOTE_INPUT_TIMEOUT_MS
+                ),
                 mainTitle = sharedPreferences.getString(KEY_MAIN_TITLE, DEFAULT_MAIN_TITLE) ?: DEFAULT_MAIN_TITLE,
                 logoPath = sharedPreferences.getString(KEY_LOGO_PATH, DEFAULT_LOGO_PATH) ?: DEFAULT_LOGO_PATH,
                 keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON)
