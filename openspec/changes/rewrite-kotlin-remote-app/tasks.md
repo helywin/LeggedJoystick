@@ -7,15 +7,17 @@
 
 ## 1. 协议真源
 
-- [ ] 1.1 同步 `/home/jiang/code/legged_driver/proto/message.proto` 到新 App 的协议生成流程。
-- [ ] 1.2 使用 Wire 生成 Kotlin 类型，并清理旧 proto 的误用入口。
-- [ ] 1.3 实现 `LeggedDriverMessage` 构造、时间戳、设备类型、设备 ID 和 CRC32。
+- [x] 1.1 同步 `/home/jiang/code/legged_driver/proto/message.proto` 到新 App 的协议生成流程。
+- [x] 1.2 使用 Wire 生成 Kotlin 类型，并清理旧 proto 的误用入口。
+- [x] 1.3 实现 `LeggedDriverMessage` 构造、时间戳、设备类型、设备 ID 和 CRC32。
 
 ## 2. 传输与状态
 
-- [ ] 2.1 实现 ZMQ DEALER 客户端、发送队列、接收循环、心跳和重连。
+- [ ] 2.1 实现 ZMQ DEALER 客户端、发送队列、接收循环、心跳和连接恢复。
 - [ ] 2.2 实现状态订阅：连接状态、AppMode、RobotState、MotionData、FaultData、Odometry。
-- [ ] 2.3 用 Timber 记录连接、重连、发送失败、CRC 异常和协议解析异常。
+- [x] 2.3 用 Timber 记录连接、重连、发送失败、CRC 异常和协议解析异常。
+- [x] 2.4 连接按钮必须可重复恢复：每次用户主动点击连接前，彻底关闭旧 socket、旧 context、旧线程任务和旧发送队列，失败后再次点击不得依赖重启 App。
+- [x] 2.5 `CONNECTING` 或 `CONNECTED` 状态下不得重复创建第二套 ZMQ 资源；需要重新连接时必须先走显式断开和资源释放。
 
 ## 3. 输入层
 
@@ -55,3 +57,11 @@
 - [ ] 7.2 每次功能提交前通过 Gradle 构建和核心单元测试。
 - [ ] 7.3 每次 UI 功能提交前通过工程 mock 模式主屏截图检查。
 - [ ] 7.4 涉及协议封包、CRC、UniRC 输入解析或轴映射时，额外通过协议封包/CRC 测试和 UniRC 帧解析测试。
+
+## 8. 当前实施切片
+
+- [x] 8.1 协议真源切片：同步 `legged_driver` 当前 `message.proto`，重写协议封包工具，并用单元测试覆盖 CRC32、订阅和命令封包。
+- [x] 8.2 传输恢复切片：重写 ZMQ 连接生命周期，保证连接按钮失败后再次点击能重建完整连接资源，不需要重启 App。
+- [ ] 8.3 旧入口隔离切片：将旧虚拟摇杆、Android 游戏手柄输入和旧模式入口从新主流程剥离，避免误发旧协议语义。
+- [ ] 8.4 UniRC 输入切片：实现 UDP 通道订阅、帧解析、死区、轴映射、超时归零和串口/UDP 并行验证。
+- [ ] 8.5 主屏 UI 切片：按 GenisDog 主屏截图实现横屏主控页、运动模式 overlay、速度三挡、电量 overlay 和底部动作组。

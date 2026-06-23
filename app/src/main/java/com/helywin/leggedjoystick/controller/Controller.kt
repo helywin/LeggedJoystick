@@ -19,12 +19,17 @@ import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
-import com.helywin.leggedjoystick.proto.MessageUtils
-import legged_driver.*
 import com.helywin.leggedjoystick.ui.joystick.JoystickValue
 import com.helywin.leggedjoystick.zmq.NewZmqClient
+import legged_driver.AppMode
+import legged_driver.CommandCode
+import legged_driver.LeggedDriverMessage
+import legged_driver.MessageType
+import legged_driver.RobotStateMessage
+import legged_driver.SportMode
 import kotlinx.coroutines.*
 import timber.log.Timber
+import kotlin.math.roundToInt
 
 /**
  * 应用状态管理类
@@ -36,11 +41,11 @@ class ControllerState {
         private set
 
     // 机器人模式（自动/手动）
-    var robotMode by mutableStateOf(Mode.MODE_AUTO)
+    var robotMode by mutableStateOf(AppMode.APP_MODE_AUTO)
         private set
 
-    // 机器人控制模式（站立/趴下/阻尼）
-    var robotCtrlMode by mutableStateOf(ControlMode.CONTROL_MODE_STAND_UP)
+    // 运动模式（普通/原地/楼梯）
+    var robotCtrlMode by mutableStateOf(SportMode.SPORT_MODE_GENERAL)
         private set
 
     // 电池电量
@@ -67,7 +72,7 @@ class ControllerState {
         connectionState = newState
     }
 
-    fun updateRobotMode(newMode: Mode) {
+    fun updateRobotMode(newMode: AppMode) {
         robotMode = newMode
         // 模式更新时清除切换状态
         if (isRobotModeChanging) {
@@ -75,7 +80,7 @@ class ControllerState {
         }
     }
 
-    fun updateRobotCtrlMode(newMode: ControlMode) {
+    fun updateRobotCtrlMode(newMode: SportMode) {
         robotCtrlMode = newMode
         // 控制模式更新时清除切换状态
         if (isRobotCtrlModeChanging) {
@@ -116,8 +121,8 @@ interface Controller {
     fun connect()
     fun disconnect()
     fun cancelConnection()
-    fun setMode(mode: Mode)
-    fun setControlMode(controlMode: ControlMode)
+    fun setMode(mode: AppMode)
+    fun setControlMode(controlMode: SportMode)
     fun updateLeftJoystick(joystickValue: JoystickValue)
     fun updateRightJoystick(joystickValue: JoystickValue)
     fun onLeftJoystickReleased()
@@ -194,25 +199,21 @@ class RobotControllerImpl(private val context: Context) : Controller {
         when (message.message_type) {
             MessageType.MESSAGE_TYPE_HEARTBEAT -> {
                 message.heartbeat?.let { heartbeat ->
-                    Timber.d("[Controller] 收到服务器心跳，连接状态: ${heartbeat.is_connected}")
+                    settingsState.updateRobotMode(heartbeat.app_mode)
+                    Timber.d("[Controller] 收到服务器心跳，机器连接状态: ${heartbeat.robot_connected}")
                 }
             }
-            MessageType.MESSAGE_TYPE_BATTERY_INFO -> {
-                message.battery_info?.let { batteryInfo ->
-                    settingsState.updateBatteryLevel(batteryInfo.battery_level)
-                    Timber.d("[Controller] 收到电池信息，电量: ${batteryInfo.battery_level}%")
+            MessageType.MESSAGE_TYPE_APP_MODE_STATE -> {
+                message.app_mode_state?.let { appModeState ->
+                    settingsState.updateRobotMode(appModeState.app_mode)
+                    Timber.d("[Controller] 收到当前 AppMode: ${appModeState.app_mode}")
                 }
             }
-            MessageType.MESSAGE_TYPE_CURRENT_MODE -> {
-                message.current_mode?.let { currentModeMsg ->
-                    settingsState.updateRobotMode(currentModeMsg.mode)
-                    Timber.d("[Controller] 收到当前模式: ${currentModeMsg.mode}")
-                }
-            }
-            MessageType.MESSAGE_TYPE_CURRENT_CONTROL_MODE -> {
-                message.current_control_mode?.let { currentControlModeMsg ->
-                    settingsState.updateRobotCtrlMode(currentControlModeMsg.control_mode)
-                    Timber.d("[Controller] 收到当前控制模式: ${currentControlModeMsg.control_mode}")
+            MessageType.MESSAGE_TYPE_ROBOT_STATE -> {
+                message.robot_state?.let { robotState ->
+                    settingsState.updateRobotCtrlMode(robotState.sport_mode)
+                    settingsState.updateBatteryLevel(robotState.toBatteryPercent())
+                    Timber.d("[Controller] 收到机器人状态，运动模式: ${robotState.sport_mode}")
                 }
             }
             else -> {
@@ -300,12 +301,16 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun cancelConnection() {
         connectJob?.cancel()
         connectJob = null
+        if (settingsState.connectionState == ConnectionState.CONNECTING) {
+            zmqClient.disconnect()
+            settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+        }
     }
 
     /**
      * 设置机器人模式（自动/手动）
      */
-    override fun setMode(mode: Mode) {
+    override fun setMode(mode: AppMode) {
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法设置模式")
             return
@@ -338,14 +343,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
     /**
      * 设置机器人控制模式（站立/趴下/阻尼）
      */
-    override fun setControlMode(controlMode: ControlMode) {
+    override fun setControlMode(controlMode: SportMode) {
         if (!settingsState.isConnected) {
-            Timber.w("[Controller] 未连接，无法设置控制模式")
+            Timber.w("[Controller] 未连接，无法设置运动模式")
             return
         }
 
         if (settingsState.isRobotCtrlModeChanging) {
-            Timber.w("[Controller] 正在切换控制模式中，请等待")
+            Timber.w("[Controller] 正在切换运动模式中，请等待")
             return
         }
 
@@ -355,15 +360,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
             try {
                 val success = zmqClient.setControlMode(controlMode)
                 if (success) {
-                    Timber.i("[Controller] 控制模式设置请求已发送: $controlMode")
-                    // 实际控制模式更新由消息回调处理
+                    Timber.i("[Controller] 运动模式设置请求已发送: $controlMode")
+                    // 实际运动模式更新由消息回调处理
                 } else {
                     settingsState.updateRobotCtrlModeChangingState(false)
-                    Timber.e("[Controller] 控制模式设置失败: $controlMode")
+                    Timber.e("[Controller] 运动模式设置失败: $controlMode")
                 }
             } catch (e: Exception) {
                 settingsState.updateRobotCtrlModeChangingState(false)
-                Timber.e(e, "[Controller] 设置控制模式异常: $controlMode")
+                Timber.e(e, "[Controller] 设置运动模式异常: $controlMode")
             }
         }
     }
@@ -423,6 +428,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun setSpeedLevel(level: SpeedLevel) {
         settingsState.setSpeedLevel(level)
+        if (settingsState.isConnected) {
+            zmqClient.setSpeedLevel(level.protocolSpeedLevel)
+        }
         // 自动保存更新后的设置
         saveSettings(settingsState.settings)
         Timber.i("[Controller] 已切换到${level.displayName}并保存设置")
@@ -479,28 +487,31 @@ class RobotControllerImpl(private val context: Context) : Controller {
         velocitySendJob = scope.launch {
             while (isActive && settingsState.isConnected) {
                 try {
-                    // 只有在手动模式下才发送速度指令
-                    if (settingsState.robotMode == Mode.MODE_MANUAL) {
+                    // 只有在手动模式下才发送移动指令
+                    if (settingsState.robotMode == AppMode.APP_MODE_MANUAL) {
                         // 检查是否有摇杆被按下（不在中心位置）
                         val leftJoystickPressed = !currentLeftJoystick.isCenter
                         val rightJoystickPressed = !currentRightJoystick.isCenter
 
                         // 只有当至少有一个摇杆被按下时才发送速度指令
                         if (leftJoystickPressed || rightJoystickPressed) {
-                            // 计算速度参数，使用速度档位设置的最大线速度
-                            val maxSpeed = settingsState.settings.speedLevel.maxLinearSpeed
-                            val vx = -currentLeftJoystick.y * maxSpeed
-                            val vy = -currentLeftJoystick.x * maxSpeed
-                            val yawRate = -currentRightJoystick.x * maxSpeed // 使用右摇杆的X轴作为角速度
+                            val forward = -currentLeftJoystick.y
+                            val strafeRight = currentLeftJoystick.x
+                            val yawRight = currentRightJoystick.x
 
-                            // 发送速度指令
-                            zmqClient.sendVelocityCommand(vx, vy, yawRate)
-                            Timber.v("[Controller] 发送速度指令: vx=$vx, vy=$vy, yawRate=$yawRate")
+                            zmqClient.sendOperatorMoveCommand(
+                                strafeRight = strafeRight,
+                                forward = forward,
+                                yawRight = yawRight
+                            )
+                            Timber.v(
+                                "[Controller] 发送移动指令: forward=$forward, strafeRight=$strafeRight, yawRight=$yawRight"
+                            )
                             lastCommandSent = true
                         } else if (lastCommandSent) {
                             // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令
-                            zmqClient.sendVelocityCommand(0f, 0f, 0f)
-                            Timber.v("[Controller] 发送停止指令")
+                            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                            Timber.v("[Controller] 发送停止移动指令")
                             lastCommandSent = false
                         }
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
@@ -522,6 +533,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 停止速度发送循环
      */
     private fun stopVelocityLoop() {
+        if (lastCommandSent) {
+            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+        }
         velocitySendJob?.cancel()
         velocitySendJob = null
         lastCommandSent = false  // 重置命令发送标志
@@ -560,5 +574,16 @@ class RobotControllerImpl(private val context: Context) : Controller {
         } catch (e: Exception) {
             Timber.w(e, "[Controller] 触发震动失败")
         }
+    }
+
+    private fun RobotStateMessage.toBatteryPercent(): Int {
+        val batteryData = battery ?: return 0
+        val values = buildList {
+            if (batteryData.present1) add(batteryData.power1)
+            if (batteryData.present2) add(batteryData.power2)
+        }
+
+        if (values.isEmpty()) return 0
+        return values.average().roundToInt().coerceIn(0, 100)
     }
 }

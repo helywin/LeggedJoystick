@@ -12,10 +12,13 @@ package com.helywin.leggedjoystick.data
 /**
  * 速度档位枚举
  */
-enum class SpeedLevel(val displayName: String, val maxLinearSpeed: Float) {
-    SLOW("慢速", 0.5f),
-    MEDIUM("中速", 1.0f),
-    FAST("快速", 2.0f)
+enum class SpeedLevel(
+    val displayName: String,
+    val protocolSpeedLevel: legged_driver.SpeedLevel
+) {
+    SLOW("低速", legged_driver.SpeedLevel.SPEED_LEVEL_SLOW),
+    MEDIUM("中速", legged_driver.SpeedLevel.SPEED_LEVEL_MEDIUM),
+    FAST("高速", legged_driver.SpeedLevel.SPEED_LEVEL_HIGH)
 }
 
 /**
@@ -24,7 +27,7 @@ enum class SpeedLevel(val displayName: String, val maxLinearSpeed: Float) {
 data class AppSettings(
     val zmqIp: String = "192.168.234.1",
     val zmqPort: Int = 33445,
-    val speedLevel: SpeedLevel = SpeedLevel.MEDIUM,
+    val speedLevel: SpeedLevel = SpeedLevel.SLOW,
     val rtspUrl: String = "rtsp://192.168.234.1:8554/test",
     val mainTitle: String = "机器狗遥控器",
     val logoPath: String = "",

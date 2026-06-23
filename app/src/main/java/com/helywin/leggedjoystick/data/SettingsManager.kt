@@ -66,12 +66,12 @@ class SettingsManager(context: Context) {
      */
     fun loadSettings(): AppSettings {
         return try {
-            val speedLevelName = sharedPreferences.getString(KEY_SPEED_LEVEL, SpeedLevel.MEDIUM.name)
+            val speedLevelName = sharedPreferences.getString(KEY_SPEED_LEVEL, SpeedLevel.SLOW.name)
             val speedLevel = try {
-                SpeedLevel.valueOf(speedLevelName ?: SpeedLevel.MEDIUM.name)
+                SpeedLevel.valueOf(speedLevelName ?: SpeedLevel.SLOW.name)
             } catch (e: IllegalArgumentException) {
                 Timber.w("无效的速度档位: $speedLevelName，使用默认值")
-                SpeedLevel.MEDIUM
+                SpeedLevel.SLOW
             }
 
             AppSettings(

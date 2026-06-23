@@ -24,6 +24,22 @@
 - **WHEN** 用户触发速度、模式、动作或移动输入
 - **THEN** App 必须构造 `MESSAGE_TYPE_COMMAND_REQUEST` 并按 `legged_driver` 的 CRC32 规则发送
 
+### Requirement: ZMQ 连接按钮必须能从失败状态恢复
+
+新遥控 App MUST 把用户主动点击连接视为一次全新的连接尝试；即使上一次连接卡住、超时或失败，也不得要求用户重启 App 才能再次连接成功。
+
+#### Scenario: 连接失败后再次点击连接
+- **WHEN** 用户点击连接后未能建立有效 ZMQ 通道，随后再次点击连接
+- **THEN** App 必须先彻底释放旧 socket、旧 context、旧线程任务、旧连接验证任务和旧发送队列，再创建新的 ZMQ 资源
+
+#### Scenario: 连接中重复点击
+- **WHEN** 连接状态仍为 `CONNECTING` 或连接验证仍在进行
+- **THEN** App 不得创建第二套 ZMQ socket 和工作线程；必须忽略重复点击或显式取消旧尝试后再重建
+
+#### Scenario: 连接成功后重新连接
+- **WHEN** 用户在已连接状态下要求重新连接
+- **THEN** App 必须先停止移动输出、发送必要的停止命令、关闭现有连接资源，然后再进入新的连接尝试
+
 ### Requirement: 主屏必须复刻 GenisDog 的核心遥控布局
 
 主屏 MUST 参考 `docs/genisdog_main_screen_layout.md`，保留全屏视频背景、顶部模式栏、左侧速度区、右侧工具列、底部动作组和状态 overlay。

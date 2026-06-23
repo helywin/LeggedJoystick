@@ -13,68 +13,288 @@ enum DeviceType {
 // 消息类型枚举
 enum MessageType {
     MESSAGE_TYPE_UNSPECIFIED = 0;
-    MESSAGE_TYPE_HEARTBEAT = 1;      // 心跳消息
-    MESSAGE_TYPE_BATTERY_INFO = 2;   // 电池信息
-    MESSAGE_TYPE_MODE_SET = 3;       // 模式设置
-    MESSAGE_TYPE_CONTROL_MODE_SET = 4;  // 控制模式设置
-    MESSAGE_TYPE_VELOCITY_COMMAND = 5;  // 运动速度指令
-    MESSAGE_TYPE_CURRENT_MODE = 6;   // 当前模式
-    MESSAGE_TYPE_CURRENT_CONTROL_MODE = 7; // 当前控制模式
-    MESSAGE_TYPE_ODOMETRY = 8;       // 里程计信息
+    MESSAGE_TYPE_HEARTBEAT = 1;
+    MESSAGE_TYPE_SUBSCRIPTION_REQUEST = 2;
+    MESSAGE_TYPE_COMMAND_REQUEST = 3;
+    MESSAGE_TYPE_COMMAND_RESULT = 4;
+    MESSAGE_TYPE_CONNECTION_STATE = 5;
+    MESSAGE_TYPE_APP_MODE_STATE = 6;
+    MESSAGE_TYPE_ROBOT_STATE = 7;
+    MESSAGE_TYPE_MOTION_DATA = 8;
+    MESSAGE_TYPE_IMU_DATA = 9;
+    MESSAGE_TYPE_LUX_DATA = 10;
+    MESSAGE_TYPE_FAULT_DATA = 11;
+    MESSAGE_TYPE_ODOMETRY = 12;
+    MESSAGE_TYPE_CONTROL_LOST = 13;
+    MESSAGE_TYPE_CONTROL_AVAILABLE = 14;
+    MESSAGE_TYPE_TAKE_CONTROL_ACK = 15;
+    MESSAGE_TYPE_RELEASE_CONTROL_ACK = 16;
 }
 
-// 模式枚举 (手动/自动)
-enum Mode {
-    MODE_AUTO = 0;       // 自动模式
-    MODE_MANUAL = 1;     // 手动模式
+// 应用层调度模式，决定导航端和遥控端的控制优先级
+enum AppMode {
+    APP_MODE_AUTO = 0;
+    APP_MODE_MANUAL = 1;
 }
 
-// 控制模式枚举 (阻尼/趴下/站立)
-enum ControlMode {
-    CONTROL_MODE_PASSIVE = 0;    // 阻尼模式
-    CONTROL_MODE_STAND_UP = 1;   // 站立模式
-    CONTROL_MODE_LIE_DOWN = 2;   // 趴下模式
-    CONTROL_MODE_UNSPECIFIED = 100; // 未指定
+enum SubscriptionTopic {
+    SUBSCRIPTION_TOPIC_UNSPECIFIED = 0;
+    SUBSCRIPTION_TOPIC_HEARTBEAT = 1;
+    SUBSCRIPTION_TOPIC_CONNECTION_STATE = 2;
+    SUBSCRIPTION_TOPIC_APP_MODE_STATE = 3;
+    SUBSCRIPTION_TOPIC_ROBOT_STATE = 4;
+    SUBSCRIPTION_TOPIC_MOTION_DATA = 5;
+    SUBSCRIPTION_TOPIC_IMU_DATA = 6;
+    SUBSCRIPTION_TOPIC_LUX_DATA = 7;
+    SUBSCRIPTION_TOPIC_FAULT_DATA = 8;
+    SUBSCRIPTION_TOPIC_ODOMETRY = 9;
+    SUBSCRIPTION_TOPIC_CONTROL_LOST = 10;
+    SUBSCRIPTION_TOPIC_CONTROL_AVAILABLE = 11;
 }
 
-// 心跳消息体
+enum CommandCode {
+    COMMAND_CODE_UNSPECIFIED = 0;
+    COMMAND_CODE_SET_APP_MODE = 1;
+    COMMAND_CODE_SOFT_EMERGENCY_STOP = 2;
+    COMMAND_CODE_STAND_UP = 3;
+    COMMAND_CODE_LIE_DOWN = 4;
+    COMMAND_CODE_CRAWL = 5;
+    COMMAND_CODE_CLIMB = 6;
+    COMMAND_CODE_GAIT = 7;
+    COMMAND_CODE_SLIM = 8;
+    COMMAND_CODE_REVERSE_HEAD_TAIL = 9;
+    COMMAND_CODE_SET_SPORT_MODE = 10;
+    COMMAND_CODE_SET_SPEED_LEVEL = 11;
+    COMMAND_CODE_LOCKED = 12;
+    COMMAND_CODE_FRONT_LIGHT = 13;
+    COMMAND_CODE_BACK_LIGHT = 14;
+    COMMAND_CODE_AUTO_MODE_LIGHT = 15;
+    COMMAND_CODE_MOVE = 16;
+    COMMAND_CODE_TURN = 17;
+    COMMAND_CODE_CONTROL_HEAD = 18;
+    COMMAND_CODE_HIGH_LOW_STANCE = 19;
+    COMMAND_CODE_SET_IMU_CONFIG = 20;
+    COMMAND_CODE_SET_LUX_CONFIG = 21;
+    COMMAND_CODE_SET_MC_CONFIG = 22;
+    COMMAND_CODE_TAKE_CONTROL = 23;
+    COMMAND_CODE_RELEASE_CONTROL = 24;
+}
+
+enum CommandResultStage {
+    COMMAND_RESULT_STAGE_UNSPECIFIED = 0;
+    COMMAND_RESULT_STAGE_ACCEPTED = 1;
+    COMMAND_RESULT_STAGE_COMPLETED = 2;
+    COMMAND_RESULT_STAGE_REJECTED = 3;
+}
+
+enum ConnectionState {
+    CONNECTION_STATE_DISCONNECTING = 0;
+    CONNECTION_STATE_DISCONNECTED = 1;
+    CONNECTION_STATE_CONNECTING = 2;
+    CONNECTION_STATE_HANDSHAKING = 3;
+    CONNECTION_STATE_CONNECTED = 4;
+    CONNECTION_STATE_RECONNECTING = 5;
+}
+
+enum FaultCode {
+    FAULT_CODE_UNKNOWN = 0;
+    FAULT_CODE_ACTUATOR_DISABLED = 10;
+    FAULT_CODE_ACTUATOR_ENCODER_ERROR = 11;
+    FAULT_CODE_ACTUATOR_OFFLINE = 12;
+    FAULT_CODE_ACTUATOR_OVER_VOLTAGE = 13;
+    FAULT_CODE_ACTUATOR_OVERHEAT = 14;
+    FAULT_CODE_ACTUATOR_TEMP_WARN = 15;
+    FAULT_CODE_ACTUATOR_TIMEOUT = 16;
+    FAULT_CODE_ACTUATOR_UNDERVOLT = 17;
+    FAULT_CODE_POWER_CONTROL_OVER_TEMP = 18;
+    FAULT_CODE_POWER_CONTROL_POWER_EMPTY = 19;
+    FAULT_CODE_POWER_CONTROL_POWER_LOW = 20;
+    FAULT_CODE_POWER_CONTROL_OFFLINE = 21;
+    FAULT_CODE_CAN_BROKEN = 22;
+    FAULT_CODE_ROBOT_REMOTE_KEEP_ALIVE_FAILURE = 23;
+    FAULT_CODE_SYSTEM_CLOCK_SANITY_ERROR = 24;
+    FAULT_CODE_SYSTEM_ROBOT_STATUS_ERROR = 25;
+    FAULT_CODE_IMU_CONNECT_ERROR = 26;
+    FAULT_CODE_IMU_DATA_NOT_UPDATED = 27;
+}
+
+enum FaultLevel {
+    FAULT_LEVEL_UNKNOWN = 0;
+    FAULT_LEVEL_FATAL_ERROR = 1;
+    FAULT_LEVEL_ERROR = 2;
+    FAULT_LEVEL_WARN = 3;
+}
+
+enum PowerSupplyStatus {
+    POWER_SUPPLY_STATUS_UNKNOWN = 0;
+    POWER_SUPPLY_STATUS_CHARGING = 1;
+    POWER_SUPPLY_STATUS_DISCHARGING = 2;
+    POWER_SUPPLY_STATUS_FULL = 4;
+}
+
+enum FillLightStatus {
+    FILL_LIGHT_STATUS_UNKNOWN = 0;
+    FILL_LIGHT_STATUS_ON = 1;
+    FILL_LIGHT_STATUS_OFF = 2;
+}
+
+enum SpeedLevel {
+    SPEED_LEVEL_UNKNOWN = 0;
+    SPEED_LEVEL_SLOW = 1;
+    SPEED_LEVEL_MEDIUM = 2;
+    SPEED_LEVEL_HIGH = 3;
+}
+
+enum EmergencyStatus {
+    EMERGENCY_STATUS_UNKNOWN = 0;
+    EMERGENCY_STATUS_RECOVER = 1;
+    EMERGENCY_STATUS_STOP = 2;
+}
+
+enum HeadDirection {
+    HEAD_DIRECTION_UNKNOWN = 0;
+    HEAD_DIRECTION_HEAD = 1;
+    HEAD_DIRECTION_TAIL = 2;
+}
+
+enum SportMode {
+    SPORT_MODE_UNKNOWN = 0;
+    SPORT_MODE_GENERAL = 1;
+    SPORT_MODE_IN_PLACE = 2;
+    SPORT_MODE_STAIR = 3;
+}
+
+enum MotionStatus {
+    MOTION_STATUS_UNKNOWN = 0;
+    MOTION_STATUS_STAND_UP = 1;
+    MOTION_STATUS_LIE_DOWN = 2;
+    MOTION_STATUS_CRAWL = 3;
+    MOTION_STATUS_LOCKED = 4;
+    MOTION_STATUS_GENERAL = 5;
+    MOTION_STATUS_IN_PLACE = 6;
+    MOTION_STATUS_STAIR = 7;
+    MOTION_STATUS_CLIMB = 8;
+    MOTION_STATUS_SLIM = 9;
+    MOTION_STATUS_GAIT = 10;
+}
+
+enum CtrlSource {
+    CTRL_SOURCE_UNKNOWN = 0;
+    CTRL_SOURCE_APP = 1;
+    CTRL_SOURCE_SDK = 2;
+    CTRL_SOURCE_OTHER = 3;
+}
+
 message HeartbeatMessage {
-    bool is_connected = 1;       // 连接状态
+    bool robot_connected = 1;
+    ConnectionState connection_state = 2;
+    AppMode app_mode = 3;
 }
 
-// 电池信息消息体
-message BatteryInfoMessage {
-    uint32 battery_level = 1;    // 电池电量 (0-100)
-    float voltage = 2;           // 电压
-    float current = 3;           // 电流
-    float temperature = 4;       // 温度
+message SubscriptionRequestMessage {
+    uint64 request_id = 1;
+    bool subscribe = 2;
+    repeated SubscriptionTopic topics = 3;
 }
 
-// 模式设置消息体
-message ModeSetMessage {
-    Mode mode = 1;               // 要设置的模式
+message SetAppModeParams {
+    AppMode mode = 1;
 }
 
-// 控制模式设置消息体
-message ControlModeSetMessage {
-    ControlMode control_mode = 1; // 要设置的控制模式
+message SoftEmergencyStopParams {
+    bool on = 1;
 }
 
-// 速度指令消息体
-message VelocityCommandMessage {
-    float vx = 1;               // x方向线速度
-    float vy = 2;               // y方向线速度
-    float yaw_rate = 3;         // 角速度
+message SetSportModeParams {
+    int32 mode = 1;
 }
 
-// 当前模式消息体
-message CurrentModeMessage {
-    Mode mode = 1;              // 当前模式
+message SetSpeedLevelParams {
+    int32 speed_level = 1;
 }
 
-// 当前控制模式消息体
-message CurrentControlModeMessage {
-    ControlMode control_mode = 1; // 当前控制模式
+message FrontLightParams {
+    bool on = 1;
+}
+
+message BackLightParams {
+    bool on = 1;
+}
+
+message AutoModeLightParams {
+    bool on = 1;
+}
+
+message MoveCommandParams {
+    float left_right = 1;
+    float forward_back = 2;
+    float yaw = 3;
+}
+
+message TurnCommandParams {
+    int32 direction = 1;
+}
+
+message ControlHeadCommandParams {
+    float left_right = 1;
+    float up_down = 2;
+}
+
+message HighLowStanceCommandParams {
+    int32 stance = 1;
+}
+
+message SetImuConfigParams {
+    int32 frequency_hz = 1;
+}
+
+message SetLuxConfigParams {
+    bool on = 1;
+}
+
+message SetMcConfigParams {
+    bool on = 1;
+}
+
+message CommandRequestMessage {
+    uint64 request_id = 1;
+    CommandCode command_code = 2;
+    int32 timeout_ms = 3;
+
+    oneof params {
+        SetAppModeParams set_app_mode = 10;
+        SoftEmergencyStopParams soft_emergency_stop = 11;
+        SetSportModeParams set_sport_mode = 12;
+        SetSpeedLevelParams set_speed_level = 13;
+        FrontLightParams front_light = 14;
+        BackLightParams back_light = 15;
+        AutoModeLightParams auto_mode_light = 16;
+        MoveCommandParams move = 17;
+        TurnCommandParams turn = 18;
+        ControlHeadCommandParams control_head = 19;
+        HighLowStanceCommandParams high_low_stance = 20;
+        SetImuConfigParams set_imu_config = 21;
+        SetLuxConfigParams set_lux_config = 22;
+        SetMcConfigParams set_mc_config = 23;
+    }
+}
+
+message CommandResultMessage {
+    uint64 request_id = 1;
+    CommandCode command_code = 2;
+    CommandResultStage stage = 3;
+    int32 error_code = 4;
+    string error_message = 5;
+}
+
+message ConnectionStateMessage {
+    ConnectionState connection_state = 1;
+    bool robot_connected = 2;
+}
+
+message AppModeStateMessage {
+    AppMode app_mode = 1;
+    string source_device_id = 2;
 }
 
 // 3D向量
@@ -92,12 +312,116 @@ message Quaternion {
     float w = 4;
 }
 
-// 里程计消息体
+message BatteryDataMessage {
+    float power1 = 1;
+    float power2 = 2;
+    bool present1 = 3;
+    bool present2 = 4;
+    float voltage1 = 5;
+    float voltage2 = 6;
+    float temperature1 = 7;
+    float temperature2 = 8;
+    float current1 = 9;
+    float current2 = 10;
+    PowerSupplyStatus power_supply_status1 = 11;
+    PowerSupplyStatus power_supply_status2 = 12;
+}
+
+message SpeedDataMessage {
+    double line = 1;
+    double translation = 2;
+    double angle = 3;
+}
+
+message MotorTempMessage {
+    float fl1 = 1;
+    float fl2 = 2;
+    float fl3 = 3;
+    float fl4 = 4;
+    float fr1 = 5;
+    float fr2 = 6;
+    float fr3 = 7;
+    float fr4 = 8;
+    float bl1 = 9;
+    float bl2 = 10;
+    float bl3 = 11;
+    float bl4 = 12;
+    float br1 = 13;
+    float br2 = 14;
+    float br3 = 15;
+    float br4 = 16;
+}
+
+message RobotStateMessage {
+    double head_angle = 1;
+    FillLightStatus front_fill_light = 2;
+    FillLightStatus back_fill_light = 3;
+    bool auto_mode_light = 4;
+    SpeedLevel speed_level = 5;
+    EmergencyStatus software_emergency_status = 6;
+    EmergencyStatus hardware_emergency_status = 7;
+    HeadDirection head_direction = 8;
+    MotionStatus motion_status = 9;
+    BatteryDataMessage battery = 10;
+    SpeedDataMessage speed = 11;
+    float mile_data = 12;
+    MotorTempMessage motor_temp = 13;
+    SportMode sport_mode = 14;
+    CtrlSource control_source = 15;
+}
+
+message MotionDataMessage {
+    Quaternion orientation = 1;
+    Vector3 world_velocity = 2;
+    Vector3 position = 3;
+    Vector3 world_angular_velocity = 4;
+    Vector3 body_velocity = 5;
+    Vector3 body_angular_velocity = 6;
+}
+
+message ImuDataMessage {
+    Vector3 acceleration = 1;
+    Vector3 gyroscope = 2;
+    Quaternion orientation = 3;
+}
+
+message LuxDataMessage {
+    float lux = 1;
+}
+
+message FaultDataMessage {
+    FaultCode code = 1;
+    FaultLevel level = 2;
+    string message = 3;
+}
+
+message FaultListMessage {
+    repeated FaultDataMessage faults = 1;
+}
+
 message OdometryMessage {
-    Vector3 position = 1;        // 位置 getPosition
-    Quaternion orientation = 2;  // 姿态角 getQuaternion
-    Vector3 linear_velocity = 3; // 线速度 getBodyVelocity
-    Vector3 angular_velocity = 4; // 角速度 getBodyGyro
+    Vector3 position = 1;
+    Quaternion orientation = 2;
+    Vector3 linear_velocity = 3;
+    Vector3 angular_velocity = 4;
+}
+
+message ControlLostMessage {
+}
+
+message ControlAvailableMessage {
+}
+
+message TakeControlAckMessage {
+    uint64 request_id = 1;
+    uint32 error_code = 2;
+    string reason = 3;
+}
+
+message ReleaseControlAckMessage {
+    uint64 request_id = 1;
+    uint32 error_code = 2;
+    string reason = 3;
 }
 
 // 主消息结构
@@ -110,14 +434,22 @@ message LeggedDriverMessage {
     // 消息体 (使用oneof确保只有一个消息体被设置)
     oneof payload {
         HeartbeatMessage heartbeat = 10;
-        BatteryInfoMessage battery_info = 11;
-        ModeSetMessage mode_set = 12;
-        ControlModeSetMessage control_mode_set = 13;
-        VelocityCommandMessage velocity_command = 14;
-        CurrentModeMessage current_mode = 15;
-        CurrentControlModeMessage current_control_mode = 16;
-        OdometryMessage odometry = 17;
+        SubscriptionRequestMessage subscription_request = 11;
+        CommandRequestMessage command_request = 12;
+        CommandResultMessage command_result = 13;
+        ConnectionStateMessage connection_state = 14;
+        AppModeStateMessage app_mode_state = 15;
+        RobotStateMessage robot_state = 16;
+        MotionDataMessage motion_data = 17;
+        ImuDataMessage imu_data = 18;
+        LuxDataMessage lux_data = 19;
+        FaultListMessage fault_data = 20;
+        OdometryMessage odometry = 21;
+        ControlLostMessage control_lost = 22;
+        ControlAvailableMessage control_available = 23;
+        TakeControlAckMessage take_control_ack = 24;
+        ReleaseControlAckMessage release_control_ack = 25;
     }
     
-    uint32 crc32 = 20;          // CRC32校验码 - 放在最后
+    uint32 crc32 = 50;          // CRC32校验码 - 放在最后
 }

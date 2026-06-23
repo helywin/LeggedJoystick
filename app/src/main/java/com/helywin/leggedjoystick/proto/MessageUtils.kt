@@ -1,13 +1,36 @@
 package com.helywin.leggedjoystick.proto
 
-import legged_driver.*
+import legged_driver.AppMode
+import legged_driver.AutoModeLightParams
+import legged_driver.BackLightParams
+import legged_driver.CommandCode
+import legged_driver.CommandRequestMessage
+import legged_driver.ConnectionState
+import legged_driver.ControlHeadCommandParams
+import legged_driver.DeviceType
+import legged_driver.FrontLightParams
+import legged_driver.HeartbeatMessage
+import legged_driver.HighLowStanceCommandParams
+import legged_driver.LeggedDriverMessage
+import legged_driver.MessageType
+import legged_driver.MotionStatus
+import legged_driver.MoveCommandParams
+import legged_driver.SetAppModeParams
+import legged_driver.SetSpeedLevelParams
+import legged_driver.SetSportModeParams
+import legged_driver.SpeedLevel
+import legged_driver.SportMode
+import legged_driver.SubscriptionRequestMessage
+import legged_driver.SubscriptionTopic
 import timber.log.Timber
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 object MessageUtils {
-    
+    private val requestId = AtomicLong(System.currentTimeMillis())
+
     /**
-     * CRC32工具类，实现与C++代码一致的CRC32算法
+     * CRC32 工具类，算法与 driver 端一致。
      */
     private object CRC32Utils {
         private val crcTable = IntArray(256)
@@ -18,11 +41,11 @@ object MessageUtils {
 
             for (i in 0 until 256) {
                 var crc = i
-                for (j in 0 until 8) {
-                    if ((crc and 1) != 0) {
-                        crc = (crc ushr 1) xor 0xEDB88320.toInt()
+                repeat(8) {
+                    crc = if ((crc and 1) != 0) {
+                        (crc ushr 1) xor 0xEDB88320.toInt()
                     } else {
-                        crc = crc ushr 1
+                        crc ushr 1
                     }
                 }
                 crcTable[i] = crc
@@ -34,7 +57,7 @@ object MessageUtils {
             computeTable()
 
             var crc = 0xFFFFFFFF.toInt()
-            for (byte in data) {
+            data.forEach { byte ->
                 val index = (crc xor (byte.toInt() and 0xFF)) and 0xFF
                 crc = crcTable[index] xor (crc ushr 8)
             }
@@ -43,62 +66,18 @@ object MessageUtils {
         }
     }
 
-    /**
-     * 计算CRC32校验码（使用与C++一致的算法）
-     */
     fun calculateCRC32(data: ByteArray): Int {
         return CRC32Utils.calculate(data).toInt()
     }
 
-    /**
-     * 测试CRC32实现（用于调试）
-     */
-    fun testCRC32() {
-        Timber.d("开始CRC32测试...")
-        
-        // 测试已知数据的CRC32值
-        val testData = "Hello, World!".toByteArray()
-        val crc = calculateCRC32(testData)
-        Timber.d("CRC32 of 'Hello, World!': 0x${crc.toString(16).uppercase()}")
-        
-        // 测试空数据
-        val emptyCRC = calculateCRC32(byteArrayOf())
-        Timber.d("CRC32 of empty data: 0x${emptyCRC.toString(16).uppercase()}")
-        
-        // 测试单字节数据
-        val singleByteCRC = calculateCRC32(byteArrayOf(0x41)) // 'A'
-        Timber.d("CRC32 of 'A': 0x${singleByteCRC.toString(16).uppercase()}")
-        
-        // 测试消息序列化和CRC32计算
-        val testMessage = createHeartbeatMessage(
-            DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
-            "test_device",
-            true
-        )
-        
-        val serialized = serializeMessage(testMessage)
-        Timber.d("序列化消息长度: ${serialized.size} bytes")
-        Timber.d("消息CRC32: 0x${testMessage.crc32.toString(16).uppercase()}")
-        
-        // 验证消息
-        val isValid = verifyMessage(testMessage)
-        Timber.d("消息CRC32验证结果: $isValid")
-        
-        // 测试反序列化
-        try {
-            val deserialized = deserializeMessage(serialized)
-            Timber.d("反序列化成功，CRC32: 0x${deserialized.crc32.toString(16).uppercase()}")
-            
-            val isDeserializedValid = verifyMessage(deserialized)
-            Timber.d("反序列化消息CRC32验证结果: $isDeserializedValid")
-        } catch (e: Exception) {
-            Timber.e(e, "反序列化失败")
-        }
+    fun getCurrentTimestampMs(): Long {
+        return System.currentTimeMillis()
     }
 
-    /**
-     * 生成设备ID
-     */
+    fun nextRequestId(): Long {
+        return requestId.incrementAndGet()
+    }
+
     fun generateDeviceId(deviceType: DeviceType): String {
         val prefix = when (deviceType) {
             DeviceType.DEVICE_TYPE_SERVER -> "server"
@@ -106,190 +85,353 @@ object MessageUtils {
             DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER -> "remote"
             else -> "unknown"
         }
-        val uuid = UUID.randomUUID().toString().substring(0, 8)
-        return "${prefix}_$uuid"
+        return "${prefix}_${UUID.randomUUID().toString().substring(0, 8)}"
     }
 
-    /**
-     * 创建消息并计算CRC32
-     * 注意：CRC32是对整个消息序列化数据计算的，但计算时crc32字段应该为0
-     */
-    fun createMessageWithCRC(
-        timestampMs: Long,
-        deviceType: DeviceType,
-        deviceId: String,
-        messageType: MessageType,
-        heartbeat: HeartbeatMessage? = null,
-        batteryInfo: BatteryInfoMessage? = null,
-        modeSet: ModeSetMessage? = null,
-        controlModeSet: ControlModeSetMessage? = null,
-        velocityCommand: VelocityCommandMessage? = null,
-        currentMode: CurrentModeMessage? = null,
-        currentControlMode: CurrentControlModeMessage? = null,
-        odometry: OdometryMessage? = null
-    ): LeggedDriverMessage {
-        // 创建消息，CRC32字段设为0（这样计算CRC32时不会包含CRC32本身）
-        val message = LeggedDriverMessage.Builder()
-            .timestamp_ms(timestampMs)
-            .device_type(deviceType)
-            .device_id(deviceId)
-            .message_type(messageType)
-            .crc32(0) // CRC32字段在计算时必须为0
-            .also { builder ->
-                heartbeat?.let { builder.heartbeat(it) }
-                batteryInfo?.let { builder.battery_info(it) }
-                modeSet?.let { builder.mode_set(it) }
-                controlModeSet?.let { builder.control_mode_set(it) }
-                velocityCommand?.let { builder.velocity_command(it) }
-                currentMode?.let { builder.current_mode(it) }
-                currentControlMode?.let { builder.current_control_mode(it) }
-                odometry?.let { builder.odometry(it) }
-            }
-            .build()
-
-        // 序列化消息（此时crc32=0）
-        val messageData = serializeMessage(message)
-        
-        // 计算CRC32校验码
-        val crc32 = calculateCRC32(messageData)
-
-        // 返回带正确CRC32的消息
-        return message.newBuilder().crc32(crc32).build()
-    }
-
-    /**
-     * 序列化消息为字节数组
-     */
     fun serializeMessage(message: LeggedDriverMessage): ByteArray {
         return message.encode()
     }
 
-    /**
-     * 反序列化字节数组为消息
-     */
     fun deserializeMessage(data: ByteArray): LeggedDriverMessage {
         return LeggedDriverMessage.ADAPTER.decode(data)
     }
 
-    /**
-     * 验证消息的CRC32校验码
-     */
     fun verifyMessage(message: LeggedDriverMessage): Boolean {
-        // 保存原始CRC32值
-        val originalCRC = message.crc32
-        
-        // 创建CRC32为0的临时消息
-        val tempMessage = message.newBuilder().crc32(0).build()
-        val tempData = serializeMessage(tempMessage)
-        
-        // 计算CRC32并比较
-        val calculatedCRC = calculateCRC32(tempData)
-        
-        val isValid = calculatedCRC == originalCRC
-        
+        val originalCrc = message.crc32
+        val calculatedCrc = calculateCRC32(
+            serializeMessage(message.newBuilder().crc32(0).build())
+        )
+        val isValid = calculatedCrc == originalCrc
+
         if (!isValid) {
-            Timber.w("CRC32校验失败 - 原始: 0x${originalCRC.toString(16).uppercase()}, " +
-                    "计算得到: 0x${calculatedCRC.toString(16).uppercase()}, " +
-                    "数据长度: ${tempData.size}")
+            Timber.w(
+                "CRC32 校验失败，收到=%s，计算=%s，消息类型=%s",
+                originalCrc.toHex32(),
+                calculatedCrc.toHex32(),
+                message.message_type
+            )
         }
-        
+
         return isValid
     }
 
-    /**
-     * 获取当前时间戳（毫秒）
-     */
-    fun getCurrentTimestampMs(): Long {
-        return System.currentTimeMillis()
+    fun defaultStateTopics(): List<SubscriptionTopic> {
+        return listOf(
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_HEARTBEAT,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_CONNECTION_STATE,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_APP_MODE_STATE,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_ROBOT_STATE,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_MOTION_DATA,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_FAULT_DATA,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_ODOMETRY,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_CONTROL_LOST,
+            SubscriptionTopic.SUBSCRIPTION_TOPIC_CONTROL_AVAILABLE
+        )
     }
 
-    /**
-     * 创建心跳消息
-     */
     fun createHeartbeatMessage(
         deviceType: DeviceType,
         deviceId: String,
-        isConnected: Boolean = true
+        robotConnected: Boolean = true,
+        connectionState: ConnectionState = ConnectionState.CONNECTION_STATE_CONNECTED,
+        appMode: AppMode = AppMode.APP_MODE_MANUAL
     ): LeggedDriverMessage {
-        return createMessageWithCRC(
-            timestampMs = getCurrentTimestampMs(),
+        return createEnvelope(
             deviceType = deviceType,
             deviceId = deviceId,
-            messageType = MessageType.MESSAGE_TYPE_HEARTBEAT,
-            heartbeat = HeartbeatMessage(is_connected = isConnected)
+            messageType = MessageType.MESSAGE_TYPE_HEARTBEAT
+        ) {
+            heartbeat(
+                HeartbeatMessage(
+                    robot_connected = robotConnected,
+                    connection_state = connectionState,
+                    app_mode = appMode
+                )
+            )
+        }
+    }
+
+    fun createSubscriptionRequestMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        topics: List<SubscriptionTopic> = defaultStateTopics(),
+        subscribe: Boolean = true,
+        requestId: Long = nextRequestId()
+    ): LeggedDriverMessage {
+        return createEnvelope(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST
+        ) {
+            subscription_request(
+                SubscriptionRequestMessage(
+                    request_id = requestId,
+                    subscribe = subscribe,
+                    topics = topics
+                )
+            )
+        }
+    }
+
+    fun createCommandRequestMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        commandCode: CommandCode,
+        timeoutMs: Int = DEFAULT_COMMAND_TIMEOUT_MS,
+        requestId: Long = nextRequestId(),
+        params: CommandRequestMessage.Builder.() -> Unit = {}
+    ): LeggedDriverMessage {
+        val commandRequest = CommandRequestMessage.Builder()
+            .request_id(requestId)
+            .command_code(commandCode)
+            .timeout_ms(timeoutMs)
+            .apply(params)
+            .build()
+
+        return createEnvelope(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_COMMAND_REQUEST
+        ) {
+            command_request(commandRequest)
+        }
+    }
+
+    fun createSetAppModeCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        mode: AppMode
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = CommandCode.COMMAND_CODE_SET_APP_MODE
+        ) {
+            set_app_mode(SetAppModeParams(mode = mode))
+        }
+    }
+
+    fun createSetSportModeCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        mode: SportMode
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = CommandCode.COMMAND_CODE_SET_SPORT_MODE
+        ) {
+            set_sport_mode(SetSportModeParams(mode = mode.toProtocolValue()))
+        }
+    }
+
+    fun createSetSpeedLevelCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        speedLevel: SpeedLevel
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = CommandCode.COMMAND_CODE_SET_SPEED_LEVEL
+        ) {
+            set_speed_level(SetSpeedLevelParams(speed_level = speedLevel.toProtocolValue()))
+        }
+    }
+
+    fun createSimpleCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        commandCode: CommandCode
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = commandCode
         )
     }
 
-    /**
-     * 创建模式设置消息
-     */
-    fun createModeSetMessage(
+    fun createMoveCommand(
         deviceType: DeviceType,
         deviceId: String,
-        mode: Mode
+        leftRight: Float,
+        forwardBack: Float,
+        yaw: Float
     ): LeggedDriverMessage {
-        return createMessageWithCRC(
-            timestampMs = getCurrentTimestampMs(),
+        return createCommandRequestMessage(
             deviceType = deviceType,
             deviceId = deviceId,
-            messageType = MessageType.MESSAGE_TYPE_MODE_SET,
-            modeSet = ModeSetMessage(mode = mode)
-        )
+            commandCode = CommandCode.COMMAND_CODE_MOVE,
+            timeoutMs = MOVE_COMMAND_TIMEOUT_MS
+        ) {
+            move(
+                MoveCommandParams(
+                    left_right = leftRight.clampUnit(),
+                    forward_back = forwardBack.clampUnit(),
+                    yaw = yaw.clampUnit()
+                )
+            )
+        }
     }
 
     /**
-     * 创建控制模式设置消息
+     * 操作者视角：前进、右平移、右转为正；发送给 driver 时右平移和右转需要取反。
      */
-    fun createControlModeSetMessage(
+    fun createMoveCommandFromOperatorIntent(
         deviceType: DeviceType,
         deviceId: String,
-        controlMode: ControlMode
+        strafeRight: Float,
+        forward: Float,
+        yawRight: Float
     ): LeggedDriverMessage {
-        return createMessageWithCRC(
-            timestampMs = getCurrentTimestampMs(),
+        return createMoveCommand(
             deviceType = deviceType,
             deviceId = deviceId,
-            messageType = MessageType.MESSAGE_TYPE_CONTROL_MODE_SET,
-            controlModeSet = ControlModeSetMessage(control_mode = controlMode)
+            leftRight = -strafeRight,
+            forwardBack = forward,
+            yaw = -yawRight
         )
     }
 
-    /**
-     * 创建速度指令消息
-     */
-    fun createVelocityCommandMessage(
+    fun createFrontLightCommand(
         deviceType: DeviceType,
         deviceId: String,
-        vx: Float,
-        vy: Float,
-        yawRate: Float
+        on: Boolean
     ): LeggedDriverMessage {
-        return createMessageWithCRC(
-            timestampMs = getCurrentTimestampMs(),
-            deviceType = deviceType,
-            deviceId = deviceId,
-            messageType = MessageType.MESSAGE_TYPE_VELOCITY_COMMAND,
-            velocityCommand = VelocityCommandMessage(vx = vx, vy = vy, yaw_rate = yawRate)
-        )
+        return createCommandRequestMessage(deviceType, deviceId, CommandCode.COMMAND_CODE_FRONT_LIGHT) {
+            front_light(FrontLightParams(on = on))
+        }
     }
+
+    fun createBackLightCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        on: Boolean
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(deviceType, deviceId, CommandCode.COMMAND_CODE_BACK_LIGHT) {
+            back_light(BackLightParams(on = on))
+        }
+    }
+
+    fun createAutoModeLightCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        on: Boolean
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(deviceType, deviceId, CommandCode.COMMAND_CODE_AUTO_MODE_LIGHT) {
+            auto_mode_light(AutoModeLightParams(on = on))
+        }
+    }
+
+    fun createControlHeadCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        leftRight: Float,
+        upDown: Float
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(deviceType, deviceId, CommandCode.COMMAND_CODE_CONTROL_HEAD) {
+            control_head(
+                ControlHeadCommandParams(
+                    left_right = leftRight.clampUnit(),
+                    up_down = upDown.clampUnit()
+                )
+            )
+        }
+    }
+
+    fun createHighLowStanceCommand(
+        deviceType: DeviceType,
+        deviceId: String,
+        stance: Int
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(deviceType, deviceId, CommandCode.COMMAND_CODE_HIGH_LOW_STANCE) {
+            high_low_stance(HighLowStanceCommandParams(stance = stance))
+        }
+    }
+
+    private fun createEnvelope(
+        deviceType: DeviceType,
+        deviceId: String,
+        messageType: MessageType,
+        timestampMs: Long = getCurrentTimestampMs(),
+        payload: LeggedDriverMessage.Builder.() -> Unit
+    ): LeggedDriverMessage {
+        val unsignedMessage = LeggedDriverMessage.Builder()
+            .timestamp_ms(timestampMs)
+            .device_type(deviceType)
+            .device_id(deviceId)
+            .message_type(messageType)
+            .crc32(0)
+            .apply(payload)
+            .build()
+
+        val crc32 = calculateCRC32(serializeMessage(unsignedMessage))
+        return unsignedMessage.newBuilder().crc32(crc32).build()
+    }
+
+    private fun Float.clampUnit(): Float {
+        return coerceIn(-1f, 1f)
+    }
+
+    private fun Int.toHex32(): String {
+        return java.lang.Integer.toUnsignedString(this, 16).uppercase().padStart(8, '0')
+    }
+
+    private fun SpeedLevel.toProtocolValue(): Int {
+        return when (this) {
+            SpeedLevel.SPEED_LEVEL_SLOW -> 1
+            SpeedLevel.SPEED_LEVEL_MEDIUM -> 2
+            SpeedLevel.SPEED_LEVEL_HIGH -> 3
+            else -> 0
+        }
+    }
+
+    private fun SportMode.toProtocolValue(): Int {
+        return when (this) {
+            SportMode.SPORT_MODE_GENERAL -> 1
+            SportMode.SPORT_MODE_IN_PLACE -> 2
+            SportMode.SPORT_MODE_STAIR -> 3
+            else -> 0
+        }
+    }
+
+    private const val DEFAULT_COMMAND_TIMEOUT_MS = 1000
+    private const val MOVE_COMMAND_TIMEOUT_MS = 200
 }
 
-/**
- * 模式枚举的显示名称扩展属性
- */
-val Mode.displayName: String
+val AppMode.displayName: String
     get() = when (this) {
-        Mode.MODE_AUTO -> "自动模式"
-        Mode.MODE_MANUAL -> "手动模式"
+        AppMode.APP_MODE_AUTO -> "自动模式"
+        AppMode.APP_MODE_MANUAL -> "手动模式"
     }
 
-/**
- * 控制模式枚举的显示名称扩展属性
- */
-val ControlMode.displayName: String
+val SportMode.displayName: String
     get() = when (this) {
-        ControlMode.CONTROL_MODE_PASSIVE -> "阻尼模式"
-        ControlMode.CONTROL_MODE_STAND_UP -> "站立模式"
-        ControlMode.CONTROL_MODE_LIE_DOWN -> "趴下模式"
-        ControlMode.CONTROL_MODE_UNSPECIFIED -> "未指定控制模式"
+        SportMode.SPORT_MODE_GENERAL -> "普通模式"
+        SportMode.SPORT_MODE_IN_PLACE -> "原地模式"
+        SportMode.SPORT_MODE_STAIR -> "楼梯模式"
+        else -> "未知运动模式"
+    }
+
+val SpeedLevel.displayName: String
+    get() = when (this) {
+        SpeedLevel.SPEED_LEVEL_SLOW -> "低速"
+        SpeedLevel.SPEED_LEVEL_MEDIUM -> "中速"
+        SpeedLevel.SPEED_LEVEL_HIGH -> "高速"
+        else -> "未知速度"
+    }
+
+val MotionStatus.displayName: String
+    get() = when (this) {
+        MotionStatus.MOTION_STATUS_STAND_UP -> "站立"
+        MotionStatus.MOTION_STATUS_LIE_DOWN -> "卧倒"
+        MotionStatus.MOTION_STATUS_CRAWL -> "匍匐"
+        MotionStatus.MOTION_STATUS_LOCKED -> "锁定"
+        MotionStatus.MOTION_STATUS_GENERAL -> "普通"
+        MotionStatus.MOTION_STATUS_IN_PLACE -> "原地"
+        MotionStatus.MOTION_STATUS_STAIR -> "楼梯"
+        MotionStatus.MOTION_STATUS_CLIMB -> "爬高墙"
+        MotionStatus.MOTION_STATUS_SLIM -> "过窄墙"
+        MotionStatus.MOTION_STATUS_GAIT -> "扭一扭"
+        else -> "未知状态"
     }

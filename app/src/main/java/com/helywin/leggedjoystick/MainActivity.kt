@@ -26,6 +26,8 @@ import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
 import com.helywin.leggedjoystick.ui.theme.LeggedJoystickTheme
 import com.helywin.leggedjoystick.ui.video.VideoStreamScreen
+import legged_driver.AppMode
+import legged_driver.SportMode
 import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
@@ -320,8 +322,8 @@ fun LeggedJoystickAppPreview() {
             override fun connect() {}
             override fun disconnect() {}
             override fun cancelConnection() {}
-            override fun setMode(mode: legged_driver.Mode) {}
-            override fun setControlMode(controlMode: legged_driver.ControlMode) {}
+            override fun setMode(mode: AppMode) {}
+            override fun setControlMode(controlMode: SportMode) {}
             override fun updateLeftJoystick(joystickValue: com.helywin.leggedjoystick.ui.joystick.JoystickValue) {}
             override fun updateRightJoystick(joystickValue: com.helywin.leggedjoystick.ui.joystick.JoystickValue) {}
             override fun onLeftJoystickReleased() {}

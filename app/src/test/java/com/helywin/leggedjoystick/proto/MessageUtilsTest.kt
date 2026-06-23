@@ -1,0 +1,96 @@
+package com.helywin.leggedjoystick.proto
+
+import legged_driver.CommandCode
+import legged_driver.ConnectionState
+import legged_driver.DeviceType
+import legged_driver.MessageType
+import legged_driver.SpeedLevel
+import legged_driver.SubscriptionTopic
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MessageUtilsTest {
+    @Test
+    fun heartbeatMessage_hasValidCrcAfterRoundTrip() {
+        val message = MessageUtils.createHeartbeatMessage(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            robotConnected = true,
+            connectionState = ConnectionState.CONNECTION_STATE_CONNECTED
+        )
+
+        val decoded = MessageUtils.deserializeMessage(MessageUtils.serializeMessage(message))
+
+        assertEquals(MessageType.MESSAGE_TYPE_HEARTBEAT, decoded.message_type)
+        assertTrue(MessageUtils.verifyMessage(decoded))
+        assertEquals(true, decoded.heartbeat?.robot_connected)
+        assertEquals(ConnectionState.CONNECTION_STATE_CONNECTED, decoded.heartbeat?.connection_state)
+    }
+
+    @Test
+    fun subscriptionRequest_usesRequestedTopics() {
+        val message = MessageUtils.createSubscriptionRequestMessage(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            topics = listOf(
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_ROBOT_STATE,
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_ODOMETRY
+            ),
+            requestId = 7L
+        )
+
+        val request = message.subscription_request
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST, message.message_type)
+        assertEquals(7L, request?.request_id)
+        assertEquals(true, request?.subscribe)
+        assertEquals(
+            listOf(
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_ROBOT_STATE,
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_ODOMETRY
+            ),
+            request?.topics
+        )
+    }
+
+    @Test
+    fun speedLevelCommand_usesProtocolEnumValue() {
+        val message = MessageUtils.createSetSpeedLevelCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            speedLevel = SpeedLevel.SPEED_LEVEL_HIGH
+        )
+
+        val request = message.command_request
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(CommandCode.COMMAND_CODE_SET_SPEED_LEVEL, request?.command_code)
+        assertEquals(3, request?.set_speed_level?.speed_level)
+    }
+
+    @Test
+    fun moveCommandFromOperatorIntent_convertsRightPositiveAxesToDriverProtocol() {
+        val message = MessageUtils.createMoveCommandFromOperatorIntent(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            strafeRight = 0.25f,
+            forward = 0.5f,
+            yawRight = 0.75f
+        )
+
+        val move = message.command_request?.move
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(CommandCode.COMMAND_CODE_MOVE, message.command_request?.command_code)
+        assertEquals(-0.25f, move?.left_right ?: 0f, FLOAT_DELTA)
+        assertEquals(0.5f, move?.forward_back ?: 0f, FLOAT_DELTA)
+        assertEquals(-0.75f, move?.yaw ?: 0f, FLOAT_DELTA)
+    }
+
+    private companion object {
+        const val DEVICE_ID = "remote_test"
+        const val FLOAT_DELTA = 0.0001f
+    }
+}

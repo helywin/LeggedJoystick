@@ -44,8 +44,8 @@ import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.GamepadInputHandler
 import com.helywin.leggedjoystick.input.GamepadInputState
-import legged_driver.ControlMode
-import legged_driver.Mode
+import legged_driver.AppMode
+import legged_driver.SportMode
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.components.GamepadStatusIndicator
 import com.helywin.leggedjoystick.ui.joystick.*
@@ -72,8 +72,8 @@ fun MainControlScreen(
     onSettingsClick: () -> Unit,
     onVideoClick: () -> Unit
 ) {
-    val currentMode = settingsState.robotCtrlMode
-    val controlMode = settingsState.robotMode
+    val currentSportMode = settingsState.robotCtrlMode
+    val appMode = settingsState.robotMode
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
     val speedLevel = settingsState.settings.speedLevel
@@ -130,7 +130,7 @@ fun MainControlScreen(
             TopStatusBar(
                 batteryLevel = batteryLevel,
                 connectionState = connectionState,
-                mode = controlMode,
+                mode = appMode,
                 gamepadInputState = gamepadInputState,
                 onVideoClick = onVideoClick,
                 onConnectClick = {
@@ -158,7 +158,7 @@ fun MainControlScreen(
 
             // 模式选择按钮组
             ModeSelectionRow(
-                currentCtrlMode = currentMode,
+                currentCtrlMode = currentSportMode,
                 isRobotModeChanging = isRobotModeChanging,
                 isConnected = connectionState == ConnectionState.CONNECTED,
                 onCtrlModeSelected = { mode ->
@@ -232,11 +232,11 @@ fun MainControlScreen(
 private fun TopStatusBar(
     batteryLevel: Int,
     connectionState: ConnectionState,
-    mode: Mode,
+    mode: AppMode,
     gamepadInputState: GamepadInputState?,
     onVideoClick: () -> Unit,
     onConnectClick: () -> Unit,
-    onModeClick: (Mode) -> Unit,
+    onModeClick: (AppMode) -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -367,22 +367,22 @@ private fun BatteryIndicator(batteryLevel: Int) {
  */
 @Composable
 private fun ControlModeToggle(
-    currentMode: Mode,
+    currentMode: AppMode,
     isConnected: Boolean,
-    onModeClick: (Mode) -> Unit
+    onModeClick: (AppMode) -> Unit
 ) {
     Button(
         onClick = {
-            val newMode = if (currentMode == Mode.MODE_MANUAL) {
-                Mode.MODE_AUTO
+            val newMode = if (currentMode == AppMode.APP_MODE_MANUAL) {
+                AppMode.APP_MODE_AUTO
             } else {
-                Mode.MODE_MANUAL
+                AppMode.APP_MODE_MANUAL
             }
             onModeClick(newMode)
         },
         enabled = isConnected,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (currentMode == Mode.MODE_AUTO) {
+            containerColor = if (currentMode == AppMode.APP_MODE_AUTO) {
                 MaterialTheme.colorScheme.secondary
             } else {
                 MaterialTheme.colorScheme.primary
@@ -390,7 +390,7 @@ private fun ControlModeToggle(
         )
     ) {
         Icon(
-            imageVector = if (currentMode == Mode.MODE_AUTO) Icons.Default.AutoMode else Icons.Default.ControlCamera,
+            imageVector = if (currentMode == AppMode.APP_MODE_AUTO) Icons.Default.AutoMode else Icons.Default.ControlCamera,
             contentDescription = null,
             modifier = Modifier.size(16.dp)
         )
@@ -407,17 +407,17 @@ private fun ControlModeToggle(
  */
 @Composable
 private fun ModeSelectionRow(
-    currentCtrlMode: ControlMode,
+    currentCtrlMode: SportMode,
     isRobotModeChanging: Boolean,
     isConnected: Boolean,
-    onCtrlModeSelected: (ControlMode) -> Unit
+    onCtrlModeSelected: (SportMode) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        ControlMode.entries
-            .filter { it != ControlMode.CONTROL_MODE_UNSPECIFIED } // 过滤掉未指定模式
+        SportMode.entries
+            .filter { it != SportMode.SPORT_MODE_UNKNOWN } // 过滤掉未知模式
             .forEach { mode ->
                 ModeButton(
                     mode = mode,
@@ -435,7 +435,7 @@ private fun ModeSelectionRow(
  */
 @Composable
 private fun ModeButton(
-    mode: ControlMode,
+    mode: SportMode,
     isSelected: Boolean,
     isEnabled: Boolean,
     isChanging: Boolean,
@@ -475,9 +475,9 @@ private fun ModeButton(
             } else {
                 Icon(
                     imageVector = when (mode) {
-                        ControlMode.CONTROL_MODE_STAND_UP -> Icons.Default.KeyboardArrowUp
-                        ControlMode.CONTROL_MODE_LIE_DOWN -> Icons.Default.KeyboardArrowDown
-                        ControlMode.CONTROL_MODE_PASSIVE -> Icons.Default.PauseCircleOutline
+                        SportMode.SPORT_MODE_GENERAL -> Icons.Default.DirectionsRun
+                        SportMode.SPORT_MODE_IN_PLACE -> Icons.Default.RotateRight
+                        SportMode.SPORT_MODE_STAIR -> Icons.Default.Stairs
                         else -> Icons.Default.HelpOutline
                     },
                     contentDescription = null,
@@ -579,11 +579,6 @@ private fun SpeedLevelButton(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
             )
-            Text(
-                text = "${level.maxLinearSpeed}m/s",
-                fontSize = 10.sp,
-                color = if (isSelected) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
         }
     }
 }
@@ -597,8 +592,8 @@ fun MainControlScreenPreview() {
             override fun connect() {}
             override fun disconnect() {}
             override fun cancelConnection() {}
-            override fun setMode(mode: Mode) {}
-            override fun setControlMode(controlMode: ControlMode) {}
+            override fun setMode(mode: AppMode) {}
+            override fun setControlMode(controlMode: SportMode) {}
             override fun updateLeftJoystick(joystickValue: JoystickValue) {}
             override fun updateRightJoystick(joystickValue: JoystickValue) {}
             override fun onLeftJoystickReleased() {}
