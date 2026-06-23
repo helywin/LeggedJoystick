@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  项目目标：重写一个 Kotlin 机器狗遥控 App，主屏参考 GenisDog，控制协议使用 /home/jiang/code/legged_driver。
+  技术栈：Android、Kotlin、Jetpack Compose、Timber、Wire、JeroMQ。
+  协议真源：/home/jiang/code/legged_driver/proto/message.proto。
+  视觉参考：docs/genisdog_main_screen_layout.md 和 docs/assets/genisdog/。
+  摇杆协议参考：docs/joystick_protocol.md。
+  规则：OpenSpec 固定关键字保留英文，实际内容使用中文；reverse/ 只作为本地临时资料，不提交。
+
+rules:
+  proposal:
+    - 实际内容使用中文。
+    - 明确范围、非目标、影响面。
+  design:
+    - 实际内容使用中文。
+    - 必须覆盖协议、输入、UI、安全和设置边界。
+  specs:
+    - Requirement 和 Scenario 内容使用中文。
+    - WHEN/THEN 等 OpenSpec 关键字保留英文。
+  tasks:
+    - 实际内容使用中文。
+    - 任务按可独立验证的阶段拆分。

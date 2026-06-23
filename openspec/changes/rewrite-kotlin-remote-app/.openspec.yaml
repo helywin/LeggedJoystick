@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-06-23
+goal: 用 GenisDog 主屏作为视觉参考，使用 legged_driver 协议实现新的 Kotlin 遥控 App
