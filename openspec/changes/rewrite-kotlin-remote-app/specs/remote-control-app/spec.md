@@ -42,7 +42,7 @@
 
 ### Requirement: 主屏必须复刻 GenisDog 的核心遥控布局
 
-主屏 MUST 参考 `docs/genisdog_main_screen_layout.md`，保留全屏视频背景、顶部模式栏、左侧速度区、右侧工具列、底部动作组和状态 overlay。
+主屏 MUST 参考 `docs/genisdog_main_screen_layout.md`，保留横屏主控背景、顶部模式栏、左侧速度区、右侧工具列、底部动作组和状态 overlay；在 `Standard-10inch_A2` 上不得覆盖右侧系统虚拟导航栏。
 
 #### Scenario: 速度选择
 - **WHEN** 用户点击左侧速度按钮
@@ -51,6 +51,10 @@
 #### Scenario: 动作组收缩
 - **WHEN** 用户点击底部第一个动作组开关
 - **THEN** App 只改变本地 `actionsExpanded` 状态，不得向机器狗发送动作命令
+
+#### Scenario: 右侧系统导航栏
+- **WHEN** App 运行在 `Standard-10inch_A2` 横屏设备上
+- **THEN** 主控页、设置页和视频页不得启用完全沉浸式全屏，内容区域必须保留右侧系统虚拟导航栏空间
 
 ### Requirement: 输入层必须处理 UniRC UDP 外部摇杆
 
@@ -87,6 +91,10 @@ App MUST NOT 设计为多个进程绑定同一个本地 UDP 端口来共享单�
 #### Scenario: 需要多个 App 共用摇杆数据
 - **WHEN** UniRC 数据需要被多个 App 使用
 - **THEN** 应优先验证不同客户端 UDP 端口分别订阅；若不可行，则必须使用单采集者独占 UDP 或串口，再通过绑定服务或受限广播分发
+
+#### Scenario: 本机 UDP 桥不能等同于独立通道
+- **WHEN** 设备通过 `com.siyi.udpservice` 在 `127.0.0.1:19856` 提供 UniRC UDP 输入
+- **THEN** App 必须把它视为 `/dev/ttyHS3` 串口桥继续验证，不得在收到有效并行验证结果前认定它和直接串口读取互不影响
 
 #### Scenario: 第一版不实现广播输入
 - **WHEN** 开发第一版输入层

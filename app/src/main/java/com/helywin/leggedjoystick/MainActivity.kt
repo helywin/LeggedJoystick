@@ -6,7 +6,6 @@ import android.os.PowerManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,7 +39,6 @@ class MainActivity : ComponentActivity() {
         // 初始化机器人控制器，传入Context
         controller = RobotControllerImpl(this)
 
-        enableEdgeToEdge()
         setContent {
             // 监听连接状态变化
             LaunchedEffect(settingsState.connectionState) {

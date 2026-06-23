@@ -3,7 +3,7 @@
  * Author: helywin <jiang770882022@hotmail.com>
  * Version: 0.0.1
  * Date: 2025-09-15
- * Description: 全屏RTSP视频流播放界面（使用VLC）
+ * Description: RTSP视频流播放界面（使用VLC）
  * Others:
  *********************************************************************************/
 
@@ -19,13 +19,10 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.view.PixelCopy
 import android.view.SurfaceView
-import android.view.View
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.view.ViewGroup
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -77,7 +74,7 @@ enum class VideoPlaybackState {
 }
 
 /**
- * 全屏视频流播放界面（使用VLC）
+ * 视频流播放界面（使用VLC）
  */
 @Composable
 fun VideoStreamScreen(
@@ -117,7 +114,7 @@ fun VideoStreamScreen(
         label = "snapshotButtonScale"
     )
 
-    // 沉浸式全屏 + 保持屏幕常亮
+    // 保持屏幕常亮，右侧系统导航栏由 Activity 非 edge-to-edge 布局保留。
     DisposableEffect(Unit) {
         val activity = context as? ComponentActivity
         val window = activity?.window
@@ -125,39 +122,13 @@ fun VideoStreamScreen(
         // 保持屏幕常亮
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // 沉浸式全屏
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window?.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window?.decorView?.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            )
-        }
-
-        Timber.d("[VideoStream] 已启用沉浸式全屏和屏幕常亮")
+        Timber.d("[VideoStream] 已启用屏幕常亮")
 
         onDispose {
-            // 恢复状态栏和导航栏
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window?.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            } else {
-                @Suppress("DEPRECATION")
-                window?.decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-            }
-
             // 清除屏幕常亮
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-            Timber.d("[VideoStream] 已禁用沉浸式全屏和屏幕常亮")
+            Timber.d("[VideoStream] 已禁用屏幕常亮")
         }
     }
 

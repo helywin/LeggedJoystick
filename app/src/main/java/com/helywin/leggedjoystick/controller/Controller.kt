@@ -25,6 +25,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
+import com.helywin.leggedjoystick.input.remote.unirc.SiyiUdpBridgeController
 import com.helywin.leggedjoystick.zmq.NewZmqClient
 import legged_driver.AppMode
 import legged_driver.LeggedDriverMessage
@@ -121,10 +122,26 @@ class ControllerState {
         status: RemoteInputStatus,
         message: String = ""
     ) {
+        val resetSnapshot = when (status) {
+            RemoteInputStatus.TIMEOUT,
+            RemoteInputStatus.ERROR,
+            RemoteInputStatus.STOPPED -> RemoteInputSnapshot(
+                descriptor = descriptor,
+                movementIntent = MovementIntent.ZERO,
+                normalizedAxes = mapOf(
+                    "forward" to 0f,
+                    "strafeRight" to 0f,
+                    "yawRight" to 0f
+                )
+            )
+            else -> remoteInputState.latestSnapshot
+        }
+
         remoteInputState = remoteInputState.copy(
             status = status,
             sourceName = descriptor.displayName,
-            lastError = message
+            lastError = message,
+            latestSnapshot = resetSnapshot
         )
     }
 
@@ -178,6 +195,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private var connectJob: Job? = null
 
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
+    private val siyiUdpBridgeController = SiyiUdpBridgeController(context)
+    private var remoteInputRequested = false
     private var currentMovementIntent = MovementIntent.ZERO
     private var lastCommandSent = false  // 跟踪是否发送过速度指令
 
@@ -238,11 +257,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 return@launch
             }
             if (state == ConnectionState.CONNECTED) {
-                startRemoteInput()
                 startVelocityLoop()
             } else {
                 stopVelocityLoop()
-                stopRemoteInput()
             }
             settingsState.updateConnectionState(state)
             Timber.i("[Controller] 连接状态更新: $state")
@@ -298,7 +315,6 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun disconnect() {
         cancelConnection()
         stopVelocityLoop()
-        stopRemoteInput()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         Timber.i("[Controller] 已断开连接")
@@ -312,7 +328,6 @@ class RobotControllerImpl(private val context: Context) : Controller {
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             zmqClient.disconnect()
-            stopRemoteInput()
             settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         }
     }
@@ -443,16 +458,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun pauseMovementOutput() {
         currentMovementIntent = MovementIntent.ZERO
         stopVelocityLoop()
-        stopRemoteInput()
         Timber.i("[Controller] 已暂停移动输出")
     }
 
     override fun resumeMovementOutput() {
-        if (!settingsState.isConnected) return
-
         startRemoteInput()
-        startVelocityLoop()
-        Timber.i("[Controller] 已恢复移动输出")
+        if (settingsState.isConnected) {
+            startVelocityLoop()
+        }
+        Timber.i("[Controller] 已恢复输入采集")
     }
 
     /**
@@ -488,7 +502,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
                     }
 
-                    delay(50) // 20Hz发送频率
+                    delay(40) // 25Hz 发送频率
 
                 } catch (e: CancellationException) {
                     break
@@ -518,22 +532,30 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun cleanup() {
         disconnect()
+        stopRemoteInput()
         supervisorJob.cancel()
     }
 
     private fun startRemoteInput() {
+        remoteInputRequested = true
+        if (SiyiUdpBridgeController.shouldUseForHost(settingsState.settings.remoteInputHost)) {
+            siyiUdpBridgeController.ensureBridgeOpen()
+        }
         remoteInputSource.start(remoteInputListener)
     }
 
     private fun stopRemoteInput() {
+        remoteInputRequested = false
         remoteInputSource.stop()
+        siyiUdpBridgeController.release()
         currentMovementIntent = MovementIntent.ZERO
     }
 
     private fun rebuildRemoteInputSource(settings: AppSettings) {
-        val shouldRestart = settingsState.isConnected
+        val shouldRestart = remoteInputRequested
         if (shouldRestart) {
-            stopRemoteInput()
+            remoteInputSource.stop()
+            siyiUdpBridgeController.release()
         }
 
         remoteInputSource = buildRemoteInputSource(settings)
@@ -566,6 +588,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             if (status == RemoteInputStatus.TIMEOUT || status == RemoteInputStatus.ERROR) {
                 currentMovementIntent = MovementIntent.ZERO
             }
+            Timber.d("[Controller] 外部遥控输入状态: %s %s", status, message)
 
             scope.launch {
                 settingsState.updateRemoteInputStatus(descriptor, status, message)

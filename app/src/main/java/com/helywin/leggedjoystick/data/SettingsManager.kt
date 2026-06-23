@@ -37,11 +37,12 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
         private const val DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
-        private const val DEFAULT_REMOTE_INPUT_HOST = "192.168.144.20"
+        private const val LEGACY_REMOTE_INPUT_HOST = "192.168.144.20"
+        private const val DEFAULT_REMOTE_INPUT_HOST = "127.0.0.1"
         private const val DEFAULT_REMOTE_INPUT_PORT = 19856
         private const val DEFAULT_REMOTE_INPUT_LOCAL_PORT = 0
-        private const val DEFAULT_REMOTE_INPUT_DEAD_ZONE = 0.08f
-        private const val DEFAULT_REMOTE_INPUT_TIMEOUT_MS = 250L
+        private const val DEFAULT_REMOTE_INPUT_DEAD_ZONE = 0.06f
+        private const val DEFAULT_REMOTE_INPUT_TIMEOUT_MS = 300L
         private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
         private const val DEFAULT_LOGO_PATH = ""
         private const val DEFAULT_KEEP_SCREEN_ON = true
@@ -88,14 +89,17 @@ class SettingsManager(context: Context) {
                 Timber.w("无效的速度档位: $speedLevelName，使用默认值")
                 SpeedLevel.SLOW
             }
+            val remoteInputHost = sharedPreferences.getString(
+                KEY_REMOTE_INPUT_HOST,
+                DEFAULT_REMOTE_INPUT_HOST
+            ) ?: DEFAULT_REMOTE_INPUT_HOST
 
             AppSettings(
                 zmqIp = sharedPreferences.getString(KEY_ZMQ_IP, DEFAULT_ZMQ_IP) ?: DEFAULT_ZMQ_IP,
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
                 speedLevel = speedLevel,
                 rtspUrl = sharedPreferences.getString(KEY_RTSP_URL, DEFAULT_RTSP_URL) ?: DEFAULT_RTSP_URL,
-                remoteInputHost = sharedPreferences.getString(KEY_REMOTE_INPUT_HOST, DEFAULT_REMOTE_INPUT_HOST)
-                    ?: DEFAULT_REMOTE_INPUT_HOST,
+                remoteInputHost = remoteInputHost.migrateLegacyRemoteInputHost(),
                 remoteInputPort = sharedPreferences.getInt(KEY_REMOTE_INPUT_PORT, DEFAULT_REMOTE_INPUT_PORT),
                 remoteInputLocalPort = sharedPreferences.getInt(
                     KEY_REMOTE_INPUT_LOCAL_PORT,
@@ -118,6 +122,14 @@ class SettingsManager(context: Context) {
         } catch (e: Exception) {
             Timber.e(e, "加载设置失败，使用默认设置")
             AppSettings() // 返回默认设置
+        }
+    }
+
+    private fun String.migrateLegacyRemoteInputHost(): String {
+        return if (this == LEGACY_REMOTE_INPUT_HOST) {
+            DEFAULT_REMOTE_INPUT_HOST
+        } else {
+            this
         }
     }
 
