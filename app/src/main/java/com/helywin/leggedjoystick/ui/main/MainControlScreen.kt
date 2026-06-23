@@ -35,9 +35,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Refresh
@@ -58,6 +61,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +79,7 @@ import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.ControlOwnershipState
+import com.helywin.leggedjoystick.data.HighLowStance
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
@@ -82,6 +87,14 @@ import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import legged_driver.AppMode
 import legged_driver.SportMode
+
+private enum class RightToolPanel {
+    LIGHT,
+    HEAD,
+    STANCE
+}
+
+private const val HEAD_CONTROL_STEP = 0.5f
 
 /**
  * 主控制界面。
@@ -98,6 +111,10 @@ fun MainControlScreen(
     val batteryLevel = settingsState.batteryLevel
     val speedLevel = settingsState.settings.speedLevel
     val currentSpeedValue = settingsState.currentSpeedValue
+    val frontLightOn = settingsState.frontLightOn
+    val backLightOn = settingsState.backLightOn
+    val autoModeLightOn = settingsState.autoModeLightOn
+    val highLowStance = settingsState.highLowStance
     val controlOwnershipState = settingsState.controlOwnershipState
     val remoteInputState = settingsState.remoteInputState
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
@@ -105,11 +122,14 @@ fun MainControlScreen(
     val logoPath = settingsState.settings.logoPath
     val isConnected = connectionState == ConnectionState.CONNECTED
     val hasControl = settingsState.hasControl
+    val commandEnabled = isConnected && hasControl
+    val inPlaceCommandEnabled = commandEnabled && currentSportMode == SportMode.SPORT_MODE_IN_PLACE
 
     var modeOverlayVisible by remember { mutableStateOf(false) }
     var speedSelectorVisible by remember { mutableStateOf(false) }
     var actionsExpanded by remember { mutableStateOf(true) }
     var batteryOverlayVisible by remember { mutableStateOf(false) }
+    var activeRightToolPanel by remember { mutableStateOf<RightToolPanel?>(null) }
 
     ConnectionDialog(
         connectionState = connectionState,
@@ -195,9 +215,60 @@ fun MainControlScreen(
                     }
                 )
 
+                RightToolColumn(
+                    activePanel = activeRightToolPanel,
+                    commandEnabled = commandEnabled,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .offset(y = 54.dp),
+                    onPanelToggle = { panel ->
+                        activeRightToolPanel = if (activeRightToolPanel == panel) null else panel
+                    }
+                )
+
+                when (activeRightToolPanel) {
+                    RightToolPanel.LIGHT -> {
+                        LightControlPanel(
+                            frontLightOn = frontLightOn,
+                            backLightOn = backLightOn,
+                            autoModeLightOn = autoModeLightOn,
+                            enabled = commandEnabled,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .offset(x = (-68).dp, y = (-76).dp)
+                                .zIndex(8f),
+                            onFrontLightClick = { controller.setFrontLight(!frontLightOn) },
+                            onBackLightClick = { controller.setBackLight(!backLightOn) },
+                            onAutoModeLightClick = { controller.setAutoModeLight(!autoModeLightOn) }
+                        )
+                    }
+                    RightToolPanel.HEAD -> {
+                        HeadControlPanel(
+                            enabled = inPlaceCommandEnabled,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .offset(x = (-68).dp, y = 10.dp)
+                                .zIndex(8f),
+                            onControlHead = controller::controlHead
+                        )
+                    }
+                    RightToolPanel.STANCE -> {
+                        StanceControlPanel(
+                            currentStance = highLowStance,
+                            enabled = inPlaceCommandEnabled,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .offset(x = (-68).dp, y = 94.dp)
+                                .zIndex(8f),
+                            onStanceSelected = controller::setHighLowStance
+                        )
+                    }
+                    null -> Unit
+                }
+
                 BottomActionGroup(
                     expanded = actionsExpanded,
-                    commandEnabled = isConnected && hasControl,
+                    commandEnabled = commandEnabled,
                     modifier = Modifier.align(Alignment.BottomCenter),
                     onToggle = { actionsExpanded = !actionsExpanded },
                     onActionClick = controller::performAction
@@ -558,6 +629,402 @@ private fun VerticalSpeedSelector(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RightToolColumn(
+    activePanel: RightToolPanel?,
+    commandEnabled: Boolean,
+    modifier: Modifier = Modifier,
+    onPanelToggle: (RightToolPanel) -> Unit
+) {
+    Column(
+        modifier = modifier.width(56.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        RightToolButton(
+            iconResId = R.drawable.genisdog_icon_light,
+            contentDescription = "灯光",
+            selected = activePanel == RightToolPanel.LIGHT,
+            commandEnabled = commandEnabled,
+            onClick = { onPanelToggle(RightToolPanel.LIGHT) }
+        )
+        RightToolButton(
+            imageVector = Icons.Filled.Refresh,
+            contentDescription = "头部控制",
+            selected = activePanel == RightToolPanel.HEAD,
+            commandEnabled = commandEnabled,
+            onClick = { onPanelToggle(RightToolPanel.HEAD) }
+        )
+        RightToolButton(
+            imageVector = Icons.Filled.KeyboardArrowUp,
+            contentDescription = "高低站姿",
+            selected = activePanel == RightToolPanel.STANCE,
+            commandEnabled = commandEnabled,
+            onClick = { onPanelToggle(RightToolPanel.STANCE) }
+        )
+    }
+}
+
+@Composable
+private fun RightToolButton(
+    iconResId: Int? = null,
+    imageVector: ImageVector? = null,
+    contentDescription: String,
+    selected: Boolean,
+    commandEnabled: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val background = when {
+        pressed -> PressedActionBackground
+        selected -> Color(0x7A27C7C4)
+        else -> PanelBackground
+    }
+
+    Surface(
+        modifier = Modifier
+            .size(52.dp)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .alpha(if (commandEnabled || selected) 1f else 0.54f),
+        color = background,
+        shape = RoundedCornerShape(15.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 4.dp
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (iconResId != null) {
+                Image(
+                    painter = painterResource(iconResId),
+                    contentDescription = contentDescription,
+                    modifier = Modifier.size(32.dp),
+                    contentScale = ContentScale.Fit
+                )
+            } else if (imageVector != null) {
+                Icon(
+                    imageVector = imageVector,
+                    contentDescription = contentDescription,
+                    tint = if (selected) Color.White else AccentCyan,
+                    modifier = Modifier.size(27.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LightControlPanel(
+    frontLightOn: Boolean,
+    backLightOn: Boolean,
+    autoModeLightOn: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onFrontLightClick: () -> Unit,
+    onBackLightClick: () -> Unit,
+    onAutoModeLightClick: () -> Unit
+) {
+    ToolPanelSurface(
+        modifier = modifier.width(176.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LightToggleRow(
+                label = "前灯",
+                iconResId = if (frontLightOn) {
+                    R.drawable.genisdog_icon_light_front_on
+                } else {
+                    R.drawable.genisdog_icon_light
+                },
+                selected = frontLightOn,
+                enabled = enabled,
+                onClick = onFrontLightClick
+            )
+            LightToggleRow(
+                label = "后灯",
+                iconResId = if (backLightOn) {
+                    R.drawable.genisdog_icon_light_back_on
+                } else {
+                    R.drawable.genisdog_icon_light
+                },
+                selected = backLightOn,
+                enabled = enabled,
+                onClick = onBackLightClick
+            )
+            LightToggleRow(
+                label = "自动",
+                iconResId = if (autoModeLightOn) {
+                    R.drawable.genisdog_icon_light_all_on
+                } else {
+                    R.drawable.genisdog_icon_light_all_off
+                },
+                selected = autoModeLightOn,
+                enabled = enabled,
+                onClick = onAutoModeLightClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun LightToggleRow(
+    label: String,
+    iconResId: Int,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    pressed && enabled -> PressedActionBackground
+                    selected -> Color(0x5527C7C4)
+                    else -> Color.Transparent
+                }
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .alpha(if (enabled) 1f else 0.46f)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Image(
+            painter = painterResource(iconResId),
+            contentDescription = label,
+            modifier = Modifier.size(25.dp),
+            contentScale = ContentScale.Fit
+        )
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = AccentCyan,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeadControlPanel(
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onControlHead: (Float, Float) -> Unit
+) {
+    ToolPanelSurface(modifier = modifier.width(154.dp)) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            HeadControlButton(
+                imageVector = Icons.Filled.KeyboardArrowUp,
+                contentDescription = "抬头",
+                enabled = enabled,
+                onClick = { onControlHead(0f, HEAD_CONTROL_STEP) }
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HeadControlButton(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = "左探头",
+                    enabled = enabled,
+                    onClick = { onControlHead(HEAD_CONTROL_STEP, 0f) }
+                )
+                HeadControlButton(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = "头部停止",
+                    enabled = enabled,
+                    onClick = { onControlHead(0f, 0f) }
+                )
+                HeadControlButton(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "右探头",
+                    enabled = enabled,
+                    onClick = { onControlHead(-HEAD_CONTROL_STEP, 0f) }
+                )
+            }
+            HeadControlButton(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "低头",
+                enabled = enabled,
+                onClick = { onControlHead(0f, -HEAD_CONTROL_STEP) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeadControlButton(
+    imageVector: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    Surface(
+        modifier = Modifier
+            .size(40.dp)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .alpha(if (enabled) 1f else 0.42f),
+        color = if (pressed && enabled) PressedActionBackground else Color.White.copy(alpha = 0.08f),
+        shape = RoundedCornerShape(11.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = contentDescription,
+                tint = Color.White,
+                modifier = Modifier.size(25.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StanceControlPanel(
+    currentStance: HighLowStance,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onStanceSelected: (HighLowStance) -> Unit
+) {
+    ToolPanelSurface(modifier = modifier.width(160.dp)) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            StanceChoiceRow(
+                stance = HighLowStance.HIGH,
+                icon = Icons.Filled.KeyboardArrowUp,
+                selected = currentStance == HighLowStance.HIGH,
+                enabled = enabled,
+                onClick = { onStanceSelected(HighLowStance.HIGH) }
+            )
+            StanceChoiceRow(
+                stance = HighLowStance.NORMAL,
+                icon = Icons.Filled.Refresh,
+                selected = currentStance == HighLowStance.NORMAL,
+                enabled = enabled,
+                onClick = { onStanceSelected(HighLowStance.NORMAL) }
+            )
+            StanceChoiceRow(
+                stance = HighLowStance.LOW,
+                icon = Icons.Filled.KeyboardArrowDown,
+                selected = currentStance == HighLowStance.LOW,
+                enabled = enabled,
+                onClick = { onStanceSelected(HighLowStance.LOW) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun StanceChoiceRow(
+    stance: HighLowStance,
+    icon: ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    pressed && enabled -> PressedActionBackground
+                    selected -> Color(0x5527C7C4)
+                    else -> Color.Transparent
+                }
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .alpha(if (enabled) 1f else 0.46f)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = stance.displayName,
+            tint = if (selected) AccentCyan else Color.White,
+            modifier = Modifier.size(23.dp)
+        )
+        Text(
+            text = stance.displayName,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun ToolPanelSurface(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = modifier.border(
+            width = 1.dp,
+            color = Color.White.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(14.dp)
+        ),
+        color = Color(0xE617201F),
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 6.dp
+    ) {
+        content()
     }
 }
 
@@ -1279,6 +1746,11 @@ fun MainControlScreenPreview() {
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: RobotAction) {}
+            override fun setFrontLight(on: Boolean) {}
+            override fun setBackLight(on: Boolean) {}
+            override fun setAutoModeLight(on: Boolean) {}
+            override fun controlHead(leftRight: Float, upDown: Float) {}
+            override fun setHighLowStance(stance: HighLowStance) {}
             override fun updateSettings(settings: AppSettings) {}
             override fun pauseMovementOutput() {}
             override fun resumeMovementOutput() {}

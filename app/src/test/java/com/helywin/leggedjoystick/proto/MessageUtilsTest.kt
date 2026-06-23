@@ -119,6 +119,67 @@ class MessageUtilsTest {
         assertEquals(CONTROL_TIMEOUT_MS, request?.timeout_ms)
     }
 
+    @Test
+    fun lightCommands_useRequestedOnOffPayloads() {
+        val front = MessageUtils.createFrontLightCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            on = true
+        )
+        val back = MessageUtils.createBackLightCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            on = false
+        )
+        val auto = MessageUtils.createAutoModeLightCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            on = true
+        )
+
+        assertTrue(MessageUtils.verifyMessage(front))
+        assertTrue(MessageUtils.verifyMessage(back))
+        assertTrue(MessageUtils.verifyMessage(auto))
+        assertEquals(CommandCode.COMMAND_CODE_FRONT_LIGHT, front.command_request?.command_code)
+        assertEquals(true, front.command_request?.front_light?.on)
+        assertEquals(CommandCode.COMMAND_CODE_BACK_LIGHT, back.command_request?.command_code)
+        assertEquals(false, back.command_request?.back_light?.on)
+        assertEquals(CommandCode.COMMAND_CODE_AUTO_MODE_LIGHT, auto.command_request?.command_code)
+        assertEquals(true, auto.command_request?.auto_mode_light?.on)
+    }
+
+    @Test
+    fun controlHeadCommand_clampsAxesToProtocolRange() {
+        val message = MessageUtils.createControlHeadCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            leftRight = 2.0f,
+            upDown = -2.0f
+        )
+
+        val controlHead = message.command_request?.control_head
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(CommandCode.COMMAND_CODE_CONTROL_HEAD, message.command_request?.command_code)
+        assertEquals(1.0f, controlHead?.left_right ?: 0f, FLOAT_DELTA)
+        assertEquals(-1.0f, controlHead?.up_down ?: 0f, FLOAT_DELTA)
+    }
+
+    @Test
+    fun highLowStanceCommand_usesProtocolValue() {
+        val message = MessageUtils.createHighLowStanceCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            stance = 2
+        )
+
+        val request = message.command_request
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(CommandCode.COMMAND_CODE_HIGH_LOW_STANCE, request?.command_code)
+        assertEquals(2, request?.high_low_stance?.stance)
+    }
+
     private companion object {
         const val DEVICE_ID = "remote_test"
         const val FLOAT_DELTA = 0.0001f

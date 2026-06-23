@@ -17,6 +17,7 @@ import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.HighLowStance
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
@@ -205,6 +206,11 @@ fun LeggedJoystickAppPreview() {
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: com.helywin.leggedjoystick.controller.RobotAction) {}
+            override fun setFrontLight(on: Boolean) {}
+            override fun setBackLight(on: Boolean) {}
+            override fun setAutoModeLight(on: Boolean) {}
+            override fun controlHead(leftRight: Float, upDown: Float) {}
+            override fun setHighLowStance(stance: HighLowStance) {}
             override fun updateSettings(settings: AppSettings) {}
             override fun pauseMovementOutput() {}
             override fun resumeMovementOutput() {}

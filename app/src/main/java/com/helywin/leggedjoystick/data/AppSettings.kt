@@ -22,6 +22,18 @@ enum class SpeedLevel(
 }
 
 /**
+ * 高低站姿命令枚举。
+ */
+enum class HighLowStance(
+    val displayName: String,
+    val protocolValue: Int
+) {
+    NORMAL("恢复", 0),
+    HIGH("高站姿", 1),
+    LOW("低站姿", 2)
+}
+
+/**
  * 应用设置数据类
  */
 data class AppSettings(

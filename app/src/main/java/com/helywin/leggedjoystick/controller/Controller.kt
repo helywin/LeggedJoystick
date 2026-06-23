@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.data.ControlOwnershipState
+import com.helywin.leggedjoystick.data.HighLowStance
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.remote.MovementIntent
@@ -32,6 +33,7 @@ import legged_driver.AppMode
 import legged_driver.CommandCode
 import legged_driver.CommandResultStage
 import legged_driver.CtrlSource
+import legged_driver.FillLightStatus
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
 import legged_driver.RobotStateMessage
@@ -64,6 +66,22 @@ class ControllerState {
 
     // 当前线速度值，单位由 driver 状态消息保持一致。
     var currentSpeedValue by mutableStateOf(0.0)
+        private set
+
+    // 补光灯和头部状态来自 RobotStateMessage。
+    var frontLightOn by mutableStateOf(false)
+        private set
+
+    var backLightOn by mutableStateOf(false)
+        private set
+
+    var autoModeLightOn by mutableStateOf(false)
+        private set
+
+    var headAngle by mutableStateOf(0.0)
+        private set
+
+    var highLowStance by mutableStateOf(HighLowStance.NORMAL)
         private set
 
     // 当前控制权状态，只有已接管时才允许发送运动和动作命令。
@@ -124,6 +142,29 @@ class ControllerState {
         currentSpeedValue = value.coerceAtLeast(0.0)
     }
 
+    fun updateRobotAuxiliaryState(robotState: RobotStateMessage) {
+        updateFillLightState(robotState.front_fill_light) { frontLightOn = it }
+        updateFillLightState(robotState.back_fill_light) { backLightOn = it }
+        autoModeLightOn = robotState.auto_mode_light
+        headAngle = robotState.head_angle
+    }
+
+    fun updateFrontLightState(on: Boolean) {
+        frontLightOn = on
+    }
+
+    fun updateBackLightState(on: Boolean) {
+        backLightOn = on
+    }
+
+    fun updateAutoModeLightState(on: Boolean) {
+        autoModeLightOn = on
+    }
+
+    fun updateHighLowStance(stance: HighLowStance) {
+        highLowStance = stance
+    }
+
     fun updateControlOwnership(newState: ControlOwnershipState, message: String = "") {
         controlOwnershipState = newState
         controlOwnershipMessage = message
@@ -146,6 +187,14 @@ class ControllerState {
 
         controlOwnershipState = nextState
         controlOwnershipMessage = ""
+    }
+
+    private fun updateFillLightState(status: FillLightStatus, update: (Boolean) -> Unit) {
+        when (status) {
+            FillLightStatus.FILL_LIGHT_STATUS_ON -> update(true)
+            FillLightStatus.FILL_LIGHT_STATUS_OFF -> update(false)
+            FillLightStatus.FILL_LIGHT_STATUS_UNKNOWN -> Unit
+        }
     }
 
     fun updateSettings(newSettings: AppSettings) {
@@ -221,6 +270,11 @@ interface Controller {
     fun setControlMode(controlMode: SportMode)
     fun setSpeedLevel(level: SpeedLevel)
     fun performAction(action: RobotAction)
+    fun setFrontLight(on: Boolean)
+    fun setBackLight(on: Boolean)
+    fun setAutoModeLight(on: Boolean)
+    fun controlHead(leftRight: Float, upDown: Float)
+    fun setHighLowStance(stance: HighLowStance)
     fun updateSettings(settings: AppSettings)
     fun pauseMovementOutput()
     fun resumeMovementOutput()
@@ -252,6 +306,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
     // 速度发送任务
     private var velocitySendJob: Job? = null
+    private var headControlStopJob: Job? = null
+    private var headControlActive = false
 
     init {
         // 设置ZMQ客户端回调
@@ -289,6 +345,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                     settingsState.updateRobotCtrlMode(robotState.sport_mode)
                     settingsState.updateBatteryLevel(robotState.toBatteryPercent())
                     settingsState.updateCurrentSpeedValue(robotState.toLinearSpeedValue())
+                    settingsState.updateRobotAuxiliaryState(robotState)
                     settingsState.updateControlOwnershipFromSource(robotState.control_source)
                     Timber.d(
                         "[Controller] 收到机器人状态，运动模式: %s，控制来源: %s",
@@ -335,6 +392,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
             MessageType.MESSAGE_TYPE_CONTROL_LOST -> {
                 stopVelocityLoop()
+                stopHeadControl()
                 settingsState.updateControlOwnership(ControlOwnershipState.LOST, "控制权已丢失")
                 Timber.w("[Controller] 收到控制权丢失通知")
             }
@@ -503,6 +561,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun disconnect() {
         cancelConnection()
         stopVelocityLoop()
+        stopHeadControl()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
@@ -562,6 +621,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         }
 
         stopVelocityLoop()
+        stopHeadControl()
         settingsState.updateControlOwnership(ControlOwnershipState.RELEASING, "正在释放")
         scope.launch {
             val success = zmqClient.releaseControl()
@@ -667,15 +727,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 发送主控页底部动作按钮命令。
      */
     override fun performAction(action: RobotAction) {
-        if (!settingsState.isConnected) {
-            Timber.w("[Controller] 未连接，无法发送动作命令: %s", action.displayName)
-            return
-        }
-
-        if (!settingsState.hasControl) {
-            Timber.w("[Controller] 未接管控制权，无法发送动作命令: %s", action.displayName)
-            return
-        }
+        if (!canSendControlledCommand("动作命令: ${action.displayName}")) return
 
         scope.launch {
             try {
@@ -687,6 +739,93 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 }
             } catch (e: Exception) {
                 Timber.e(e, "[Controller] 发送动作命令异常: %s", action.displayName)
+            }
+        }
+    }
+
+    override fun setFrontLight(on: Boolean) {
+        if (!canSendControlledCommand("前补光灯")) return
+
+        scope.launch {
+            val success = zmqClient.setFrontLight(on)
+            if (success) {
+                settingsState.updateFrontLightState(on)
+                Timber.i("[Controller] 前补光灯请求已发送: %s", on)
+            } else {
+                Timber.w("[Controller] 前补光灯请求入队失败: %s", on)
+            }
+        }
+    }
+
+    override fun setBackLight(on: Boolean) {
+        if (!canSendControlledCommand("后补光灯")) return
+
+        scope.launch {
+            val success = zmqClient.setBackLight(on)
+            if (success) {
+                settingsState.updateBackLightState(on)
+                Timber.i("[Controller] 后补光灯请求已发送: %s", on)
+            } else {
+                Timber.w("[Controller] 后补光灯请求入队失败: %s", on)
+            }
+        }
+    }
+
+    override fun setAutoModeLight(on: Boolean) {
+        if (!canSendControlledCommand("自动补光")) return
+
+        scope.launch {
+            val success = zmqClient.setAutoModeLight(on)
+            if (success) {
+                settingsState.updateAutoModeLightState(on)
+                Timber.i("[Controller] 自动补光请求已发送: %s", on)
+            } else {
+                Timber.w("[Controller] 自动补光请求入队失败: %s", on)
+            }
+        }
+    }
+
+    override fun controlHead(leftRight: Float, upDown: Float) {
+        if (!canSendControlledCommand("头部控制")) return
+        if (!settingsState.isInPlaceModeForAuxCommand("头部控制")) return
+
+        val clampedLeftRight = leftRight.coerceIn(-1f, 1f)
+        val clampedUpDown = upDown.coerceIn(-1f, 1f)
+
+        scope.launch {
+            val success = zmqClient.controlHead(clampedLeftRight, clampedUpDown)
+            if (!success) {
+                Timber.w("[Controller] 头部控制请求入队失败: leftRight=%s, upDown=%s", clampedLeftRight, clampedUpDown)
+                return@launch
+            }
+
+            val isStopCommand = clampedLeftRight == 0f && clampedUpDown == 0f
+            headControlActive = !isStopCommand
+            headControlStopJob?.cancel()
+
+            if (isStopCommand) {
+                Timber.i("[Controller] 头部控制停止请求已发送")
+            } else {
+                Timber.i("[Controller] 头部控制短脉冲已发送: leftRight=%s, upDown=%s", clampedLeftRight, clampedUpDown)
+                headControlStopJob = scope.launch {
+                    delay(HEAD_CONTROL_PULSE_MS)
+                    stopHeadControl()
+                }
+            }
+        }
+    }
+
+    override fun setHighLowStance(stance: HighLowStance) {
+        if (!canSendControlledCommand("高低站姿")) return
+        if (!settingsState.isInPlaceModeForAuxCommand("高低站姿")) return
+
+        scope.launch {
+            val success = zmqClient.setHighLowStance(stance.protocolValue)
+            if (success) {
+                settingsState.updateHighLowStance(stance)
+                Timber.i("[Controller] 高低站姿请求已发送: %s", stance.displayName)
+            } else {
+                Timber.w("[Controller] 高低站姿请求入队失败: %s", stance.displayName)
             }
         }
     }
@@ -738,6 +877,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun pauseMovementOutput() {
         currentMovementIntent = MovementIntent.ZERO
         stopVelocityLoop()
+        stopHeadControl()
         Timber.i("[Controller] 已暂停移动输出")
     }
 
@@ -811,6 +951,16 @@ class RobotControllerImpl(private val context: Context) : Controller {
         lastCommandSent = false  // 重置命令发送标志
     }
 
+    private fun stopHeadControl() {
+        headControlStopJob?.cancel()
+        headControlStopJob = null
+        if (headControlActive) {
+            zmqClient.controlHead(0f, 0f)
+            headControlActive = false
+            Timber.v("[Controller] 发送头部停止指令")
+        }
+    }
+
     /**
      * 清理资源
      */
@@ -863,6 +1013,27 @@ class RobotControllerImpl(private val context: Context) : Controller {
         )
     }
 
+    private fun canSendControlledCommand(commandName: String): Boolean {
+        if (!settingsState.isConnected) {
+            Timber.w("[Controller] 未连接，无法发送%s", commandName)
+            return false
+        }
+
+        if (!settingsState.hasControl) {
+            Timber.w("[Controller] 未接管控制权，无法发送%s", commandName)
+            return false
+        }
+
+        return true
+    }
+
+    private fun ControllerState.isInPlaceModeForAuxCommand(commandName: String): Boolean {
+        if (robotCtrlMode == SportMode.SPORT_MODE_IN_PLACE) return true
+
+        Timber.w("[Controller] 当前不是原地模式，无法发送%s", commandName)
+        return false
+    }
+
     private val remoteInputListener = object : RemoteInputListener {
         override fun onStatusChanged(
             descriptor: RemoteInputSourceDescriptor,
@@ -901,5 +1072,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private fun RobotStateMessage.toLinearSpeedValue(): Double {
         val speedData = speed ?: return 0.0
         return hypot(speedData.line, speedData.translation)
+    }
+
+    private companion object {
+        private const val HEAD_CONTROL_PULSE_MS = 250L
     }
 }

@@ -238,6 +238,67 @@ class NewZmqClient(
         )
     }
 
+    fun setFrontLight(on: Boolean): Boolean {
+        return enqueueMessage(
+            MessageUtils.createFrontLightCommand(
+                deviceType = deviceType,
+                deviceId = deviceId,
+                on = on
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求设置前补光灯: %s", on)
+        }
+    }
+
+    fun setBackLight(on: Boolean): Boolean {
+        return enqueueMessage(
+            MessageUtils.createBackLightCommand(
+                deviceType = deviceType,
+                deviceId = deviceId,
+                on = on
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求设置后补光灯: %s", on)
+        }
+    }
+
+    fun setAutoModeLight(on: Boolean): Boolean {
+        return enqueueMessage(
+            MessageUtils.createAutoModeLightCommand(
+                deviceType = deviceType,
+                deviceId = deviceId,
+                on = on
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求设置自动补光: %s", on)
+        }
+    }
+
+    fun controlHead(leftRight: Float, upDown: Float): Boolean {
+        return enqueueMessage(
+            MessageUtils.createControlHeadCommand(
+                deviceType = deviceType,
+                deviceId = deviceId,
+                leftRight = leftRight,
+                upDown = upDown
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求控制头部: leftRight=%s, upDown=%s", leftRight, upDown)
+        }
+    }
+
+    fun setHighLowStance(stance: Int): Boolean {
+        return enqueueMessage(
+            MessageUtils.createHighLowStanceCommand(
+                deviceType = deviceType,
+                deviceId = deviceId,
+                stance = stance
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求设置高低站姿: %s", stance)
+        }
+    }
+
     fun sendMoveCommand(leftRight: Float, forwardBack: Float, yaw: Float) {
         enqueueMessage(
             MessageUtils.createMoveCommand(
