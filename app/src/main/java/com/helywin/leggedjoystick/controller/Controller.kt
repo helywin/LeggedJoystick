@@ -33,6 +33,7 @@ import legged_driver.MessageType
 import legged_driver.RobotStateMessage
 import legged_driver.SportMode
 import kotlinx.coroutines.*
+import kotlin.math.hypot
 import timber.log.Timber
 import kotlin.math.roundToInt
 
@@ -55,6 +56,10 @@ class ControllerState {
 
     // 电池电量
     var batteryLevel by mutableStateOf(0)
+        private set
+
+    // 当前线速度值，单位由 driver 状态消息保持一致。
+    var currentSpeedValue by mutableStateOf(0.0)
         private set
 
     // 应用设置
@@ -99,6 +104,10 @@ class ControllerState {
 
     fun updateBatteryLevel(level: Int) {
         batteryLevel = level.coerceIn(0, 100)
+    }
+
+    fun updateCurrentSpeedValue(value: Double) {
+        currentSpeedValue = value.coerceAtLeast(0.0)
     }
 
     fun updateSettings(newSettings: AppSettings) {
@@ -171,6 +180,7 @@ interface Controller {
     fun setMode(mode: AppMode)
     fun setControlMode(controlMode: SportMode)
     fun setSpeedLevel(level: SpeedLevel)
+    fun performAction(action: RobotAction)
     fun updateSettings(settings: AppSettings)
     fun pauseMovementOutput()
     fun resumeMovementOutput()
@@ -238,6 +248,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 message.robot_state?.let { robotState ->
                     settingsState.updateRobotCtrlMode(robotState.sport_mode)
                     settingsState.updateBatteryLevel(robotState.toBatteryPercent())
+                    settingsState.updateCurrentSpeedValue(robotState.toLinearSpeedValue())
                     Timber.d("[Controller] 收到机器人状态，运动模式: ${robotState.sport_mode}")
                 }
             }
@@ -409,6 +420,29 @@ class RobotControllerImpl(private val context: Context) : Controller {
         // 自动保存更新后的设置
         saveSettings(settingsState.settings)
         Timber.i("[Controller] 已切换到${level.displayName}并保存设置")
+    }
+
+    /**
+     * 发送主控页底部动作按钮命令。
+     */
+    override fun performAction(action: RobotAction) {
+        if (!settingsState.isConnected) {
+            Timber.w("[Controller] 未连接，无法发送动作命令: %s", action.displayName)
+            return
+        }
+
+        scope.launch {
+            try {
+                val success = zmqClient.sendSimpleCommand(action.commandCode)
+                if (success) {
+                    Timber.i("[Controller] 动作命令已发送: %s", action.displayName)
+                } else {
+                    Timber.w("[Controller] 动作命令入队失败: %s", action.displayName)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "[Controller] 发送动作命令异常: %s", action.displayName)
+            }
+        }
     }
 
     /**
@@ -612,5 +646,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
         if (values.isEmpty()) return 0
         return values.average().roundToInt().coerceIn(0, 100)
+    }
+
+    private fun RobotStateMessage.toLinearSpeedValue(): Double {
+        val speedData = speed ?: return 0.0
+        return hypot(speedData.line, speedData.translation)
     }
 }

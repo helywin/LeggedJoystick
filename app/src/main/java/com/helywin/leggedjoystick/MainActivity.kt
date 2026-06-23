@@ -202,6 +202,7 @@ fun LeggedJoystickAppPreview() {
             override fun setMode(mode: AppMode) {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
+            override fun performAction(action: com.helywin.leggedjoystick.controller.RobotAction) {}
             override fun updateSettings(settings: AppSettings) {}
             override fun pauseMovementOutput() {}
             override fun resumeMovementOutput() {}
