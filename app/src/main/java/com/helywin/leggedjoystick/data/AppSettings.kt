@@ -54,7 +54,8 @@ data class AppSettings(
     val remoteInputYawRightInverted: Boolean = false,
     val mainTitle: String = "机器狗遥控器",
     val logoPath: String = "",
-    val keepScreenOn: Boolean = true
+    val keepScreenOn: Boolean = true,
+    val engineeringMockEnabled: Boolean = false
 ) {
     // 保持向后兼容的属性，狂暴模式现在等同于快速模式
     val isRageModeEnabled: Boolean

@@ -56,6 +56,7 @@ fun SettingsScreen(
     var mainTitle by remember { mutableStateOf(currentSettings.mainTitle) }
     var logoPath by remember { mutableStateOf(currentSettings.logoPath) }
     var keepScreenOn by remember { mutableStateOf(currentSettings.keepScreenOn) }
+    var engineeringMockEnabled by remember { mutableStateOf(currentSettings.engineeringMockEnabled) }
     var remoteInputHost by remember { mutableStateOf(currentSettings.remoteInputHost) }
     var remoteInputPort by remember { mutableStateOf(currentSettings.remoteInputPort.toString()) }
     var remoteInputLocalPort by remember { mutableStateOf(currentSettings.remoteInputLocalPort.toString()) }
@@ -331,6 +332,31 @@ fun SettingsScreen(
                             onCheckedChange = { keepScreenOn = it }
                         )
                     }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "工程 Mock 模式",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "本地模拟连接和状态，不发送真实 ZMQ/UDP",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = engineeringMockEnabled,
+                            onCheckedChange = { engineeringMockEnabled = it }
+                        )
+                    }
                 }
             }
 
@@ -490,7 +516,8 @@ fun SettingsScreen(
                         remoteInputYawRightInverted = yawRightInverted,
                         mainTitle = mainTitle.trim(),
                         logoPath = logoPath,
-                        keepScreenOn = keepScreenOn
+                        keepScreenOn = keepScreenOn,
+                        engineeringMockEnabled = engineeringMockEnabled
                     )
                     onSettingsChange(newSettings)
                     Timber.i("设置已保存: IP=$zmqIp, Port=$port, RTSP=$rtspUrl, Title=$mainTitle, Logo=$logoPath, KeepScreenOn=$keepScreenOn")

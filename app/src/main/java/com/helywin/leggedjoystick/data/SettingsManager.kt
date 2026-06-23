@@ -38,6 +38,7 @@ class SettingsManager(context: Context) {
         private const val KEY_MAIN_TITLE = "main_title"
         private const val KEY_LOGO_PATH = "logo_path"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        private const val KEY_ENGINEERING_MOCK_ENABLED = "engineering_mock_enabled"
 
         // 默认配置
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
@@ -84,6 +85,7 @@ class SettingsManager(context: Context) {
                 putString(KEY_MAIN_TITLE, settings.mainTitle)
                 putString(KEY_LOGO_PATH, settings.logoPath)
                 putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
+                putBoolean(KEY_ENGINEERING_MOCK_ENABLED, settings.engineeringMockEnabled)
                 apply()
             }
             Timber.d("设置已保存: $settings")
@@ -154,7 +156,8 @@ class SettingsManager(context: Context) {
                 ),
                 mainTitle = sharedPreferences.getString(KEY_MAIN_TITLE, DEFAULT_MAIN_TITLE) ?: DEFAULT_MAIN_TITLE,
                 logoPath = sharedPreferences.getString(KEY_LOGO_PATH, DEFAULT_LOGO_PATH) ?: DEFAULT_LOGO_PATH,
-                keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON)
+                keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON),
+                engineeringMockEnabled = sharedPreferences.getBoolean(KEY_ENGINEERING_MOCK_ENABLED, false)
             ).also {
                 Timber.d("设置已加载: $it")
             }

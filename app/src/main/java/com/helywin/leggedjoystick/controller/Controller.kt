@@ -34,6 +34,8 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputSnapshot
 import com.helywin.leggedjoystick.input.remote.RemoteInputSource
 import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
+import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputConfig
+import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.SiyiUdpBridgeController
@@ -358,6 +360,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
     // 连接任务
     private var connectJob: Job? = null
+    private var mockStateJob: Job? = null
 
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
     private val siyiUdpBridgeController = SiyiUdpBridgeController(context)
@@ -574,8 +577,20 @@ class RobotControllerImpl(private val context: Context) : Controller {
             startVelocityLoop()
         }
         if (!wasOwned) {
-            sendInitialCommandsAfterTake()
+            if (isEngineeringMock()) {
+                applyMockInitialCommands()
+            } else {
+                sendInitialCommandsAfterTake()
+            }
         }
+    }
+
+    private fun applyMockInitialCommands() {
+        settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
+        if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
+            settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
+        }
+        settingsState.updateLastCommand("Mock", "初始化手动模式")
     }
 
     private fun sendInitialCommandsAfterTake() {
@@ -621,6 +636,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
             return
         }
 
+        if (isEngineeringMock()) {
+            connectMock()
+            return
+        }
+
         cancelConnection() // 取消之前的连接任务
 
         settingsState.updateConnectionState(ConnectionState.CONNECTING)
@@ -651,6 +671,36 @@ class RobotControllerImpl(private val context: Context) : Controller {
         }
     }
 
+    private fun connectMock() {
+        cancelConnection()
+        settingsState.updateConnectionState(ConnectionState.CONNECTING)
+        settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
+
+        connectJob = scope.launch {
+            delay(120L)
+            if (!isEngineeringMock()) {
+                settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+                return@launch
+            }
+
+            settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
+            settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
+            settingsState.updateBatteryLevel(72)
+            settingsState.updateCurrentSpeedValue(0.0)
+            settingsState.updateDriverConnectionTelemetry(
+                connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
+                robotConnected = true
+            )
+            settingsState.updateConnectionState(ConnectionState.CONNECTED)
+            settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "工程 Mock，等待接管")
+            settingsState.updateLastCommand("Mock", "连接")
+            startMockStateLoop()
+            startRemoteInput()
+            startVelocityLoop()
+            Timber.i("[Controller] 工程 Mock 已连接")
+        }
+    }
+
     /**
      * 断开连接
      */
@@ -658,6 +708,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         cancelConnection()
         stopVelocityLoop()
         stopHeadControl()
+        stopMockStateLoop()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
@@ -672,6 +723,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             zmqClient.disconnect()
+            stopMockStateLoop()
             settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
             settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
         }
@@ -697,6 +749,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
         }
 
         settingsState.updateControlOwnership(ControlOwnershipState.TAKING, "正在接管")
+        if (isEngineeringMock()) {
+            scope.launch {
+                delay(80L)
+                settingsState.updateLastCommand("控制权", "接管")
+                markControlOwned("工程 Mock 已接管")
+            }
+            return
+        }
+
         scope.launch {
             val success = zmqClient.takeControl()
             if (!success) {
@@ -721,6 +782,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
         stopVelocityLoop()
         stopHeadControl()
         settingsState.updateControlOwnership(ControlOwnershipState.RELEASING, "正在释放")
+        if (isEngineeringMock()) {
+            scope.launch {
+                delay(80L)
+                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "工程 Mock 已释放")
+                settingsState.updateLastCommand("控制权", "释放")
+            }
+            return
+        }
+
         scope.launch {
             val success = zmqClient.releaseControl()
             if (!success) {
@@ -752,6 +822,13 @@ class RobotControllerImpl(private val context: Context) : Controller {
         }
 
         settingsState.updateRobotModeChangingState(true)
+
+        if (isEngineeringMock()) {
+            settingsState.updateRobotMode(mode)
+            settingsState.updateLastCommand("AppMode", mode.name)
+            Timber.i("[Controller] 工程 Mock 更新 AppMode: %s", mode)
+            return
+        }
 
         scope.launch {
             try {
@@ -792,6 +869,13 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
         settingsState.updateRobotCtrlModeChangingState(true)
 
+        if (isEngineeringMock()) {
+            settingsState.updateRobotCtrlMode(controlMode)
+            settingsState.updateLastCommand("运动模式", controlMode.name)
+            Timber.i("[Controller] 工程 Mock 更新运动模式: %s", controlMode)
+            return
+        }
+
         scope.launch {
             try {
                 val success = zmqClient.setControlMode(controlMode)
@@ -815,7 +899,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun setSpeedLevel(level: SpeedLevel) {
         settingsState.setSpeedLevel(level)
-        if (settingsState.isConnected && settingsState.hasControl) {
+        if (isEngineeringMock() && settingsState.isConnected && settingsState.hasControl) {
+            settingsState.updateLastCommand("速度档位", level.displayName)
+        } else if (settingsState.isConnected && settingsState.hasControl) {
             if (zmqClient.setSpeedLevel(level.protocolSpeedLevel)) {
                 settingsState.updateLastCommand("速度档位", level.displayName)
             }
@@ -832,6 +918,12 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun performAction(action: RobotAction) {
         if (!canSendControlledCommand("动作命令: ${action.displayName}")) return
+
+        if (isEngineeringMock()) {
+            settingsState.updateLastCommand("动作", action.displayName)
+            Timber.i("[Controller] 工程 Mock 记录动作: %s", action.displayName)
+            return
+        }
 
         scope.launch {
             try {
@@ -851,6 +943,12 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun setFrontLight(on: Boolean) {
         if (!canSendControlledCommand("前补光灯")) return
 
+        if (isEngineeringMock()) {
+            settingsState.updateFrontLightState(on)
+            settingsState.updateLastCommand("前补光灯", if (on) "开" else "关")
+            return
+        }
+
         scope.launch {
             val success = zmqClient.setFrontLight(on)
             if (success) {
@@ -866,6 +964,12 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun setBackLight(on: Boolean) {
         if (!canSendControlledCommand("后补光灯")) return
 
+        if (isEngineeringMock()) {
+            settingsState.updateBackLightState(on)
+            settingsState.updateLastCommand("后补光灯", if (on) "开" else "关")
+            return
+        }
+
         scope.launch {
             val success = zmqClient.setBackLight(on)
             if (success) {
@@ -880,6 +984,12 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
     override fun setAutoModeLight(on: Boolean) {
         if (!canSendControlledCommand("自动补光")) return
+
+        if (isEngineeringMock()) {
+            settingsState.updateAutoModeLightState(on)
+            settingsState.updateLastCommand("自动补光", if (on) "开" else "关")
+            return
+        }
 
         scope.launch {
             val success = zmqClient.setAutoModeLight(on)
@@ -899,6 +1009,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
         val clampedLeftRight = leftRight.coerceIn(-1f, 1f)
         val clampedUpDown = upDown.coerceIn(-1f, 1f)
+
+        if (isEngineeringMock()) {
+            handleMockHeadControl(clampedLeftRight, clampedUpDown)
+            return
+        }
 
         scope.launch {
             val success = zmqClient.controlHead(clampedLeftRight, clampedUpDown)
@@ -932,6 +1047,12 @@ class RobotControllerImpl(private val context: Context) : Controller {
         if (!canSendControlledCommand("高低站姿")) return
         if (!settingsState.isInPlaceModeForAuxCommand("高低站姿")) return
 
+        if (isEngineeringMock()) {
+            settingsState.updateHighLowStance(stance)
+            settingsState.updateLastCommand("高低站姿", stance.displayName)
+            return
+        }
+
         scope.launch {
             val success = zmqClient.setHighLowStance(stance.protocolValue)
             if (success) {
@@ -948,6 +1069,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 更新设置
      */
     override fun updateSettings(settings: AppSettings) {
+        val mockModeChanged = settingsState.settings.engineeringMockEnabled != settings.engineeringMockEnabled
+        if (mockModeChanged && settingsState.connectionState != ConnectionState.DISCONNECTED) {
+            disconnect()
+        }
         settingsState.updateSettings(settings)
         rebuildRemoteInputSource(settings)
         // 自动保存设置
@@ -1018,11 +1143,13 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
                         // 只有当外部遥控器有非零输入时才发送移动指令
                         if (!intent.isZero) {
-                            zmqClient.sendOperatorMoveCommand(
-                                strafeRight = intent.strafeRight,
-                                forward = intent.forward,
-                                yawRight = intent.yawRight
-                            )
+                            if (!isEngineeringMock()) {
+                                zmqClient.sendOperatorMoveCommand(
+                                    strafeRight = intent.strafeRight,
+                                    forward = intent.forward,
+                                    yawRight = intent.yawRight
+                                )
+                            }
                             settingsState.updateLastCommand(
                                 "移动",
                                 "前进 %.2f，平移 %.2f，转向 %.2f".format(
@@ -1037,14 +1164,18 @@ class RobotControllerImpl(private val context: Context) : Controller {
                             lastCommandSent = true
                         } else if (lastCommandSent) {
                             // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令
-                            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                            if (!isEngineeringMock()) {
+                                zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                            }
                             settingsState.updateLastCommand("移动", "停止")
                             Timber.v("[Controller] 发送停止移动指令")
                             lastCommandSent = false
                         }
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
                     } else if (lastCommandSent) {
-                        zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                        if (!isEngineeringMock()) {
+                            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                        }
                         settingsState.updateLastCommand("移动", "停止")
                         Timber.v("[Controller] 控制权或手动模式不满足，发送停止移动指令")
                         lastCommandSent = false
@@ -1067,7 +1198,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     private fun stopVelocityLoop() {
         if (lastCommandSent) {
-            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+            if (!isEngineeringMock()) {
+                zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+            }
             settingsState.updateLastCommand("移动", "停止")
         }
         currentMovementIntent = MovementIntent.ZERO
@@ -1080,10 +1213,58 @@ class RobotControllerImpl(private val context: Context) : Controller {
         headControlStopJob?.cancel()
         headControlStopJob = null
         if (headControlActive) {
-            zmqClient.controlHead(0f, 0f)
+            if (!isEngineeringMock()) {
+                zmqClient.controlHead(0f, 0f)
+            }
             headControlActive = false
             Timber.v("[Controller] 发送头部停止指令")
         }
+    }
+
+    private fun handleMockHeadControl(leftRight: Float, upDown: Float) {
+        val isStopCommand = leftRight == 0f && upDown == 0f
+        headControlActive = !isStopCommand
+        headControlStopJob?.cancel()
+
+        if (isStopCommand) {
+            settingsState.updateLastCommand("头部控制", "停止")
+            return
+        }
+
+        settingsState.updateLastCommand(
+            "头部控制",
+            "左右 %.2f，俯仰 %.2f".format(leftRight, upDown)
+        )
+        headControlStopJob = scope.launch {
+            delay(HEAD_CONTROL_PULSE_MS)
+            stopHeadControl()
+        }
+    }
+
+    private fun startMockStateLoop() {
+        stopMockStateLoop()
+        mockStateJob = scope.launch {
+            while (isActive && isEngineeringMock() && settingsState.isConnected) {
+                settingsState.updateBatteryLevel(72)
+                settingsState.updateDriverConnectionTelemetry(
+                    connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
+                    robotConnected = true
+                )
+                settingsState.updateCurrentSpeedValue(
+                    if (currentMovementIntent.isZero) {
+                        0.0
+                    } else {
+                        hypot(currentMovementIntent.forward.toDouble(), currentMovementIntent.strafeRight.toDouble())
+                    }
+                )
+                delay(1000L)
+            }
+        }
+    }
+
+    private fun stopMockStateLoop() {
+        mockStateJob?.cancel()
+        mockStateJob = null
     }
 
     /**
@@ -1097,7 +1278,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
     private fun startRemoteInput() {
         remoteInputRequested = true
-        if (SiyiUdpBridgeController.shouldUseForHost(settingsState.settings.remoteInputHost)) {
+        if (
+            !isEngineeringMock() &&
+            SiyiUdpBridgeController.shouldUseForHost(settingsState.settings.remoteInputHost)
+        ) {
             siyiUdpBridgeController.ensureBridgeOpen()
         }
         remoteInputSource.start(remoteInputListener)
@@ -1125,31 +1309,43 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     private fun buildRemoteInputSource(settings: AppSettings): RemoteInputSource {
+        val normalization = RemoteInputNormalizationConfig(
+            deadZone = settings.remoteInputDeadZone,
+            timeoutMs = settings.remoteInputTimeoutMs,
+            mapping = RemoteInputChannelMapping(
+                forward = RemoteInputAxisMapping(
+                    channel = settings.remoteInputForwardChannel,
+                    inverted = settings.remoteInputForwardInverted
+                ),
+                strafeRight = RemoteInputAxisMapping(
+                    channel = settings.remoteInputStrafeRightChannel,
+                    inverted = settings.remoteInputStrafeRightInverted
+                ),
+                yawRight = RemoteInputAxisMapping(
+                    channel = settings.remoteInputYawRightChannel,
+                    inverted = settings.remoteInputYawRightInverted
+                )
+            )
+        )
+
+        if (settings.engineeringMockEnabled) {
+            return MockRemoteInputSource(
+                MockRemoteInputConfig(normalization = normalization)
+            )
+        }
+
         return UniRcUdpInputSource(
             UniRcUdpInputConfig(
                 remoteHost = settings.remoteInputHost,
                 remotePort = settings.remoteInputPort,
                 localPort = settings.remoteInputLocalPort,
-                normalization = RemoteInputNormalizationConfig(
-                    deadZone = settings.remoteInputDeadZone,
-                    timeoutMs = settings.remoteInputTimeoutMs,
-                    mapping = RemoteInputChannelMapping(
-                        forward = RemoteInputAxisMapping(
-                            channel = settings.remoteInputForwardChannel,
-                            inverted = settings.remoteInputForwardInverted
-                        ),
-                        strafeRight = RemoteInputAxisMapping(
-                            channel = settings.remoteInputStrafeRightChannel,
-                            inverted = settings.remoteInputStrafeRightInverted
-                        ),
-                        yawRight = RemoteInputAxisMapping(
-                            channel = settings.remoteInputYawRightChannel,
-                            inverted = settings.remoteInputYawRightInverted
-                        )
-                    )
-                )
+                normalization = normalization
             )
         )
+    }
+
+    private fun isEngineeringMock(): Boolean {
+        return settingsState.settings.engineeringMockEnabled
     }
 
     private fun canSendControlledCommand(commandName: String): Boolean {

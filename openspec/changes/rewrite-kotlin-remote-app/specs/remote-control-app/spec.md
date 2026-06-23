@@ -128,6 +128,18 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 - **WHEN** 编写 proposal、design、tasks 或 spec 内容
 - **THEN** 除 OpenSpec 固定关键字外，实际描述必须使用中文
 
+### Requirement: 工程 Mock 模式不得触发真实链路
+
+工程 Mock 模式 MUST 只用于 UI、状态和交互联调；开启后不得连接真实 ZMQ，不得打开 UniRC UDP 桥，也不得向真实机器狗发送控制命令。
+
+#### Scenario: 开启工程 Mock 模式
+- **WHEN** 用户在设置页开启工程 Mock 模式并点击主屏连接
+- **THEN** App 必须使用本地 Mock 输入源和本地状态更新进入已连接状态，不得创建 ZMQ 连接或发送 UniRC UDP 订阅
+
+#### Scenario: Mock 模式下触发控制按钮
+- **WHEN** 用户在工程 Mock 模式下接管控制权并触发模式、速度、动作、灯光、头部或站姿命令
+- **THEN** App 只能更新本地 UI 状态和最后发送命令摘要，不得发送真实 `COMMAND_REQUEST`
+
 ### Requirement: 第一版功能提交必须通过验证门槛
 
 第一版 App 功能提交前 MUST 通过 OpenSpec 校验、Gradle 构建、核心单元测试和必要的 UI 截图检查；协议或输入层变更 MUST 追加协议封包、CRC 和 UniRC 帧解析测试。
