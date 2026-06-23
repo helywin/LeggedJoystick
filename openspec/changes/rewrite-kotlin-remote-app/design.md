@@ -17,7 +17,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 继续使用当前仓库单 `app` 模块工程壳，并升级到当前稳定构建栈。
 - 用 GenisDog 主屏作为布局参考，实现可操作的遥控主界面。
 - 接入 `legged_driver` ZMQ 协议，完成控制权、心跳、订阅、移动命令和动作命令。
-- 建立统一输入层，支持 UniRC UDP 外部摇杆，并为多 App 共用保留入口；当前不做触屏虚拟摇杆。
+- 建立统一输入层，第一版只支持 UniRC UDP 外部摇杆；当前不做触屏虚拟摇杆，也不实现 Android 广播输入。
 - 保证零速度、安全断连、输入超时、后台暂停等保护。
 
 **Non-Goals:**
@@ -38,8 +38,10 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 
 ### 输入层
 
-- UniRC UDP 通道帧和可选 Android 分发数据都进入 `input` 层。
+- 第一版只有 UniRC UDP 通道帧进入 `input` 层；Android 广播只作为未来单采集者分发方案保留，不进入第一版实现。
 - 输入层负责帧校验、通道解析、归一化、死区、反向、限幅、输入超时和链路自恢复。
+- 内部移动意图按操作者直觉表达：前进、右平移、右转为正；协议发送层必须按 `legged_driver` SDK 语义转换为 `MoveCommandParams`，其中 `left_right` 正数是左平移，`yaw` 正数是左旋转。
+- UI 速度档只发送 `COMMAND_CODE_SET_SPEED_LEVEL`，移动输入层不得按低/中/高速做二次倍率缩放。
 - 同端口 UDP 复用已经本机实测不可依赖：20 个单播测试包全部进入后绑定接收者，另一个接收者收到 0 个。
 - 多 App 共用优先验证不同客户端 UDP 端口订阅；若 UniRC 只支持单订阅者，则使用一个采集者独占 UDP 或串口，再通过绑定服务或受限广播分发。
 
@@ -61,7 +63,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 
 ### 设置层
 
-- 普通设置页保留机器狗地址、ZMQ 端口和视频地址；工程调试页保留速度限幅、摇杆死区、通道映射、UDP 状态、串口探测和调试信息。
+- 普通设置页保留机器狗地址、ZMQ 端口和视频地址；工程调试页保留摇杆死区、通道映射、轴反向、UDP 状态、串口探测和调试信息。
 - 不保留厂商配置项和充电桩相关项。
 
 ## Risks / Trade-offs
@@ -69,5 +71,6 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - GenisDog 素材授权不明确，短期仅用于内部参考，正式发布需要替换。
 - UniRC UDP 是否支持多客户端订阅仍需在真实网络环境验证。
 - 串口和 UDP 是否可同时输出也需在设备上验证。
+- 在验证 UniRC `freq = 0` 不影响串口输出前，退出主控页不得默认关闭通道输出。
 - `legged_driver` proto 与仓库旧 proto 差异较大，必须先完成协议真源同步，否则后续实现会返工。
 - 最新稳定依赖可能带来 AGP/Gradle 迁移成本；已知迁移点包括移除 `org.jetbrains.kotlin.android`、迁移 `kotlinOptions` 和迁移旧 `applicationVariants` API。

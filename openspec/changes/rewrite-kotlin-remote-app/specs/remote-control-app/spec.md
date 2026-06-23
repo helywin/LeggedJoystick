@@ -38,15 +38,23 @@
 
 ### Requirement: 输入层必须处理 UniRC UDP 外部摇杆
 
-App MUST 将 UniRC UDP 通道帧和可选 Android 分发数据统一进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆作为正式移动输入。
+App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆或 Android 广播作为正式移动输入。
 
 #### Scenario: 外部摇杆移动
 - **WHEN** App 收到有效 UniRC `CMD_ID = 0x42` 通道帧
-- **THEN** 输入层必须应用死区、归一化、当前 UI 速度档倍率和限幅，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
+- **THEN** 输入层必须应用死区、归一化、协议符号转换和安全 clamp，然后由移动命令循环发送 `COMMAND_CODE_MOVE`
 
 #### Scenario: 外部摇杆通道数据
 - **WHEN** App 收到 UniRC `CMD_ID = 0x42` 通道帧
 - **THEN** 输入层必须校验帧头、长度、命令号和 CRC16，并解析 CH1 到 CH16
+
+#### Scenario: 移动方向符号
+- **WHEN** 用户左手前推、左手右推或右手右推
+- **THEN** 内部移动意图必须分别表示为前进正值、右平移正值和右转正值；发送 `MoveCommandParams` 时必须保持 `forward_back` 正数前进，并把右平移、右转分别转换为负的 `left_right` 和负的 `yaw`
+
+#### Scenario: 速度档处理
+- **WHEN** 用户切换低速、中速或高速
+- **THEN** App 必须通过 `COMMAND_CODE_SET_SPEED_LEVEL` 更新速度等级，输入层不得再按速度档对 `COMMAND_CODE_MOVE` 做二次倍率缩放
 
 ### Requirement: 多 App 共用摇杆数据不得依赖 UDP 同端口复用
 
@@ -55,6 +63,10 @@ App MUST NOT 设计为多个进程绑定同一个本地 UDP 端口来共享单�
 #### Scenario: 需要多个 App 共用摇杆数据
 - **WHEN** UniRC 数据需要被多个 App 使用
 - **THEN** 应优先验证不同客户端 UDP 端口分别订阅；若不可行，则必须使用单采集者独占 UDP 或串口，再通过绑定服务或受限广播分发
+
+#### Scenario: 第一版不实现广播输入
+- **WHEN** 开发第一版输入层
+- **THEN** 不得实现 Android 广播输入或对外摇杆分发；广播只能作为后续单采集者分发方案重新评估
 
 ### Requirement: 移动控制必须具备零速度保护
 
@@ -67,6 +79,10 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 #### Scenario: 页面进入后台
 - **WHEN** App 进入后台或主控页失去焦点
 - **THEN** App 必须发送零速度并暂停连续移动命令循环
+
+#### Scenario: 退出主控页
+- **WHEN** 用户退出主控页或停止前台服务
+- **THEN** App 必须停止本 App 移动输出和输入消费；在验证 UniRC `freq = 0` 不影响串口输出前，不得默认发送 `freq = 0` 关闭通道输出
 
 ### Requirement: 项目文档和注释必须使用中文
 

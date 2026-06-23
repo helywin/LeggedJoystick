@@ -21,6 +21,8 @@
 - 机器狗控制协议以 `/home/jiang/code/legged_driver/proto/message.proto` 为真源。
 - 当前仓库旧版 `proto/message.proto` 不能作为新 App 协议依据，除非已明确同步到 `legged_driver` 当前版本。
 - 移动命令必须有零速度保护：摇杆释放、输入超时、断连、页面后台、失去控制权时都要停止连续运动输出，并发送零速度或停止速度输出让 `driver` 侧超时保护接管。
+- 内部移动意图按操作者直觉表达：前进、右平移、右转为正；发送 `legged_driver` 时按 SDK 语义转换，`MoveCommandParams.left_right` 正数是左平移，`yaw` 正数是左旋转。
+- UI 低/中/高速只通过 `COMMAND_CODE_SET_SPEED_LEVEL` 生效，输入层不得再按速度档对 `COMMAND_CODE_MOVE` 做二次倍率缩放。
 - 多 App 共用摇杆数据时，不要依赖多个进程绑定同一个 UDP 端口；优先验证不同客户端端口订阅，必要时使用单采集者分发。
 
 ### 验证要求
