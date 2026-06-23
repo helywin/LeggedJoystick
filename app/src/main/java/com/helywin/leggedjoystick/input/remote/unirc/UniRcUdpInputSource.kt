@@ -86,6 +86,7 @@ class UniRcUdpInputSource(
         var lastSubscribeAtMs = 0L
         var timeoutEmitted = false
         var firstFrameLogged = false
+        val frameAssembler = UniRcFrameAssembler()
 
         try {
             DatagramChannel.open().use { currentChannel ->
@@ -112,37 +113,42 @@ class UniRcUdpInputSource(
                         val data = ByteArray(receiveBuffer.remaining())
                         receiveBuffer.get(data)
 
-                        try {
-                            val frame = UniRcProtocol.parseChannelFrame(data)
-                            val mapping = UniRcProtocol.mapMovement(frame.channels, config.normalization)
-                            val snapshot = RemoteInputSnapshot(
-                                descriptor = descriptor,
-                                movementIntent = mapping.movementIntent,
-                                rawChannels = frame.channels,
-                                normalizedAxes = mapping.normalizedAxes,
-                                sequence = frame.sequence,
-                                receivedAtMs = System.currentTimeMillis()
-                            )
+                        frameAssembler.append(data).forEach { rawFrame ->
+                            try {
+                                val frame = UniRcProtocol.parseChannelFrame(rawFrame)
+                                val mapping = UniRcProtocol.mapMovement(frame.channels, config.normalization)
+                                val snapshot = RemoteInputSnapshot(
+                                    descriptor = descriptor,
+                                    movementIntent = mapping.movementIntent,
+                                    rawChannels = frame.channels,
+                                    normalizedAxes = mapping.normalizedAxes,
+                                    sequence = frame.sequence,
+                                    receivedAtMs = System.currentTimeMillis()
+                                )
 
-                            lastFrameAtMs = snapshot.receivedAtMs
-                            timeoutEmitted = false
-                            if (!firstFrameLogged) {
-                                firstFrameLogged = true
-                                Timber.i(
-                                    "[UniRC] 已收到首帧通道数据，序列=%d，通道=%s",
-                                    frame.sequence,
-                                    frame.channels
+                                if (timeoutEmitted) {
+                                    Timber.i("[UniRC] 通道数据已恢复，序列=%d", frame.sequence)
+                                }
+                                lastFrameAtMs = snapshot.receivedAtMs
+                                timeoutEmitted = false
+                                if (!firstFrameLogged) {
+                                    firstFrameLogged = true
+                                    Timber.i(
+                                        "[UniRC] 已收到首帧通道数据，序列=%d，通道=%s",
+                                        frame.sequence,
+                                        frame.channels
+                                    )
+                                }
+                                listener.onSnapshot(snapshot)
+                            } catch (e: IllegalArgumentException) {
+                                Timber.w(
+                                    e,
+                                    "[UniRC] 丢弃无效通道帧，长度=%d，来源=%s，数据=%s",
+                                    rawFrame.size,
+                                    senderAddress,
+                                    rawFrame.toHexPreview()
                                 )
                             }
-                            listener.onSnapshot(snapshot)
-                        } catch (e: IllegalArgumentException) {
-                            Timber.w(
-                                e,
-                                "[UniRC] 丢弃无效通道帧，长度=%d，来源=%s，数据=%s",
-                                data.size,
-                                senderAddress,
-                                data.toHexPreview()
-                            )
                         }
                     } else {
                         handleIdleTick(

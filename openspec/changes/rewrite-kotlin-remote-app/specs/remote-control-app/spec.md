@@ -96,6 +96,10 @@ App MUST NOT 设计为多个进程绑定同一个本地 UDP 端口来共享单�
 - **WHEN** 设备通过 `com.siyi.udpservice` 在 `127.0.0.1:19856` 提供 UniRC UDP 输入
 - **THEN** App 必须把它视为 `/dev/ttyHS3` 串口桥继续验证，不得在收到有效并行验证结果前认定它和直接串口读取互不影响
 
+#### Scenario: 本机 UDP 桥和直接串口读取竞争
+- **WHEN** 新 App 通过本机 UDP 桥读取 UniRC 通道数据
+- **THEN** 其他 App 不得再直接读取 `/dev/ttyHS3` 作为并行摇杆输入；如需多 App 共用，必须改为单采集者分发
+
 #### Scenario: 第一版不实现广播输入
 - **WHEN** 开发第一版输入层
 - **THEN** 不得实现 Android 广播输入或对外摇杆分发；广播只能作为后续单采集者分发方案重新评估

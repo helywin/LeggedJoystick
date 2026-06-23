@@ -43,7 +43,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 内部移动意图按操作者直觉表达：前进、右平移、右转为正；协议发送层必须按 `legged_driver` SDK 语义转换为 `MoveCommandParams`，其中 `left_right` 正数是左平移，`yaw` 正数是左旋转。
 - UI 速度档只发送 `COMMAND_CODE_SET_SPEED_LEVEL`，移动输入层不得按低/中/高速做二次倍率缩放。
 - 同端口 UDP 复用已经本机实测不可依赖：20 个单播测试包全部进入后绑定接收者，另一个接收者收到 0 个。
-- `Standard-10inch_A2` 上存在本机 `com.siyi.udpservice`，监听 `127.0.0.1:19856` 并桥接 `/dev/ttyHS3`；它可以作为当前 App 的默认 UDP 入口继续联调，但不能证明 UDP 与串口是独立物理通道。
+- `Standard-10inch_A2` 上存在本机 `com.siyi.udpservice`，监听 `127.0.0.1:19856` 并桥接 `/dev/ttyHS3`；它可以作为当前 App 的默认 UDP 入口继续联调。实测表明它和直接读取 `/dev/ttyHS3` 会竞争同一条串口字节流，不适合作为两个 App 的独立输入通道。
 - 多 App 共用优先验证不同客户端 UDP 端口订阅；若 UniRC 只支持单订阅者，则使用一个采集者独占 UDP 或串口，再通过绑定服务或受限广播分发。
 
 ### UI 层
@@ -71,7 +71,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 
 - GenisDog 素材授权不明确，短期仅用于内部参考，正式发布需要替换。
 - UniRC UDP 是否支持多客户端订阅仍需在真实网络环境验证。
-- 串口和 UDP 是否可同时输出也需在设备上验证；当前本机 UDP 服务更像串口桥，可能与直接串口读者竞争 `/dev/ttyHS3`。
+- 串口和本机 UDP 桥已验证会竞争同一条 `/dev/ttyHS3` 字节流；如果多个 App 要共用摇杆数据，必须走单采集者分发。
 - 在验证 UniRC `freq = 0` 不影响串口输出前，退出主控页不得默认关闭通道输出。
 - `legged_driver` proto 与仓库旧 proto 差异较大，必须先完成协议真源同步，否则后续实现会返工。
 - 最新稳定依赖可能带来 AGP/Gradle 迁移成本；已知迁移点包括移除 `org.jetbrains.kotlin.android`、迁移 `kotlinOptions` 和迁移旧 `applicationVariants` API。

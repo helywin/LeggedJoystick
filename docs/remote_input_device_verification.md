@@ -11,8 +11,8 @@
 | ADB 设备 | `d` |
 | 设备型号 | `Standard-10inch_A2` |
 | Android 版本 | `13` |
-| App 安装 | `adb install -r app/build/outputs/apk/debug/RIDReceiver_1.0.2_debug_202606231437.apk` 成功 |
-| App 启动 | `com.helywin.leggedjoystick` 可启动，最新验证启动后 PID 为 `8788` |
+| App 安装 | `adb install -r app/build/outputs/apk/debug/RIDReceiver_1.0.2_debug_202606231502.apk` 成功 |
+| App 启动 | `com.helywin.leggedjoystick` 可启动，最新验证启动后 PID 为 `9471` |
 
 ## 串口节点
 
@@ -104,9 +104,45 @@ UdpService: 打开串口：com.siyi.udpservice.SerialPort@...
 serial_port: Opening serial port /dev/ttyHS3 with flags 0x2
 ```
 
-当前已经从本机 UDP 桥收到有效 `CMD_ID = 0x42`、`Data_len = 32` 的通道帧，首帧通道值与 `/dev/ttyHS3` 串口实测值一致。App 已改为非阻塞 UDP 接收循环，会在链路空闲时持续按 1 秒间隔重发 `HZ_50` 订阅。
+当前已经从本机 UDP 桥收到有效 `CMD_ID = 0x42`、`Data_len = 32` 的通道帧，首帧通道值与 `/dev/ttyHS3` 串口实测值一致。App 已改为非阻塞 UDP 接收循环和串口流重组解析，会在链路空闲时持续按 1 秒间隔重发 `HZ_50` 订阅。
 
 结论：本机 `127.0.0.1:19856` 已验证可以作为当前 App 的默认 UDP 输入入口，但它更像是 `/dev/ttyHS3` 串口桥，而不是独立于串口的第二路物理通道。因此“本 App 用 UDP、其他 App 直接读串口”仍可能竞争同一条 `/dev/ttyHS3` 数据流，不能据此判定 UDP 与串口独立。
+
+## UDP 与直接串口读取并发验证
+
+验证方法：
+
+1. 停止新 App 和 `com.siyi.udpservice`。
+2. 只通过 `/dev/ttyHS3` 发送 `HZ_50` 订阅并直接读取串口，建立串口基线。
+3. 启动新 App，让新 App 通过本机 UDP 桥接收 UniRC 通道帧。
+4. 在新 App 保持 UDP 输入的同时，用 shell 模拟另一个 App 直接读取 `/dev/ttyHS3`，不再额外发送串口订阅。
+
+基线结果：
+
+```text
+bytes=1600 valid_frames=37
+first_seq=20058
+last_seq=20094
+```
+
+并发结果：
+
+```text
+bytes=1600 valid_frames=6
+first_seq=39687
+last_seq=39719
+```
+
+并发时新 App 的 UDP 输入出现超时和恢复抖动：
+
+```text
+[Controller] 外部遥控输入状态: TIMEOUT UniRC 输入超时
+[UniRC] 通道数据已恢复，序列=39700
+[Controller] 外部遥控输入状态: TIMEOUT UniRC 输入超时
+[UniRC] 通道数据已恢复，序列=39738
+```
+
+结论：本机 UDP 桥和另一个进程直接读取 `/dev/ttyHS3` 会竞争同一条串口字节流。它们不是稳定独立的两路输入。新 App 使用本机 UDP 桥时，不应再要求其他 App 直接读取 `/dev/ttyHS3`；如果必须多 App 共用摇杆数据，应改为单采集者分发。
 
 ## 当前结论
 
@@ -115,7 +151,7 @@ serial_port: Opening serial port /dev/ttyHS3 with flags 0x2
 | 串口通道帧 | `/dev/ttyHS3` 已验证可用 |
 | 本机 UDP 服务 | `com.siyi.udpservice` 已验证监听 `127.0.0.1:19856`，App 可绑定并请求打开桥 |
 | UDP 通道帧 | 本机桥已收到有效 `CMD_ID = 0x42` 通道帧 |
-| UDP 与串口同时输出 | 未验证；本机 UDP 桥可能与直接串口读者竞争 `/dev/ttyHS3` |
+| UDP 与串口同时输出 | 已验证会竞争；不适合作为两个 App 的独立输入 |
 | 不同 UDP 客户端端口同时订阅 | 未验证 |
 | `freq = 0` 对串口输出影响 | 未验证，App 仍不得默认发送关闭频率帧 |
 

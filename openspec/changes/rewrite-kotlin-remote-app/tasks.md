@@ -26,7 +26,7 @@
 - [x] 3.3 实现 UniRC 通道帧解析：STX、Data_len、CMD_ID、CRC16、CH1 到 CH16。
 - [x] 3.4 实现输入超时、链路自恢复和调试状态显示。
 - [ ] 3.5 验证不同 UDP 客户端端口是否可同时订阅 UniRC 通道数据。
-- [ ] 3.6 验证 UDP 与串口是否可同时接收 UniRC 通道数据。
+- [x] 3.6 验证 UDP 与串口是否可同时接收 UniRC 通道数据；结论是本机 UDP 桥和直接读 `/dev/ttyHS3` 会竞争，不适合作为两个 App 的独立输入。
 - [ ] 3.7 验证 UniRC `freq = 0` 是否会影响串口输出；未验证通过前，退出主控页不得默认发送 `freq = 0`。
 - [x] 3.8 在 `Standard-10inch_A2` 上验证 `/dev/ttyHS3` 可收到有效 UniRC `CMD_ID = 0x42` 通道帧，并记录到 `docs/remote_input_device_verification.md`。
 - [x] 3.9 验证 `Standard-10inch_A2` 本机 `com.siyi.udpservice` 监听 `127.0.0.1:19856`，新 App 可绑定并请求打开串口桥，且可收到有效 `0x42` 通道帧。
