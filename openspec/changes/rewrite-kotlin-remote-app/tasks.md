@@ -28,6 +28,7 @@
 - [ ] 3.5 验证不同 UDP 客户端端口是否可同时订阅 UniRC 通道数据。
 - [ ] 3.6 验证 UDP 与串口是否可同时接收 UniRC 通道数据。
 - [ ] 3.7 验证 UniRC `freq = 0` 是否会影响串口输出；未验证通过前，退出主控页不得默认发送 `freq = 0`。
+- [x] 3.8 在 `Standard-10inch_A2` 上验证 `/dev/ttyHS3` 可收到有效 UniRC `CMD_ID = 0x42` 通道帧，并记录到 `docs/remote_input_device_verification.md`。
 
 ## 4. 主屏 UI
 

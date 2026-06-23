@@ -68,6 +68,10 @@ App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；
 - **WHEN** App 收到 UniRC `CMD_ID = 0x42` 通道帧
 - **THEN** 输入层必须校验帧头、长度、命令号和 CRC16，并解析 CH1 到 CH16
 
+#### Scenario: 输入链路独立验证
+- **WHEN** 验证遥控器 UDP 或串口通道数据
+- **THEN** 只验证 UniRC 输入源、帧解析和运动意图映射，不得把 ZMQ 连接状态作为输入链路是否可用的判断条件
+
 #### Scenario: 移动方向符号
 - **WHEN** 用户左手前推、左手右推或右手右推
 - **THEN** 内部移动意图必须分别表示为前进正值、右平移正值和右转正值；发送 `MoveCommandParams` 时必须保持 `forward_back` 正数前进，并把右平移、右转分别转换为负的 `left_right` 和负的 `yaw`
