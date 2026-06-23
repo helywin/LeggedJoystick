@@ -74,6 +74,7 @@ import com.helywin.leggedjoystick.controller.RobotAction
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.ControlOwnershipState
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
@@ -97,11 +98,13 @@ fun MainControlScreen(
     val batteryLevel = settingsState.batteryLevel
     val speedLevel = settingsState.settings.speedLevel
     val currentSpeedValue = settingsState.currentSpeedValue
+    val controlOwnershipState = settingsState.controlOwnershipState
     val remoteInputState = settingsState.remoteInputState
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
     val mainTitle = settingsState.settings.mainTitle
     val logoPath = settingsState.settings.logoPath
     val isConnected = connectionState == ConnectionState.CONNECTED
+    val hasControl = settingsState.hasControl
 
     var modeOverlayVisible by remember { mutableStateOf(false) }
     var speedSelectorVisible by remember { mutableStateOf(false) }
@@ -134,9 +137,17 @@ fun MainControlScreen(
                     logoPath = logoPath,
                     appMode = appMode,
                     connectionState = connectionState,
+                    controlOwnershipState = controlOwnershipState,
                     batteryLevel = batteryLevel,
                     remoteInputState = remoteInputState,
                     onModeClick = controller::setMode,
+                    onControlOwnershipClick = {
+                        if (hasControl) {
+                            controller.releaseControl()
+                        } else {
+                            controller.takeControl()
+                        }
+                    },
                     onConnectClick = {
                         when (connectionState) {
                             ConnectionState.CONNECTED -> controller.disconnect()
@@ -186,7 +197,7 @@ fun MainControlScreen(
 
                 BottomActionGroup(
                     expanded = actionsExpanded,
-                    isConnected = isConnected,
+                    commandEnabled = isConnected && hasControl,
                     modifier = Modifier.align(Alignment.BottomCenter),
                     onToggle = { actionsExpanded = !actionsExpanded },
                     onActionClick = controller::performAction
@@ -209,7 +220,7 @@ fun MainControlScreen(
             if (modeOverlayVisible) {
                 MotionModeOverlay(
                     currentMode = currentSportMode,
-                    isConnected = isConnected,
+                    isConnected = isConnected && hasControl,
                     isChanging = isSportModeChanging,
                     modifier = Modifier
                         .matchParentSize()
@@ -250,9 +261,11 @@ private fun TopHud(
     logoPath: String,
     appMode: AppMode,
     connectionState: ConnectionState,
+    controlOwnershipState: ControlOwnershipState,
     batteryLevel: Int,
     remoteInputState: RemoteInputRuntimeState,
     onModeClick: (AppMode) -> Unit,
+    onControlOwnershipClick: () -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
     onVideoClick: () -> Unit,
@@ -298,10 +311,15 @@ private fun TopHud(
             if (connectionState == ConnectionState.CONNECTED) {
                 ControlModeToggle(
                     currentMode = appMode,
-                    isConnected = true,
+                    isConnected = controlOwnershipState == ControlOwnershipState.OWNED,
                     onModeClick = onModeClick
                 )
             }
+            ControlOwnershipButton(
+                state = controlOwnershipState,
+                isConnected = connectionState == ConnectionState.CONNECTED,
+                onClick = onControlOwnershipClick
+            )
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -546,7 +564,7 @@ private fun VerticalSpeedSelector(
 @Composable
 private fun BottomActionGroup(
     expanded: Boolean,
-    isConnected: Boolean,
+    commandEnabled: Boolean,
     modifier: Modifier = Modifier,
     onToggle: () -> Unit,
     onActionClick: (RobotAction) -> Unit
@@ -630,7 +648,7 @@ private fun BottomActionGroup(
                 RobotAction.entries.forEach { action ->
                     ActionButton(
                         action = action,
-                        enabled = isConnected,
+                        enabled = commandEnabled,
                         onClick = { onActionClick(action) }
                     )
                 }
@@ -958,6 +976,74 @@ private fun ControlModeToggle(
 }
 
 @Composable
+private fun ControlOwnershipButton(
+    state: ControlOwnershipState,
+    isConnected: Boolean,
+    onClick: () -> Unit
+) {
+    val isPending = state == ControlOwnershipState.TAKING || state == ControlOwnershipState.RELEASING
+    val enabled = isConnected && !isPending
+    val icon = when (state) {
+        ControlOwnershipState.OWNED -> Icons.Filled.Check
+        ControlOwnershipState.TAKING,
+        ControlOwnershipState.RELEASING -> Icons.Filled.Sync
+        ControlOwnershipState.DENIED,
+        ControlOwnershipState.LOST -> Icons.Filled.Refresh
+        ControlOwnershipState.OCCUPIED -> Icons.Filled.LinkOff
+        ControlOwnershipState.UNKNOWN,
+        ControlOwnershipState.AVAILABLE -> Icons.Filled.Link
+    }
+    val text = when (state) {
+        ControlOwnershipState.OWNED -> "释放"
+        ControlOwnershipState.TAKING -> "接管中"
+        ControlOwnershipState.RELEASING -> "释放中"
+        ControlOwnershipState.OCCUPIED -> "占用"
+        ControlOwnershipState.DENIED -> "重试"
+        ControlOwnershipState.LOST -> "重接"
+        ControlOwnershipState.UNKNOWN,
+        ControlOwnershipState.AVAILABLE -> "接管"
+    }
+
+    Surface(
+        modifier = Modifier
+            .width(74.dp)
+            .height(46.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.48f),
+        color = if (state == ControlOwnershipState.OWNED) {
+            Color(0x7A27C7C4)
+        } else {
+            PanelBackground
+        },
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = state.displayName,
+                tint = state.color(),
+                modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = text,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun ConnectionButton(
     connectionState: ConnectionState,
     onClick: () -> Unit
@@ -1143,6 +1229,19 @@ private fun ConnectionState.color(): Color {
     }
 }
 
+private fun ControlOwnershipState.color(): Color {
+    return when (this) {
+        ControlOwnershipState.OWNED,
+        ControlOwnershipState.AVAILABLE -> Color(0xFF1AAE9F)
+        ControlOwnershipState.TAKING,
+        ControlOwnershipState.RELEASING -> Color(0xFFE2A72E)
+        ControlOwnershipState.DENIED,
+        ControlOwnershipState.LOST -> Color(0xFFE45D3D)
+        ControlOwnershipState.OCCUPIED -> Color(0xFFE2A72E)
+        ControlOwnershipState.UNKNOWN -> Color.White.copy(alpha = 0.58f)
+    }
+}
+
 private fun RemoteInputStatus.statusColor(): Color {
     return when (this) {
         RemoteInputStatus.RUNNING -> Color(0xFF5ED17A)
@@ -1174,6 +1273,8 @@ fun MainControlScreenPreview() {
             override fun connect() {}
             override fun disconnect() {}
             override fun cancelConnection() {}
+            override fun takeControl() {}
+            override fun releaseControl() {}
             override fun setMode(mode: AppMode) {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}

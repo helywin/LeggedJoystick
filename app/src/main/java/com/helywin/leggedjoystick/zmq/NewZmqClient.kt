@@ -206,6 +206,28 @@ class NewZmqClient(
         }
     }
 
+    fun takeControl(): Boolean {
+        return enqueueMessage(
+            MessageUtils.createTakeControlCommand(
+                deviceType = deviceType,
+                deviceId = deviceId
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求接管控制权")
+        }
+    }
+
+    fun releaseControl(): Boolean {
+        return enqueueMessage(
+            MessageUtils.createReleaseControlCommand(
+                deviceType = deviceType,
+                deviceId = deviceId
+            )
+        ).also {
+            if (it) Timber.i("[ZMQ] 请求释放控制权")
+        }
+    }
+
     fun sendSimpleCommand(commandCode: CommandCode): Boolean {
         return enqueueMessage(
             MessageUtils.createSimpleCommand(

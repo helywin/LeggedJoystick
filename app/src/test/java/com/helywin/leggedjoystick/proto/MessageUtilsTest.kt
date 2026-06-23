@@ -89,8 +89,39 @@ class MessageUtilsTest {
         assertEquals(-0.75f, move?.yaw ?: 0f, FLOAT_DELTA)
     }
 
+    @Test
+    fun takeControlCommand_usesControlCommandTimeout() {
+        val message = MessageUtils.createTakeControlCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID
+        )
+
+        val request = message.command_request
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(MessageType.MESSAGE_TYPE_COMMAND_REQUEST, message.message_type)
+        assertEquals(CommandCode.COMMAND_CODE_TAKE_CONTROL, request?.command_code)
+        assertEquals(CONTROL_TIMEOUT_MS, request?.timeout_ms)
+    }
+
+    @Test
+    fun releaseControlCommand_usesControlCommandTimeout() {
+        val message = MessageUtils.createReleaseControlCommand(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID
+        )
+
+        val request = message.command_request
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(MessageType.MESSAGE_TYPE_COMMAND_REQUEST, message.message_type)
+        assertEquals(CommandCode.COMMAND_CODE_RELEASE_CONTROL, request?.command_code)
+        assertEquals(CONTROL_TIMEOUT_MS, request?.timeout_ms)
+    }
+
     private companion object {
         const val DEVICE_ID = "remote_test"
         const val FLOAT_DELTA = 0.0001f
+        const val CONTROL_TIMEOUT_MS = 5000
     }
 }

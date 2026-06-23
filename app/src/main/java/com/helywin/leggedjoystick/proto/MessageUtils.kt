@@ -251,6 +251,30 @@ object MessageUtils {
         )
     }
 
+    fun createTakeControlCommand(
+        deviceType: DeviceType,
+        deviceId: String
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = CommandCode.COMMAND_CODE_TAKE_CONTROL,
+            timeoutMs = CONTROL_COMMAND_TIMEOUT_MS
+        )
+    }
+
+    fun createReleaseControlCommand(
+        deviceType: DeviceType,
+        deviceId: String
+    ): LeggedDriverMessage {
+        return createCommandRequestMessage(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            commandCode = CommandCode.COMMAND_CODE_RELEASE_CONTROL,
+            timeoutMs = CONTROL_COMMAND_TIMEOUT_MS
+        )
+    }
+
     fun createMoveCommand(
         deviceType: DeviceType,
         deviceId: String,
@@ -396,6 +420,7 @@ object MessageUtils {
     }
 
     private const val DEFAULT_COMMAND_TIMEOUT_MS = 1000
+    private const val CONTROL_COMMAND_TIMEOUT_MS = 5000
     private const val MOVE_COMMAND_TIMEOUT_MS = 200
 }
 

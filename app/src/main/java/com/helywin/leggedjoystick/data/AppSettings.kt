@@ -53,3 +53,17 @@ enum class ConnectionState(val displayName: String) {
     CONNECTION_FAILED("连接失败"),
     CONNECTION_TIMEOUT("连接超时")
 }
+
+/**
+ * 机器狗控制权状态。
+ */
+enum class ControlOwnershipState(val displayName: String) {
+    UNKNOWN("未知"),
+    AVAILABLE("可接管"),
+    TAKING("接管中"),
+    OWNED("已接管"),
+    RELEASING("释放中"),
+    OCCUPIED("被占用"),
+    DENIED("接管失败"),
+    LOST("已丢失")
+}

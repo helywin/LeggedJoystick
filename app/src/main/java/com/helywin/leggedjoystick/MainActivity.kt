@@ -199,6 +199,8 @@ fun LeggedJoystickAppPreview() {
             override fun connect() {}
             override fun disconnect() {}
             override fun cancelConnection() {}
+            override fun takeControl() {}
+            override fun releaseControl() {}
             override fun setMode(mode: AppMode) {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}

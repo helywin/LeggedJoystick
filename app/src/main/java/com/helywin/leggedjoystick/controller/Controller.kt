@@ -13,6 +13,7 @@ import android.content.Context
 import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.data.ControlOwnershipState
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.remote.MovementIntent
@@ -28,6 +29,9 @@ import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.SiyiUdpBridgeController
 import com.helywin.leggedjoystick.zmq.NewZmqClient
 import legged_driver.AppMode
+import legged_driver.CommandCode
+import legged_driver.CommandResultStage
+import legged_driver.CtrlSource
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
 import legged_driver.RobotStateMessage
@@ -62,6 +66,13 @@ class ControllerState {
     var currentSpeedValue by mutableStateOf(0.0)
         private set
 
+    // 当前控制权状态，只有已接管时才允许发送运动和动作命令。
+    var controlOwnershipState by mutableStateOf(ControlOwnershipState.UNKNOWN)
+        private set
+
+    var controlOwnershipMessage by mutableStateOf("")
+        private set
+
     // 应用设置
     var settings by mutableStateOf(AppSettings())
         private set
@@ -80,6 +91,9 @@ class ControllerState {
     // 衍生状态
     val isConnected: Boolean
         get() = connectionState == ConnectionState.CONNECTED
+
+    val hasControl: Boolean
+        get() = controlOwnershipState == ControlOwnershipState.OWNED
 
     // 更新方法
     fun updateConnectionState(newState: ConnectionState) {
@@ -108,6 +122,30 @@ class ControllerState {
 
     fun updateCurrentSpeedValue(value: Double) {
         currentSpeedValue = value.coerceAtLeast(0.0)
+    }
+
+    fun updateControlOwnership(newState: ControlOwnershipState, message: String = "") {
+        controlOwnershipState = newState
+        controlOwnershipMessage = message
+    }
+
+    fun updateControlOwnershipFromSource(source: CtrlSource) {
+        val nextState = when (source) {
+            CtrlSource.CTRL_SOURCE_APP -> ControlOwnershipState.OWNED
+            CtrlSource.CTRL_SOURCE_SDK,
+            CtrlSource.CTRL_SOURCE_OTHER -> ControlOwnershipState.OCCUPIED
+            CtrlSource.CTRL_SOURCE_UNKNOWN -> ControlOwnershipState.AVAILABLE
+        }
+
+        if (controlOwnershipState == ControlOwnershipState.TAKING && nextState != ControlOwnershipState.OWNED) {
+            return
+        }
+        if (controlOwnershipState == ControlOwnershipState.RELEASING && nextState != ControlOwnershipState.AVAILABLE) {
+            return
+        }
+
+        controlOwnershipState = nextState
+        controlOwnershipMessage = ""
     }
 
     fun updateSettings(newSettings: AppSettings) {
@@ -177,6 +215,8 @@ interface Controller {
     fun connect()
     fun disconnect()
     fun cancelConnection()
+    fun takeControl()
+    fun releaseControl()
     fun setMode(mode: AppMode)
     fun setControlMode(controlMode: SportMode)
     fun setSpeedLevel(level: SpeedLevel)
@@ -249,12 +289,146 @@ class RobotControllerImpl(private val context: Context) : Controller {
                     settingsState.updateRobotCtrlMode(robotState.sport_mode)
                     settingsState.updateBatteryLevel(robotState.toBatteryPercent())
                     settingsState.updateCurrentSpeedValue(robotState.toLinearSpeedValue())
-                    Timber.d("[Controller] 收到机器人状态，运动模式: ${robotState.sport_mode}")
+                    settingsState.updateControlOwnershipFromSource(robotState.control_source)
+                    Timber.d(
+                        "[Controller] 收到机器人状态，运动模式: %s，控制来源: %s",
+                        robotState.sport_mode,
+                        robotState.control_source
+                    )
                 }
+            }
+            MessageType.MESSAGE_TYPE_TAKE_CONTROL_ACK -> {
+                message.take_control_ack?.let { ack ->
+                    if (ack.error_code == 0) {
+                        markControlOwned("接管成功")
+                    } else {
+                        settingsState.updateControlOwnership(
+                            ControlOwnershipState.DENIED,
+                            ack.reason.ifEmpty { "接管被拒绝: ${ack.error_code}" }
+                        )
+                    }
+                    Timber.i("[Controller] 收到接管 ACK，错误码: %s，原因: %s", ack.error_code, ack.reason)
+                }
+            }
+            MessageType.MESSAGE_TYPE_RELEASE_CONTROL_ACK -> {
+                message.release_control_ack?.let { ack ->
+                    if (ack.error_code == 0) {
+                        settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已释放控制权")
+                    } else {
+                        settingsState.updateControlOwnership(
+                            ControlOwnershipState.OWNED,
+                            ack.reason.ifEmpty { "释放失败: ${ack.error_code}" }
+                        )
+                    }
+                    Timber.i("[Controller] 收到释放 ACK，错误码: %s，原因: %s", ack.error_code, ack.reason)
+                }
+            }
+            MessageType.MESSAGE_TYPE_COMMAND_RESULT -> {
+                message.command_result?.let { result ->
+                    handleCommandResult(
+                        commandCode = result.command_code,
+                        stage = result.stage,
+                        errorCode = result.error_code,
+                        errorMessage = result.error_message
+                    )
+                }
+            }
+            MessageType.MESSAGE_TYPE_CONTROL_LOST -> {
+                stopVelocityLoop()
+                settingsState.updateControlOwnership(ControlOwnershipState.LOST, "控制权已丢失")
+                Timber.w("[Controller] 收到控制权丢失通知")
+            }
+            MessageType.MESSAGE_TYPE_CONTROL_AVAILABLE -> {
+                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "控制权可用")
+                Timber.i("[Controller] 收到控制权可用通知")
             }
             else -> {
 //                Timber.d("[Controller] 收到其他消息类型: ${message.message_type}")
             }
+        }
+    }
+
+    private fun handleCommandResult(
+        commandCode: CommandCode,
+        stage: CommandResultStage,
+        errorCode: Int,
+        errorMessage: String
+    ) {
+        when (commandCode) {
+            CommandCode.COMMAND_CODE_TAKE_CONTROL -> handleTakeControlResult(stage, errorCode, errorMessage)
+            CommandCode.COMMAND_CODE_RELEASE_CONTROL -> handleReleaseControlResult(stage, errorCode, errorMessage)
+            else -> Unit
+        }
+    }
+
+    private fun handleTakeControlResult(
+        stage: CommandResultStage,
+        errorCode: Int,
+        errorMessage: String
+    ) {
+        when (stage) {
+            CommandResultStage.COMMAND_RESULT_STAGE_ACCEPTED -> {
+                if (!settingsState.hasControl) {
+                    settingsState.updateControlOwnership(ControlOwnershipState.TAKING, "接管请求已接受")
+                }
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_COMPLETED -> {
+                markControlOwned("已接管控制权")
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_REJECTED -> {
+                if (!settingsState.hasControl) {
+                    settingsState.updateControlOwnership(
+                        ControlOwnershipState.DENIED,
+                        errorMessage.ifEmpty { "接管被拒绝: $errorCode" }
+                    )
+                }
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_UNSPECIFIED -> Unit
+        }
+    }
+
+    private fun handleReleaseControlResult(
+        stage: CommandResultStage,
+        errorCode: Int,
+        errorMessage: String
+    ) {
+        when (stage) {
+            CommandResultStage.COMMAND_RESULT_STAGE_ACCEPTED -> {
+                if (settingsState.controlOwnershipState != ControlOwnershipState.AVAILABLE) {
+                    settingsState.updateControlOwnership(ControlOwnershipState.RELEASING, "释放请求已接受")
+                }
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_COMPLETED -> {
+                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已释放控制权")
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_REJECTED -> {
+                if (settingsState.controlOwnershipState != ControlOwnershipState.AVAILABLE) {
+                    settingsState.updateControlOwnership(
+                        ControlOwnershipState.OWNED,
+                        errorMessage.ifEmpty { "释放被拒绝: $errorCode" }
+                    )
+                }
+            }
+            CommandResultStage.COMMAND_RESULT_STAGE_UNSPECIFIED -> Unit
+        }
+    }
+
+    private fun markControlOwned(message: String) {
+        val wasOwned = settingsState.hasControl
+        settingsState.updateControlOwnership(ControlOwnershipState.OWNED, message)
+        if (velocitySendJob?.isActive != true) {
+            startVelocityLoop()
+        }
+        if (!wasOwned) {
+            sendInitialCommandsAfterTake()
+        }
+    }
+
+    private fun sendInitialCommandsAfterTake() {
+        zmqClient.setMode(AppMode.APP_MODE_MANUAL)
+        zmqClient.setSpeedLevel(settingsState.settings.speedLevel.protocolSpeedLevel)
+        if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
+            zmqClient.setControlMode(SportMode.SPORT_MODE_GENERAL)
         }
     }
 
@@ -268,9 +442,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 return@launch
             }
             if (state == ConnectionState.CONNECTED) {
+                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已连接，等待接管")
                 startVelocityLoop()
             } else {
                 stopVelocityLoop()
+                settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
             }
             settingsState.updateConnectionState(state)
             Timber.i("[Controller] 连接状态更新: $state")
@@ -294,6 +470,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         cancelConnection() // 取消之前的连接任务
 
         settingsState.updateConnectionState(ConnectionState.CONNECTING)
+        settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
 
         connectJob = scope.launch {
             try {
@@ -328,6 +505,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         stopVelocityLoop()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+        settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
         Timber.i("[Controller] 已断开连接")
     }
 
@@ -340,6 +518,57 @@ class RobotControllerImpl(private val context: Context) : Controller {
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             zmqClient.disconnect()
             settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
+            settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
+        }
+    }
+
+    override fun takeControl() {
+        if (!settingsState.isConnected) {
+            Timber.w("[Controller] 未连接，无法接管控制权")
+            return
+        }
+
+        when (settingsState.controlOwnershipState) {
+            ControlOwnershipState.OWNED -> {
+                Timber.i("[Controller] 已拥有控制权，忽略重复接管")
+                return
+            }
+            ControlOwnershipState.TAKING,
+            ControlOwnershipState.RELEASING -> {
+                Timber.w("[Controller] 控制权请求处理中，忽略重复操作")
+                return
+            }
+            else -> Unit
+        }
+
+        settingsState.updateControlOwnership(ControlOwnershipState.TAKING, "正在接管")
+        scope.launch {
+            val success = zmqClient.takeControl()
+            if (!success) {
+                settingsState.updateControlOwnership(ControlOwnershipState.DENIED, "接管请求发送失败")
+            }
+        }
+    }
+
+    override fun releaseControl() {
+        if (!settingsState.isConnected) {
+            Timber.w("[Controller] 未连接，无法释放控制权")
+            return
+        }
+
+        if (!settingsState.hasControl) {
+            Timber.w("[Controller] 当前没有控制权，忽略释放请求")
+            return
+        }
+
+        stopVelocityLoop()
+        settingsState.updateControlOwnership(ControlOwnershipState.RELEASING, "正在释放")
+        scope.launch {
+            val success = zmqClient.releaseControl()
+            if (!success) {
+                settingsState.updateControlOwnership(ControlOwnershipState.OWNED, "释放请求发送失败")
+                startVelocityLoop()
+            }
         }
     }
 
@@ -349,6 +578,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun setMode(mode: AppMode) {
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法设置模式")
+            return
+        }
+
+        if (!settingsState.hasControl) {
+            Timber.w("[Controller] 未接管控制权，无法设置模式")
             return
         }
 
@@ -385,6 +619,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
             return
         }
 
+        if (!settingsState.hasControl) {
+            Timber.w("[Controller] 未接管控制权，无法设置运动模式")
+            return
+        }
+
         if (settingsState.isRobotCtrlModeChanging) {
             Timber.w("[Controller] 正在切换运动模式中，请等待")
             return
@@ -414,8 +653,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
      */
     override fun setSpeedLevel(level: SpeedLevel) {
         settingsState.setSpeedLevel(level)
-        if (settingsState.isConnected) {
+        if (settingsState.isConnected && settingsState.hasControl) {
             zmqClient.setSpeedLevel(level.protocolSpeedLevel)
+        } else if (settingsState.isConnected) {
+            Timber.w("[Controller] 未接管控制权，仅保存速度档位: %s", level.displayName)
         }
         // 自动保存更新后的设置
         saveSettings(settingsState.settings)
@@ -428,6 +669,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun performAction(action: RobotAction) {
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法发送动作命令: %s", action.displayName)
+            return
+        }
+
+        if (!settingsState.hasControl) {
+            Timber.w("[Controller] 未接管控制权，无法发送动作命令: %s", action.displayName)
             return
         }
 
@@ -512,8 +758,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
         velocitySendJob = scope.launch {
             while (isActive && settingsState.isConnected) {
                 try {
-                    // 只有在手动模式下才发送移动指令
-                    if (settingsState.robotMode == AppMode.APP_MODE_MANUAL) {
+                    // 只有已接管且处于手动模式时才发送移动指令。
+                    if (settingsState.hasControl && settingsState.robotMode == AppMode.APP_MODE_MANUAL) {
                         val intent = currentMovementIntent.clamped()
 
                         // 只有当外部遥控器有非零输入时才发送移动指令
@@ -534,6 +780,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
                             lastCommandSent = false
                         }
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
+                    } else if (lastCommandSent) {
+                        zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                        Timber.v("[Controller] 控制权或手动模式不满足，发送停止移动指令")
+                        lastCommandSent = false
                     }
 
                     delay(40) // 25Hz 发送频率
