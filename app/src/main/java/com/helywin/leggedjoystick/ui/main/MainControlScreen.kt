@@ -117,6 +117,8 @@ fun MainControlScreen(
     val highLowStance = settingsState.highLowStance
     val controlOwnershipState = settingsState.controlOwnershipState
     val remoteInputState = settingsState.remoteInputState
+    val lastCommandName = settingsState.lastCommandName
+    val lastCommandDetail = settingsState.lastCommandDetail
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
     val mainTitle = settingsState.settings.mainTitle
     val logoPath = settingsState.settings.logoPath
@@ -195,6 +197,8 @@ fun MainControlScreen(
 
                 RemoteInputPanel(
                     remoteInputState = remoteInputState,
+                    lastCommandName = lastCommandName,
+                    lastCommandDetail = lastCommandDetail,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset(x = 258.dp, y = 86.dp)
@@ -495,15 +499,24 @@ private fun MiniVideoWindow(
 @Composable
 private fun RemoteInputPanel(
     remoteInputState: RemoteInputRuntimeState,
+    lastCommandName: String,
+    lastCommandDetail: String,
     modifier: Modifier = Modifier
 ) {
     val snapshot = remoteInputState.latestSnapshot
     val intent = snapshot?.movementIntent
+    val rawChannels = snapshot?.rawChannels.orEmpty()
+    val axes = snapshot?.normalizedAxes.orEmpty()
+    val lastCommandText = if (lastCommandDetail.isBlank()) {
+        lastCommandName
+    } else {
+        "$lastCommandName $lastCommandDetail"
+    }
 
     Surface(
         modifier = modifier
-            .width(240.dp)
-            .height(100.dp),
+            .width(430.dp)
+            .height(282.dp),
         color = Color(0xCC151B1B),
         shape = RoundedCornerShape(12.dp),
         tonalElevation = 0.dp,
@@ -549,6 +562,33 @@ private fun RemoteInputPanel(
                 },
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = 0.72f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "归一化 F %.2f  S %.2f  Y %.2f".format(
+                    axes["forward"] ?: 0f,
+                    axes["strafeRight"] ?: 0f,
+                    axes["yawRight"] ?: 0f
+                ),
+                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.68f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            for (startIndex in 0 until 16 step 4) {
+                Text(
+                    text = rawChannels.formatChannelLine(startIndex = startIndex),
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.58f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = "发送 $lastCommandText",
+                fontSize = 12.sp,
+                color = AccentCyan.copy(alpha = 0.82f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1639,6 +1679,15 @@ private fun supportedSportModes(): List<SportMode> {
         SportMode.SPORT_MODE_IN_PLACE,
         SportMode.SPORT_MODE_STAIR
     )
+}
+
+private fun List<Int>.formatChannelLine(startIndex: Int): String {
+    if (size <= startIndex) return "CH${startIndex + 1}-CH${startIndex + 4} 等待数据"
+
+    return drop(startIndex)
+        .take(4)
+        .mapIndexed { index, value -> "${startIndex + index + 1}:$value" }
+        .joinToString(separator = "  ", prefix = "CH ")
 }
 
 private fun SportMode.iconResId(): Int {

@@ -18,6 +18,8 @@ import com.helywin.leggedjoystick.data.HighLowStance
 import com.helywin.leggedjoystick.data.SettingsManager
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.input.remote.MovementIntent
+import com.helywin.leggedjoystick.input.remote.RemoteInputAxisMapping
+import com.helywin.leggedjoystick.input.remote.RemoteInputChannelMapping
 import com.helywin.leggedjoystick.input.remote.RemoteInputListener
 import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
 import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
@@ -97,6 +99,15 @@ class ControllerState {
 
     // 外部遥控输入状态
     var remoteInputState by mutableStateOf(RemoteInputRuntimeState())
+        private set
+
+    var lastCommandName by mutableStateOf("无")
+        private set
+
+    var lastCommandDetail by mutableStateOf("")
+        private set
+
+    var lastCommandAtMs by mutableStateOf(0L)
         private set
 
     // 模式切换状态
@@ -249,6 +260,12 @@ class ControllerState {
             lastError = "",
             latestSnapshot = snapshot
         )
+    }
+
+    fun updateLastCommand(name: String, detail: String = "") {
+        lastCommandName = name
+        lastCommandDetail = detail
+        lastCommandAtMs = System.currentTimeMillis()
     }
 }
 
@@ -605,6 +622,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
             val success = zmqClient.takeControl()
             if (!success) {
                 settingsState.updateControlOwnership(ControlOwnershipState.DENIED, "接管请求发送失败")
+            } else {
+                settingsState.updateLastCommand("控制权", "接管")
             }
         }
     }
@@ -628,6 +647,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
             if (!success) {
                 settingsState.updateControlOwnership(ControlOwnershipState.OWNED, "释放请求发送失败")
                 startVelocityLoop()
+            } else {
+                settingsState.updateLastCommand("控制权", "释放")
             }
         }
     }
@@ -657,6 +678,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             try {
                 val success = zmqClient.setMode(mode)
                 if (success) {
+                    settingsState.updateLastCommand("AppMode", mode.name)
                     Timber.i("[Controller] 模式设置请求已发送: $mode")
                     // 实际模式更新由消息回调处理
                 } else {
@@ -695,6 +717,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             try {
                 val success = zmqClient.setControlMode(controlMode)
                 if (success) {
+                    settingsState.updateLastCommand("运动模式", controlMode.name)
                     Timber.i("[Controller] 运动模式设置请求已发送: $controlMode")
                     // 实际运动模式更新由消息回调处理
                 } else {
@@ -714,7 +737,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
     override fun setSpeedLevel(level: SpeedLevel) {
         settingsState.setSpeedLevel(level)
         if (settingsState.isConnected && settingsState.hasControl) {
-            zmqClient.setSpeedLevel(level.protocolSpeedLevel)
+            if (zmqClient.setSpeedLevel(level.protocolSpeedLevel)) {
+                settingsState.updateLastCommand("速度档位", level.displayName)
+            }
         } else if (settingsState.isConnected) {
             Timber.w("[Controller] 未接管控制权，仅保存速度档位: %s", level.displayName)
         }
@@ -733,6 +758,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             try {
                 val success = zmqClient.sendSimpleCommand(action.commandCode)
                 if (success) {
+                    settingsState.updateLastCommand("动作", action.displayName)
                     Timber.i("[Controller] 动作命令已发送: %s", action.displayName)
                 } else {
                     Timber.w("[Controller] 动作命令入队失败: %s", action.displayName)
@@ -750,6 +776,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             val success = zmqClient.setFrontLight(on)
             if (success) {
                 settingsState.updateFrontLightState(on)
+                settingsState.updateLastCommand("前补光灯", if (on) "开" else "关")
                 Timber.i("[Controller] 前补光灯请求已发送: %s", on)
             } else {
                 Timber.w("[Controller] 前补光灯请求入队失败: %s", on)
@@ -764,6 +791,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             val success = zmqClient.setBackLight(on)
             if (success) {
                 settingsState.updateBackLightState(on)
+                settingsState.updateLastCommand("后补光灯", if (on) "开" else "关")
                 Timber.i("[Controller] 后补光灯请求已发送: %s", on)
             } else {
                 Timber.w("[Controller] 后补光灯请求入队失败: %s", on)
@@ -778,6 +806,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             val success = zmqClient.setAutoModeLight(on)
             if (success) {
                 settingsState.updateAutoModeLightState(on)
+                settingsState.updateLastCommand("自动补光", if (on) "开" else "关")
                 Timber.i("[Controller] 自动补光请求已发送: %s", on)
             } else {
                 Timber.w("[Controller] 自动补光请求入队失败: %s", on)
@@ -804,8 +833,13 @@ class RobotControllerImpl(private val context: Context) : Controller {
             headControlStopJob?.cancel()
 
             if (isStopCommand) {
+                settingsState.updateLastCommand("头部控制", "停止")
                 Timber.i("[Controller] 头部控制停止请求已发送")
             } else {
+                settingsState.updateLastCommand(
+                    "头部控制",
+                    "左右 %.2f，俯仰 %.2f".format(clampedLeftRight, clampedUpDown)
+                )
                 Timber.i("[Controller] 头部控制短脉冲已发送: leftRight=%s, upDown=%s", clampedLeftRight, clampedUpDown)
                 headControlStopJob = scope.launch {
                     delay(HEAD_CONTROL_PULSE_MS)
@@ -823,6 +857,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             val success = zmqClient.setHighLowStance(stance.protocolValue)
             if (success) {
                 settingsState.updateHighLowStance(stance)
+                settingsState.updateLastCommand("高低站姿", stance.displayName)
                 Timber.i("[Controller] 高低站姿请求已发送: %s", stance.displayName)
             } else {
                 Timber.w("[Controller] 高低站姿请求入队失败: %s", stance.displayName)
@@ -909,6 +944,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
                                 forward = intent.forward,
                                 yawRight = intent.yawRight
                             )
+                            settingsState.updateLastCommand(
+                                "移动",
+                                "前进 %.2f，平移 %.2f，转向 %.2f".format(
+                                    intent.forward,
+                                    intent.strafeRight,
+                                    intent.yawRight
+                                )
+                            )
                             Timber.v(
                                 "[Controller] 发送移动指令: forward=${intent.forward}, strafeRight=${intent.strafeRight}, yawRight=${intent.yawRight}"
                             )
@@ -916,12 +959,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
                         } else if (lastCommandSent) {
                             // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令
                             zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                            settingsState.updateLastCommand("移动", "停止")
                             Timber.v("[Controller] 发送停止移动指令")
                             lastCommandSent = false
                         }
                         // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
                     } else if (lastCommandSent) {
                         zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                        settingsState.updateLastCommand("移动", "停止")
                         Timber.v("[Controller] 控制权或手动模式不满足，发送停止移动指令")
                         lastCommandSent = false
                     }
@@ -944,6 +989,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private fun stopVelocityLoop() {
         if (lastCommandSent) {
             zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+            settingsState.updateLastCommand("移动", "停止")
         }
         currentMovementIntent = MovementIntent.ZERO
         velocitySendJob?.cancel()
@@ -1007,7 +1053,21 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 localPort = settings.remoteInputLocalPort,
                 normalization = RemoteInputNormalizationConfig(
                     deadZone = settings.remoteInputDeadZone,
-                    timeoutMs = settings.remoteInputTimeoutMs
+                    timeoutMs = settings.remoteInputTimeoutMs,
+                    mapping = RemoteInputChannelMapping(
+                        forward = RemoteInputAxisMapping(
+                            channel = settings.remoteInputForwardChannel,
+                            inverted = settings.remoteInputForwardInverted
+                        ),
+                        strafeRight = RemoteInputAxisMapping(
+                            channel = settings.remoteInputStrafeRightChannel,
+                            inverted = settings.remoteInputStrafeRightInverted
+                        ),
+                        yawRight = RemoteInputAxisMapping(
+                            channel = settings.remoteInputYawRightChannel,
+                            inverted = settings.remoteInputYawRightInverted
+                        )
+                    )
                 )
             )
         )

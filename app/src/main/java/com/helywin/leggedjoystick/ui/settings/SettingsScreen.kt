@@ -56,6 +56,17 @@ fun SettingsScreen(
     var mainTitle by remember { mutableStateOf(currentSettings.mainTitle) }
     var logoPath by remember { mutableStateOf(currentSettings.logoPath) }
     var keepScreenOn by remember { mutableStateOf(currentSettings.keepScreenOn) }
+    var remoteInputHost by remember { mutableStateOf(currentSettings.remoteInputHost) }
+    var remoteInputPort by remember { mutableStateOf(currentSettings.remoteInputPort.toString()) }
+    var remoteInputLocalPort by remember { mutableStateOf(currentSettings.remoteInputLocalPort.toString()) }
+    var remoteInputDeadZone by remember { mutableStateOf(currentSettings.remoteInputDeadZone.toString()) }
+    var remoteInputTimeoutMs by remember { mutableStateOf(currentSettings.remoteInputTimeoutMs.toString()) }
+    var forwardChannel by remember { mutableStateOf(currentSettings.remoteInputForwardChannel.toString()) }
+    var forwardInverted by remember { mutableStateOf(currentSettings.remoteInputForwardInverted) }
+    var strafeRightChannel by remember { mutableStateOf(currentSettings.remoteInputStrafeRightChannel.toString()) }
+    var strafeRightInverted by remember { mutableStateOf(currentSettings.remoteInputStrafeRightInverted) }
+    var yawRightChannel by remember { mutableStateOf(currentSettings.remoteInputYawRightChannel.toString()) }
+    var yawRightInverted by remember { mutableStateOf(currentSettings.remoteInputYawRightInverted) }
     val context = LocalContext.current
 
     // 图片选择器
@@ -181,6 +192,101 @@ fun SettingsScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
+                    )
+                }
+            }
+
+            // 遥控输入设置
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "遥控输入",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    OutlinedTextField(
+                        value = remoteInputHost,
+                        onValueChange = { remoteInputHost = it },
+                        label = { Text("UniRC UDP 地址") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Sensors,
+                                contentDescription = "遥控输入地址"
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        NumberSettingField(
+                            value = remoteInputPort,
+                            onValueChange = { remoteInputPort = it },
+                            label = "远端端口",
+                            modifier = Modifier.weight(1f)
+                        )
+                        NumberSettingField(
+                            value = remoteInputLocalPort,
+                            onValueChange = { remoteInputLocalPort = it },
+                            label = "本地端口",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        DecimalSettingField(
+                            value = remoteInputDeadZone,
+                            onValueChange = { remoteInputDeadZone = it },
+                            label = "死区",
+                            modifier = Modifier.weight(1f)
+                        )
+                        NumberSettingField(
+                            value = remoteInputTimeoutMs,
+                            onValueChange = { remoteInputTimeoutMs = it },
+                            label = "超时 ms",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Text(
+                        text = "通道映射",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    AxisMappingRow(
+                        label = "前进/后退",
+                        channel = forwardChannel,
+                        inverted = forwardInverted,
+                        onChannelChange = { forwardChannel = it },
+                        onInvertedChange = { forwardInverted = it }
+                    )
+                    AxisMappingRow(
+                        label = "左右平移",
+                        channel = strafeRightChannel,
+                        inverted = strafeRightInverted,
+                        onChannelChange = { strafeRightChannel = it },
+                        onInvertedChange = { strafeRightInverted = it }
+                    )
+                    AxisMappingRow(
+                        label = "左右转向",
+                        channel = yawRightChannel,
+                        inverted = yawRightInverted,
+                        onChannelChange = { yawRightChannel = it },
+                        onInvertedChange = { yawRightInverted = it }
                     )
                 }
             }
@@ -353,6 +459,35 @@ fun SettingsScreen(
                         zmqIp = zmqIp.trim(),
                         zmqPort = port,
                         rtspUrl = rtspUrl.trim(),
+                        remoteInputHost = remoteInputHost.trim(),
+                        remoteInputPort = parsePort(remoteInputPort, currentSettings.remoteInputPort),
+                        remoteInputLocalPort = parseLocalPort(
+                            remoteInputLocalPort,
+                            currentSettings.remoteInputLocalPort
+                        ),
+                        remoteInputDeadZone = parseDeadZone(
+                            remoteInputDeadZone,
+                            currentSettings.remoteInputDeadZone
+                        ),
+                        remoteInputTimeoutMs = parseTimeoutMs(
+                            remoteInputTimeoutMs,
+                            currentSettings.remoteInputTimeoutMs
+                        ),
+                        remoteInputForwardChannel = parseChannel(
+                            forwardChannel,
+                            currentSettings.remoteInputForwardChannel
+                        ),
+                        remoteInputForwardInverted = forwardInverted,
+                        remoteInputStrafeRightChannel = parseChannel(
+                            strafeRightChannel,
+                            currentSettings.remoteInputStrafeRightChannel
+                        ),
+                        remoteInputStrafeRightInverted = strafeRightInverted,
+                        remoteInputYawRightChannel = parseChannel(
+                            yawRightChannel,
+                            currentSettings.remoteInputYawRightChannel
+                        ),
+                        remoteInputYawRightInverted = yawRightInverted,
                         mainTitle = mainTitle.trim(),
                         logoPath = logoPath,
                         keepScreenOn = keepScreenOn
@@ -413,13 +548,116 @@ fun SettingsScreen(
                     )
                     Text("• 配置服务器的IP地址和端口，然后保存")
                     Text("• 点击连接按钮连接到机器人，等待连接成功")
-                    Text("• 手动模式下可以遥控机器狗，自动模式下机器人自主导航")
-                    Text("• 选择不同模式控制机器人状态，站立模式才能移动")
-                    Text("• 使用物理或者虚拟摇杆控制机器人移动，左边是线速度控制，右边是角速度控制")
-                    Text("• 狂暴模式开启时前后速度提升到2m/s，关闭时为1m/s")
+                    Text("• 接管控制权后，移动、动作、速度、模式和辅助命令才会发送")
+                    Text("• UniRC UDP 输入只负责移动轴，动作和模式由主屏按钮触发")
+                    Text("• 调试通道映射时先保持低速，确认方向后再提高速度")
                     Text("• 点击视频按钮可全屏查看 RTSP 视频流")
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NumberSettingField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { next ->
+            if (next.all { it.isDigit() } && next.length <= 5) {
+                onValueChange(next)
+            }
+        },
+        label = { Text(label) },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun DecimalSettingField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { next ->
+            if (next.count { it == '.' } <= 1 && next.all { it.isDigit() || it == '.' }) {
+                onValueChange(next)
+            }
+        },
+        label = { Text(label) },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun AxisMappingRow(
+    label: String,
+    channel: String,
+    inverted: Boolean,
+    onChannelChange: (String) -> Unit,
+    onInvertedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
+        NumberSettingField(
+            value = channel,
+            onValueChange = onChannelChange,
+            label = "CH",
+            modifier = Modifier.width(96.dp)
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "反向",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Switch(
+                checked = inverted,
+                onCheckedChange = onInvertedChange
+            )
+        }
+    }
+}
+
+private fun parsePort(value: String, fallback: Int): Int {
+    return value.toIntOrNull()?.coerceIn(1, 65535) ?: fallback
+}
+
+private fun parseLocalPort(value: String, fallback: Int): Int {
+    return value.toIntOrNull()?.coerceIn(0, 65535) ?: fallback
+}
+
+private fun parseDeadZone(value: String, fallback: Float): Float {
+    return value.toFloatOrNull()?.coerceIn(0f, 0.95f) ?: fallback
+}
+
+private fun parseTimeoutMs(value: String, fallback: Long): Long {
+    return value.toLongOrNull()?.coerceIn(100L, 5000L) ?: fallback
+}
+
+private fun parseChannel(value: String, fallback: Int): Int {
+    return value.toIntOrNull()?.coerceIn(1, 16) ?: fallback
 }

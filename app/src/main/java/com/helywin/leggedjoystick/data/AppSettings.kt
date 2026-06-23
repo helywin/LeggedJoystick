@@ -46,6 +46,12 @@ data class AppSettings(
     val remoteInputLocalPort: Int = 0,
     val remoteInputDeadZone: Float = 0.06f,
     val remoteInputTimeoutMs: Long = 300L,
+    val remoteInputForwardChannel: Int = 3,
+    val remoteInputForwardInverted: Boolean = false,
+    val remoteInputStrafeRightChannel: Int = 4,
+    val remoteInputStrafeRightInverted: Boolean = false,
+    val remoteInputYawRightChannel: Int = 1,
+    val remoteInputYawRightInverted: Boolean = false,
     val mainTitle: String = "机器狗遥控器",
     val logoPath: String = "",
     val keepScreenOn: Boolean = true

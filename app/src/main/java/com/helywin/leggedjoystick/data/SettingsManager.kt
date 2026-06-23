@@ -29,6 +29,12 @@ class SettingsManager(context: Context) {
         private const val KEY_REMOTE_INPUT_LOCAL_PORT = "remote_input_local_port"
         private const val KEY_REMOTE_INPUT_DEAD_ZONE = "remote_input_dead_zone"
         private const val KEY_REMOTE_INPUT_TIMEOUT_MS = "remote_input_timeout_ms"
+        private const val KEY_REMOTE_INPUT_FORWARD_CHANNEL = "remote_input_forward_channel"
+        private const val KEY_REMOTE_INPUT_FORWARD_INVERTED = "remote_input_forward_inverted"
+        private const val KEY_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL = "remote_input_strafe_right_channel"
+        private const val KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED = "remote_input_strafe_right_inverted"
+        private const val KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL = "remote_input_yaw_right_channel"
+        private const val KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED = "remote_input_yaw_right_inverted"
         private const val KEY_MAIN_TITLE = "main_title"
         private const val KEY_LOGO_PATH = "logo_path"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
@@ -43,6 +49,9 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_REMOTE_INPUT_LOCAL_PORT = 0
         private const val DEFAULT_REMOTE_INPUT_DEAD_ZONE = 0.06f
         private const val DEFAULT_REMOTE_INPUT_TIMEOUT_MS = 300L
+        private const val DEFAULT_REMOTE_INPUT_FORWARD_CHANNEL = 3
+        private const val DEFAULT_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL = 4
+        private const val DEFAULT_REMOTE_INPUT_YAW_RIGHT_CHANNEL = 1
         private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
         private const val DEFAULT_LOGO_PATH = ""
         private const val DEFAULT_KEEP_SCREEN_ON = true
@@ -66,6 +75,12 @@ class SettingsManager(context: Context) {
                 putInt(KEY_REMOTE_INPUT_LOCAL_PORT, settings.remoteInputLocalPort)
                 putFloat(KEY_REMOTE_INPUT_DEAD_ZONE, settings.remoteInputDeadZone)
                 putLong(KEY_REMOTE_INPUT_TIMEOUT_MS, settings.remoteInputTimeoutMs)
+                putInt(KEY_REMOTE_INPUT_FORWARD_CHANNEL, settings.remoteInputForwardChannel)
+                putBoolean(KEY_REMOTE_INPUT_FORWARD_INVERTED, settings.remoteInputForwardInverted)
+                putInt(KEY_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL, settings.remoteInputStrafeRightChannel)
+                putBoolean(KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED, settings.remoteInputStrafeRightInverted)
+                putInt(KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL, settings.remoteInputYawRightChannel)
+                putBoolean(KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED, settings.remoteInputYawRightInverted)
                 putString(KEY_MAIN_TITLE, settings.mainTitle)
                 putString(KEY_LOGO_PATH, settings.logoPath)
                 putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
@@ -112,6 +127,30 @@ class SettingsManager(context: Context) {
                 remoteInputTimeoutMs = sharedPreferences.getLong(
                     KEY_REMOTE_INPUT_TIMEOUT_MS,
                     DEFAULT_REMOTE_INPUT_TIMEOUT_MS
+                ),
+                remoteInputForwardChannel = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_FORWARD_CHANNEL,
+                    DEFAULT_REMOTE_INPUT_FORWARD_CHANNEL
+                ).coerceIn(1, 16),
+                remoteInputForwardInverted = sharedPreferences.getBoolean(
+                    KEY_REMOTE_INPUT_FORWARD_INVERTED,
+                    false
+                ),
+                remoteInputStrafeRightChannel = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL,
+                    DEFAULT_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL
+                ).coerceIn(1, 16),
+                remoteInputStrafeRightInverted = sharedPreferences.getBoolean(
+                    KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED,
+                    false
+                ),
+                remoteInputYawRightChannel = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL,
+                    DEFAULT_REMOTE_INPUT_YAW_RIGHT_CHANNEL
+                ).coerceIn(1, 16),
+                remoteInputYawRightInverted = sharedPreferences.getBoolean(
+                    KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED,
+                    false
                 ),
                 mainTitle = sharedPreferences.getString(KEY_MAIN_TITLE, DEFAULT_MAIN_TITLE) ?: DEFAULT_MAIN_TITLE,
                 logoPath = sharedPreferences.getString(KEY_LOGO_PATH, DEFAULT_LOGO_PATH) ?: DEFAULT_LOGO_PATH,
