@@ -518,9 +518,9 @@ private fun VerticalSpeedSelector(
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = 0.dp, y = 96.dp)
+                    .offset(x = 0.dp, y = 46.dp)
                     .width(108.dp)
-                    .zIndex(1f),
+                    .zIndex(2f),
                 color = Color(0xEE111817),
                 shape = RoundedCornerShape(8.dp),
                 tonalElevation = 0.dp,
