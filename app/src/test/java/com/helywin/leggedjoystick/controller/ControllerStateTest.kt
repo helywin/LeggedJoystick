@@ -1,7 +1,9 @@
 package com.helywin.leggedjoystick.controller
 
 import com.helywin.leggedjoystick.data.ControlOwnershipState
+import com.helywin.leggedjoystick.data.ConnectionState
 import legged_driver.CtrlSource
+import legged_driver.ConnectionState as DriverConnectionState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -54,5 +56,24 @@ class ControllerStateTest {
         state.updateControlOwnershipFromSource(CtrlSource.CTRL_SOURCE_SDK)
 
         assertEquals(ControlOwnershipState.RELEASING, state.controlOwnershipState)
+    }
+
+    @Test
+    fun nonConnectedStateClearsDriverTelemetry() {
+        val state = ControllerState()
+
+        state.updateDriverConnectionTelemetry(
+            connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
+            robotConnected = true
+        )
+        state.updateBatteryLevel(56)
+        state.updateCurrentSpeedValue(0.42)
+
+        state.updateConnectionState(ConnectionState.CONNECTION_TIMEOUT)
+
+        assertEquals(DriverConnectionState.CONNECTION_STATE_DISCONNECTED, state.driverConnectionTelemetry.connectionState)
+        assertEquals(false, state.driverConnectionTelemetry.robotConnected)
+        assertEquals(0, state.batteryLevel)
+        assertEquals(0.0, state.currentSpeedValue, 0.0)
     }
 }

@@ -149,6 +149,9 @@ class ControllerState {
 
     // 更新方法
     fun updateConnectionState(newState: ConnectionState) {
+        if (newState != ConnectionState.CONNECTED) {
+            clearDriverTelemetry()
+        }
         connectionState = newState
     }
 
@@ -185,6 +188,20 @@ class ControllerState {
             robotConnected = robotConnected,
             updatedAtMs = System.currentTimeMillis()
         )
+    }
+
+    private fun clearDriverTelemetry() {
+        driverConnectionTelemetry = DriverConnectionTelemetry()
+        motionTelemetry = MotionTelemetry()
+        faultTelemetry = FaultTelemetry()
+        odometryTelemetry = OdometryTelemetry()
+        batteryLevel = 0
+        currentSpeedValue = 0.0
+        frontLightOn = false
+        backLightOn = false
+        autoModeLightOn = false
+        headAngle = 0.0
+        highLowStance = HighLowStance.NORMAL
     }
 
     fun updateMotionTelemetry(telemetry: MotionTelemetry) {

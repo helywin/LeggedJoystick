@@ -1,0 +1,4 @@
+interface:
+  display_name: "Legged Driver App Debug"
+  short_description: "联调 Android 遥控 App 与 legged_driver"
+  default_prompt: "使用 $legged-driver-app-debug 排查 Android 遥控 App 连接 legged_driver 的真机联调问题。"

@@ -354,7 +354,6 @@ class NewZmqClient(
                 Thread.sleep(IO_IDLE_SLEEP_MS)
             }
         } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
             Timber.i("[ZMQ] I/O 线程被中断")
         } catch (e: Exception) {
             Timber.e(e, "[ZMQ] I/O 线程异常退出")
@@ -366,6 +365,8 @@ class NewZmqClient(
                 running.set(false)
                 sendQueue.clear()
             }
+            // JeroMQ 在中断标记存在时关闭 context 可能抛 Interrupted function，导致底层 TCP 残留。
+            Thread.interrupted()
             closeSocketAndContext(socket, context)
             Timber.i("[ZMQ] I/O 线程结束并已释放 ZMQ 资源")
         }
@@ -522,7 +523,11 @@ class NewZmqClient(
 
     private fun sendRaw(socket: ZMQ.Socket, data: ByteArray): Boolean {
         return try {
-            socket.send(data, ZMQ.NOBLOCK)
+            socket.send(data, ZMQ.NOBLOCK).also { sent ->
+                if (!sent) {
+                    Timber.w("[ZMQ] socket 发送返回 false，消息未进入发送队列")
+                }
+            }
         } catch (e: ZMQException) {
             Timber.w(e, "[ZMQ] socket 发送异常")
             false
@@ -551,15 +556,20 @@ class NewZmqClient(
     private fun stopCurrentAttemptLocked() {
         connectionAttemptId.incrementAndGet()
         running.set(false)
-        ioFuture?.cancel(true)
-        ioFuture = null
 
-        ioExecutor?.shutdownNow()
+        ioExecutor?.shutdown()
         try {
-            ioExecutor?.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            val terminated = ioExecutor?.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS) ?: true
+            if (!terminated) {
+                Timber.w("[ZMQ] I/O 线程未按时退出，强制中断")
+                ioFuture?.cancel(true)
+                ioExecutor?.shutdownNow()
+                ioExecutor?.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         } finally {
+            ioFuture = null
             ioExecutor = null
         }
 

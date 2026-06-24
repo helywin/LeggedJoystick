@@ -104,6 +104,32 @@ class NewZmqClientTest {
         }
     }
 
+    @Test
+    fun connect_afterDisconnectCanReconnectToSameServer() {
+        val port = findFreePort()
+        val server = TestRouterServer(port).start()
+        val client = NewZmqClient(
+            tcpEndpoint = "tcp://127.0.0.1:$port",
+            heartbeatIntervalMs = 100L
+        )
+
+        try {
+            client.connect()
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+            server.waitForMessage(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+
+            client.disconnect()
+            assertEquals(ConnectionState.DISCONNECTED, client.getConnectionState())
+
+            client.connect()
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+            server.waitForMessage(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+        } finally {
+            client.disconnect()
+            server.close()
+        }
+    }
+
     private class TestRouterServer(
         private val port: Int,
         private val replyToHeartbeat: Boolean = true
