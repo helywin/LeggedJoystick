@@ -5,8 +5,10 @@ import legged_driver.ConnectionState
 import legged_driver.DeviceType
 import legged_driver.MessageType
 import legged_driver.SpeedLevel
+import legged_driver.SubscriptionRequestMessage
 import legged_driver.SubscriptionTopic
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -53,6 +55,24 @@ class MessageUtilsTest {
             ),
             request?.topics
         )
+    }
+
+    @Test
+    fun subscriptionRequestTopics_usePackedEncodingForDriverCrcCompatibility() {
+        val request = SubscriptionRequestMessage(
+            request_id = 1L,
+            subscribe = true,
+            topics = listOf(
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_HEARTBEAT,
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_CONNECTION_STATE,
+                SubscriptionTopic.SUBSCRIPTION_TOPIC_APP_MODE_STATE
+            )
+        )
+
+        val encoded = SubscriptionRequestMessage.ADAPTER.encode(request)
+
+        assertTrue(encoded.containsSubsequence(byteArrayOf(0x1A, 0x03, 0x01, 0x02, 0x03)))
+        assertFalse(encoded.containsSubsequence(byteArrayOf(0x18, 0x01)))
     }
 
     @Test
@@ -184,5 +204,13 @@ class MessageUtilsTest {
         const val DEVICE_ID = "remote_test"
         const val FLOAT_DELTA = 0.0001f
         const val CONTROL_TIMEOUT_MS = 5000
+    }
+}
+
+private fun ByteArray.containsSubsequence(subsequence: ByteArray): Boolean {
+    if (subsequence.isEmpty() || subsequence.size > size) return false
+    return indices.any { start ->
+        start + subsequence.size <= size &&
+            subsequence.indices.all { offset -> this[start + offset] == subsequence[offset] }
     }
 }

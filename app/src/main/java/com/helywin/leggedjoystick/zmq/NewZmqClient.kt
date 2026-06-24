@@ -340,6 +340,7 @@ class NewZmqClient(
             Timber.i("[ZMQ] I/O 线程已创建 socket: %s", endpoint)
 
             sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceId))
+            sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceId))
             lastHeartbeatTime.set(System.currentTimeMillis())
 
             while (running.get() && isCurrentAttempt(attemptId) && !Thread.currentThread().isInterrupted) {
@@ -453,7 +454,6 @@ class NewZmqClient(
         if (connectionState.get() == ConnectionState.CONNECTING) {
             serverConnected.set(true)
             updateConnectionState(ConnectionState.CONNECTED)
-            subscribeDefaultTopics()
             Timber.i("[ZMQ] 已收到服务端有效消息，连接验证成功")
         }
     }

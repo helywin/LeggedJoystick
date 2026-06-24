@@ -41,7 +41,7 @@
 | 协议 | 以 `/home/jiang/code/legged_driver/proto/message.proto` 为唯一真源 |
 | Protobuf | Wire 生成 Kotlin 类型 |
 | 网络 | JeroMQ，Android 端作为 ZMQ DEALER 客户端 |
-| 服务端 | `legged_driver` 的 ROUTER 服务，默认监听 `tcp://0.0.0.0:33445` |
+| 服务端 | `legged_driver` 的 ROUTER 服务，默认监听 `tcp://0.0.0.0:33445`；RK3588 部署记录见 `docs/rk3588_legged_driver_deployment.md` |
 | App 端设备类型 | `DEVICE_TYPE_REMOTE_CONTROLLER` |
 | 控制输入 | UniRC UDP 外部摇杆、屏幕按钮、开关 |
 | 视频 | 不属于 `legged_driver` 协议，单独作为可插拔视频源处理 |

@@ -194,7 +194,8 @@ message HeartbeatMessage {
 message SubscriptionRequestMessage {
     uint64 request_id = 1;
     bool subscribe = 2;
-    repeated SubscriptionTopic topics = 3;
+    // Wire 需要显式 packed 标注，确保 CRC 计算字节流与 C++ proto3 默认 packed 编码一致。
+    repeated SubscriptionTopic topics = 3 [packed = true];
 }
 
 message SetAppModeParams {

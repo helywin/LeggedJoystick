@@ -45,6 +45,30 @@ class NewZmqClientTest {
     }
 
     @Test
+    fun connect_whenServerOnlySendsSnapshotsAfterSubscription_stillConnects() {
+        val port = findFreePort()
+        val server = TestRouterServer(
+            port = port,
+            replyToHeartbeat = false
+        ).start()
+        val client = NewZmqClient(
+            tcpEndpoint = "tcp://127.0.0.1:$port",
+            heartbeatIntervalMs = 100L
+        )
+
+        try {
+            client.connect()
+
+            val subscription = server.waitForMessage(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            assertEquals(MessageUtils.defaultStateTopics(), subscription.subscription_request?.topics)
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+        } finally {
+            client.disconnect()
+            server.close()
+        }
+    }
+
+    @Test
     fun connect_afterTimeoutCanCreateFreshAttemptAndRecover() {
         val failedPort = findFreePort()
         val client = NewZmqClient(
@@ -80,7 +104,10 @@ class NewZmqClientTest {
         }
     }
 
-    private class TestRouterServer(private val port: Int) : AutoCloseable {
+    private class TestRouterServer(
+        private val port: Int,
+        private val replyToHeartbeat: Boolean = true
+    ) : AutoCloseable {
         private val running = AtomicBoolean(false)
         private val ready = CountDownLatch(1)
         private val messages = LinkedBlockingQueue<LeggedDriverMessage>()
@@ -128,20 +155,16 @@ class NewZmqClientTest {
                     if (MessageUtils.verifyMessage(message)) {
                         messages.offer(message)
                     }
-                    if (message.message_type == MessageType.MESSAGE_TYPE_HEARTBEAT) {
-                        socket.sendMore(identity)
-                        socket.send(
-                            MessageUtils.serializeMessage(
-                                MessageUtils.createHeartbeatMessage(
-                                    deviceType = DeviceType.DEVICE_TYPE_SERVER,
-                                    deviceId = "test_server",
-                                    robotConnected = true,
-                                    connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
-                                    appMode = AppMode.APP_MODE_MANUAL
-                                )
-                            ),
-                            ZMQ.NOBLOCK
-                        )
+                    when (message.message_type) {
+                        MessageType.MESSAGE_TYPE_HEARTBEAT -> {
+                            if (replyToHeartbeat) {
+                                sendHeartbeatSnapshot(socket, identity)
+                            }
+                        }
+                        MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST -> {
+                            sendHeartbeatSnapshot(socket, identity)
+                        }
+                        else -> Unit
                     }
                 }
             } finally {
@@ -149,6 +172,22 @@ class NewZmqClientTest {
                 context.close()
                 ready.countDown()
             }
+        }
+
+        private fun sendHeartbeatSnapshot(socket: ZMQ.Socket, identity: ByteArray) {
+            socket.sendMore(identity)
+            socket.send(
+                MessageUtils.serializeMessage(
+                    MessageUtils.createHeartbeatMessage(
+                        deviceType = DeviceType.DEVICE_TYPE_SERVER,
+                        deviceId = "test_server",
+                        robotConnected = true,
+                        connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
+                        appMode = AppMode.APP_MODE_MANUAL
+                    )
+                ),
+                ZMQ.NOBLOCK
+            )
         }
     }
 
