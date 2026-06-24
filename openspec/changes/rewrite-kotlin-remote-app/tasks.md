@@ -57,10 +57,10 @@
 
 ## 7. 提交验证
 
-- [ ] 7.1 每次功能提交前通过 `openspec validate rewrite-kotlin-remote-app --strict`。
-- [ ] 7.2 每次功能提交前通过 Gradle 构建和核心单元测试。
-- [ ] 7.3 每次 UI 功能提交前通过工程 mock 模式主屏截图检查。
-- [ ] 7.4 涉及协议封包、CRC、UniRC 输入解析或轴映射时，额外通过协议封包/CRC 测试和 UniRC 帧解析测试。
+- [x] 7.1 每次功能提交前通过 `openspec validate rewrite-kotlin-remote-app --strict`。
+- [x] 7.2 每次功能提交前通过 Gradle 构建和核心单元测试。
+- [x] 7.3 每次 UI 功能提交前通过工程 mock 模式主屏截图检查。
+- [x] 7.4 涉及协议封包、CRC、UniRC 输入解析或轴映射时，额外通过协议封包/CRC 测试和 UniRC 帧解析测试。
 
 ## 8. 当前实施切片
 
