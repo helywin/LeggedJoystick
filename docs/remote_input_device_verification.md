@@ -108,6 +108,36 @@ serial_port: Opening serial port /dev/ttyHS3 with flags 0x2
 
 结论：本机 `127.0.0.1:19856` 已验证可以作为当前 App 的默认 UDP 输入入口，但它更像是 `/dev/ttyHS3` 串口桥，而不是独立于串口的第二路物理通道。因此“本 App 用 UDP、其他 App 直接读串口”仍可能竞争同一条 `/dev/ttyHS3` 数据流，不能据此判定 UDP 与串口独立。
 
+## 不同 UDP 客户端端口并发验证
+
+验证日期：2026-06-24。
+
+验证方法：
+
+1. 停止本 App，仅保留 `com.siyi.udpservice` 监听 `127.0.0.1:19856`。
+2. 使用临时 `app_process` 测试程序在设备本机创建两个 UDP 客户端端口。
+3. 分别验证 `41001`、`41002` 单独发送 `HZ_50` 订阅时可收到有效 `CMD_ID = 0x42` 通道帧。
+4. 两个端口并发时都以 250ms 间隔重复发送 `HZ_50` 订阅并持续监听。
+5. 再做一次只发一次订阅的切换对照：A 先订阅，500ms 后 B 订阅，两个端口都不再重复发送订阅。
+
+重复订阅结果：
+
+```text
+A-baseline local_port=41001 valid_frames=125 invalid_frames=3 first_seq=43865 last_seq=43992
+B-baseline local_port=41002 valid_frames=126 invalid_frames=3 first_seq=44007 last_seq=44135
+A-parallel local_port=41001 valid_frames=34 invalid_frames=6 first_seq=44163 last_seq=44399
+B-parallel local_port=41002 valid_frames=215 invalid_frames=6 first_seq=44151 last_seq=44411
+```
+
+只发一次订阅的切换结果：
+
+```text
+A-once local_port=41011 valid_frames=25 invalid_frames=0 first_seq=46953 last_seq=46977
+B-once local_port=41012 valid_frames=249 invalid_frames=0 first_seq=46978 last_seq=47226
+```
+
+结论：两个不同 UDP 客户端端口都能单独订阅并收到通道帧；并发重复订阅时两个端口也都能收到部分帧。但 `com.siyi.udpservice` 更接近“最近 UDP 客户端地址”模型，不会把同一份通道流稳定广播给多个端口。A 先订阅、B 后订阅的对照里，A 只收到切换前约 0.5 秒数据，B 收到后续大部分数据。因此不能把“不同客户端端口订阅”作为多个 App 稳定共用摇杆的方案；多 App 共用仍应改为单采集者分发。
+
 ## UDP 与直接串口读取并发验证
 
 验证方法：
@@ -144,6 +174,37 @@ last_seq=39719
 
 结论：本机 UDP 桥和另一个进程直接读取 `/dev/ttyHS3` 会竞争同一条串口字节流。它们不是稳定独立的两路输入。新 App 使用本机 UDP 桥时，不应再要求其他 App 直接读取 `/dev/ttyHS3`；如果必须多 App 共用摇杆数据，应改为单采集者分发。
 
+## `freq = 0` 影响范围验证
+
+验证日期：2026-06-24。
+
+验证方法：
+
+1. 停止本 App 和 `com.siyi.udpservice`，避免 UDP 桥读串口造成干扰。
+2. 直接配置 `/dev/ttyHS3` 为 `115200 raw`。
+3. 向 `/dev/ttyHS3` 写入 `HZ_50` 订阅帧，读取 2 秒建立基线。
+4. 向 `/dev/ttyHS3` 写入 `freq = 0` 帧，立即读取 2 秒。
+5. 再次向 `/dev/ttyHS3` 写入 `freq = 0` 帧，等待 1 秒后读取 3 秒，排除残留缓冲影响。
+6. 最后写入 `HZ_50` 恢复通道输出。
+
+使用的控制帧：
+
+| 含义 | 帧 |
+| --- | --- |
+| `HZ_50` | `55 66 01 01 00 00 00 42 06 31 80` |
+| `freq = 0` | `55 66 01 01 00 00 00 42 00 f7 e0` |
+
+结果：
+
+```text
+baseline: bytes=4117 valid_frames=98 invalid_frames=0 first_seq=49902 last_seq=49999
+after_stop: bytes=4116 valid_frames=98 invalid_frames=0 first_seq=50012 last_seq=50109
+stop_wait_after: bytes=6217 valid_frames=148 invalid_frames=0 first_seq=50928 last_seq=51075
+restore_check: bytes=2058 valid_frames=49 invalid_frames=0 first_seq=51098 last_seq=51146
+```
+
+结论：在当前 `Standard-10inch_A2` 设备状态下，直接向 `/dev/ttyHS3` 发送 UniRC `freq = 0` 后，串口通道帧仍按约 50Hz 持续输出。也就是说，本次验证没有发现 `freq = 0` 会关闭串口侧通道输出。由于新 App 当前通过 `com.siyi.udpservice` 使用 UDP 桥，且多 App 共用仍要求单采集者分发，第一版仍保持“停止本 App 输入消费时不主动发送 `freq = 0`”的保守策略。
+
 ## 当前结论
 
 | 验证项 | 结论 |
@@ -152,8 +213,8 @@ last_seq=39719
 | 本机 UDP 服务 | `com.siyi.udpservice` 已验证监听 `127.0.0.1:19856`，App 可绑定并请求打开桥 |
 | UDP 通道帧 | 本机桥已收到有效 `CMD_ID = 0x42` 通道帧 |
 | UDP 与串口同时输出 | 已验证会竞争；不适合作为两个 App 的独立输入 |
-| 不同 UDP 客户端端口同时订阅 | 未验证 |
-| `freq = 0` 对串口输出影响 | 未验证，App 仍不得默认发送关闭频率帧 |
+| 不同 UDP 客户端端口同时订阅 | 已验证不适合作为稳定多 App 共用方案；服务更接近最近客户端地址模型 |
+| `freq = 0` 对串口输出影响 | 串口直测未发现会停止通道输出；第一版仍不主动发送关闭频率帧 |
 
 ## 右侧系统导航栏验证
 
