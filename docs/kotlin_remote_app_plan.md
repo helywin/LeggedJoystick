@@ -69,6 +69,8 @@ Android 端连接 `legged_driver` 服务时，需要做四件事：
 
 消息外层统一是 `LeggedDriverMessage`，必须包含时间戳、设备类型、设备 ID、消息类型、payload 和 CRC32。CRC32 计算方式要和 C++ `MessageUtils` 一致：计算前将 `crc32` 置 0，序列化后计算，再写回消息。
 
+真实 RK3588 联调确认：`RobotState.control_source = CTRL_SOURCE_SDK` 表示 `legged_driver` 和机器狗 SDK 的底层通道正在工作，不代表当前 Android ZMQ 客户端已经接管，也不能作为“被其他客户端占用”的直接依据。App 自身控制权状态应以 `TAKE_CONTROL`、`RELEASE_CONTROL` ACK 和控制权事件为主；只在 `释放中` 且底层控制来源回到 `CTRL_SOURCE_UNKNOWN` 或 `CTRL_SOURCE_OTHER` 时，把它作为释放完成兜底。
+
 建议连接状态机：
 
 | 状态 | 触发 |

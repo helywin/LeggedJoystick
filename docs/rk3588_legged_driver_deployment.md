@@ -140,14 +140,14 @@ adb -s d shell ping -c 1 -W 2 192.168.234.1
 
 ## 安卓真实联调结果
 
-2026-06-24 已用 `RIDReceiver_1.0.2_debug_202606241043.apk` 完成真实 ZMQ 连接验收。测试前清空旧偏好，工程 Mock 为关闭状态，App 使用默认 `192.168.234.1:33445`。
+2026-06-24 已用 `LeggedJoystick_1.0.2_debug_202606241054.apk` 完成真实 ZMQ 连接、接管和释放验收。测试前清空旧偏好，工程 Mock 为关闭状态，App 使用默认 `192.168.234.1:33445`。
 
 初次真实联调暴露两个问题：
 
 1. App 只发送 heartbeat，等待服务端有效消息后才发送订阅；真实 `legged_driver` 不会直接回复客户端 heartbeat，只会在收到订阅后发送快照，导致 App 侧 2.5 秒连接验证超时。
 2. 修复握手顺序后，服务端收到订阅请求但报 CRC 失败。根因是 Wire 对 `repeated SubscriptionTopic topics` 生成了非 packed 编码，而 C++ proto3 重序列化时按默认 packed 编码计算 CRC。已在本地 `proto/message.proto` 对 `topics` 显式标注 `[packed = true]`，并增加单元测试约束 Wire 输出为 packed 编码。
 
-修复后，App 连接按钮点击后进入已连接状态，服务端日志持续收到客户端 `remote_73e2e0f7` 心跳，`当前连接客户端数量` 为 1。App UI 验收结果：
+修复握手和 CRC 后，App 连接按钮点击后进入已连接状态，服务端日志持续收到客户端 `remote_73e2e0f7` 心跳，`当前连接客户端数量` 为 1。App UI 验收结果：
 
 | 项目 | 结果 |
 | --- | --- |
@@ -155,9 +155,30 @@ adb -s d shell ping -c 1 -W 2 192.168.234.1
 | 调试面板 | `驱动 已连接  机器 在线  故障 0` |
 | 订阅数据 | 收到服务器心跳、机器人状态、MotionData 和 Odometry |
 | 电量显示 | 收到并显示电量 `32` |
-| 控制权 | 未点击接管，按钮显示占用状态，不发送运动或动作命令 |
+| 控制权 | 连接后显示 `可接管` 和 `接管`，不自动发送运动或动作命令 |
 
-本轮只验证连接、心跳、订阅和状态显示，未做真机接管和运动控制。
+真实设备联调确认：`RobotState.control_source = CTRL_SOURCE_SDK` 表示 `legged_driver` 底层 SDK 通道正在工作，不代表当前 Android ZMQ 客户端已经占用控制权。App 侧控制权状态以 `TAKE_CONTROL`、`RELEASE_CONTROL` ACK 和控制权事件为准；释放中如果没有收到释放 ACK，可把 `RobotState.control_source` 回到 `CTRL_SOURCE_UNKNOWN` 或 `CTRL_SOURCE_OTHER` 作为释放完成兜底。
+
+接管与释放验收结果：
+
+| 项目 | 结果 |
+| --- | --- |
+| 接管请求 | 点击接管后服务端收到 `TAKE_CONTROL`，App 收到 ACK `error_code = 0`、`reason = OK` |
+| 手动模式 | 接管成功后 App 发送 `SET_APP_MODE`，服务端状态变为 `MANUAL` |
+| 速度档 | 接管成功后 App 发送当前速度档，低速默认档下服务端收到 `SET_SPEED_LEVEL` |
+| UI 状态 | 接管成功后显示 `已接管` 和 `释放`，动作按钮进入可用状态 |
+| 释放请求 | 点击释放后服务端收到 `RELEASE_CONTROL` |
+| 自动模式 | 释放完成后 App 发送 `SET_APP_MODE`，服务端状态回到 `AUTO` |
+| UI 释放兜底 | 未收到释放 ACK 时，App 通过底层控制来源回到未知状态退出 `释放中`，显示 `可接管` 和 `接管` |
+| 运动命令 | 本轮未发送移动命令；UI 摇杆读数保持 `前进 0.00 平移 0.00 转向 0.00` |
+
+最新服务端状态：
+
+```text
+当前连接客户端数量: 1, 应用模式: AUTO, 机器人连接状态: CONNECTED
+```
+
+本轮已验证连接、心跳、订阅、状态显示、接管和释放闭环，尚未做真机方向运动测试。
 
 ## 下一步测试流程
 

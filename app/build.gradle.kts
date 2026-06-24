@@ -66,12 +66,13 @@ kotlin {
 
 androidComponents {
     // 自定义 APK 文件名，并在 assemble 后复制到 app/output。
+    val apkBaseName = "LeggedJoystick"
     onVariants { variant ->
         variant.outputs.forEach { output ->
             val buildTypeName = variant.name
             val versionName = output.versionName.orNull ?: "0.0.0"
             val dateFormat = SimpleDateFormat("yyyyMMddHHmm", Locale.getDefault())
-            val apkName = "RIDReceiver_${versionName}_${buildTypeName}_${dateFormat.format(Date())}.apk"
+            val apkName = "${apkBaseName}_${versionName}_${buildTypeName}_${dateFormat.format(Date())}.apk"
             output.outputFileName.set(apkName)
 
             val assembleTaskName = "assemble${

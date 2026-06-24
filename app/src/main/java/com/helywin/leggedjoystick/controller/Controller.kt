@@ -228,22 +228,16 @@ class ControllerState {
     }
 
     fun updateControlOwnershipFromSource(source: CtrlSource) {
-        val nextState = when (source) {
-            CtrlSource.CTRL_SOURCE_APP -> ControlOwnershipState.OWNED
-            CtrlSource.CTRL_SOURCE_SDK,
-            CtrlSource.CTRL_SOURCE_OTHER -> ControlOwnershipState.OCCUPIED
-            CtrlSource.CTRL_SOURCE_UNKNOWN -> ControlOwnershipState.AVAILABLE
+        // RobotState.control_source 是机器狗底层控制来源，不是当前 ZMQ 客户端的控制权。
+        // 真实部署中本 App 通过 legged_driver 的 SDK 通道控制，未接管和已接管都会看到 CTRL_SOURCE_SDK。
+        // 控制权 UI 只能由 TAKE/RELEASE ACK 以及 CONTROL_LOST/CONTROL_AVAILABLE 事件驱动。
+        if (
+            controlOwnershipState == ControlOwnershipState.RELEASING &&
+            (source == CtrlSource.CTRL_SOURCE_UNKNOWN || source == CtrlSource.CTRL_SOURCE_OTHER)
+        ) {
+            controlOwnershipState = ControlOwnershipState.AVAILABLE
+            controlOwnershipMessage = "已释放控制权"
         }
-
-        if (controlOwnershipState == ControlOwnershipState.TAKING && nextState != ControlOwnershipState.OWNED) {
-            return
-        }
-        if (controlOwnershipState == ControlOwnershipState.RELEASING && nextState != ControlOwnershipState.AVAILABLE) {
-            return
-        }
-
-        controlOwnershipState = nextState
-        controlOwnershipMessage = ""
     }
 
     private fun updateFillLightState(status: FillLightStatus, update: (Boolean) -> Unit) {
@@ -423,11 +417,15 @@ class RobotControllerImpl(private val context: Context) : Controller {
             }
             MessageType.MESSAGE_TYPE_ROBOT_STATE -> {
                 message.robot_state?.let { robotState ->
+                    val wasReleasing = settingsState.controlOwnershipState == ControlOwnershipState.RELEASING
                     settingsState.updateRobotCtrlMode(robotState.sport_mode)
                     settingsState.updateBatteryLevel(robotState.toBatteryPercent())
                     settingsState.updateCurrentSpeedValue(robotState.toLinearSpeedValue())
                     settingsState.updateRobotAuxiliaryState(robotState)
                     settingsState.updateControlOwnershipFromSource(robotState.control_source)
+                    if (wasReleasing && settingsState.controlOwnershipState == ControlOwnershipState.AVAILABLE) {
+                        requestAutoModeAfterRelease()
+                    }
                     Timber.d(
                         "[Controller] 收到机器人状态，运动模式: %s，控制来源: %s",
                         robotState.sport_mode,
@@ -469,7 +467,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             MessageType.MESSAGE_TYPE_RELEASE_CONTROL_ACK -> {
                 message.release_control_ack?.let { ack ->
                     if (ack.error_code == 0) {
-                        settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已释放控制权")
+                        markControlReleased("已释放控制权")
                     } else {
                         settingsState.updateControlOwnership(
                             ControlOwnershipState.OWNED,
@@ -556,7 +554,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 }
             }
             CommandResultStage.COMMAND_RESULT_STAGE_COMPLETED -> {
-                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已释放控制权")
+                markControlReleased("已释放控制权")
             }
             CommandResultStage.COMMAND_RESULT_STAGE_REJECTED -> {
                 if (settingsState.controlOwnershipState != ControlOwnershipState.AVAILABLE) {
@@ -582,6 +580,22 @@ class RobotControllerImpl(private val context: Context) : Controller {
             } else {
                 sendInitialCommandsAfterTake()
             }
+        }
+    }
+
+    private fun markControlReleased(message: String) {
+        settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, message)
+        requestAutoModeAfterRelease()
+    }
+
+    private fun requestAutoModeAfterRelease() {
+        if (isEngineeringMock()) {
+            settingsState.updateRobotMode(AppMode.APP_MODE_AUTO)
+            return
+        }
+        if (settingsState.isConnected) {
+            zmqClient.setMode(AppMode.APP_MODE_AUTO)
+            Timber.i("[Controller] 释放控制权后请求切回 Auto AppMode")
         }
     }
 
