@@ -1,6 +1,9 @@
 package com.helywin.leggedjoystick
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.WindowManager
@@ -17,6 +20,8 @@ import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
+import com.helywin.leggedjoystick.service.RemoteControlForegroundService
 import com.helywin.leggedjoystick.data.HighLowStance
 import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
@@ -30,6 +35,7 @@ import timber.log.Timber
 class MainActivity : ComponentActivity() {
     private lateinit var controller: Controller
     private var wakeLock: PowerManager.WakeLock? = null
+    private var notificationPermissionRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,6 +50,15 @@ class MainActivity : ComponentActivity() {
             // 监听连接状态变化
             LaunchedEffect(settingsState.connectionState) {
                 updateWakeLockState(settingsState.connectionState)
+            }
+
+            // 连接后启动前台服务，提高后台长连接稳定性。
+            LaunchedEffect(
+                settingsState.connectionState,
+                settingsState.controlOwnershipState,
+                settingsState.remoteInputState.status
+            ) {
+                updateForegroundServiceState(settingsState.connectionState)
             }
 
             // 监听屏幕常亮设置变化
@@ -79,6 +94,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         releaseWakeLock()
+        RemoteControlForegroundService.stop(this)
         controller.cleanup()
     }
 
@@ -99,6 +115,7 @@ class MainActivity : ComponentActivity() {
     private fun updateWakeLockState(connectionState: ConnectionState) {
         when (connectionState) {
             ConnectionState.CONNECTED -> {
+                requestNotificationPermissionIfNeeded()
                 acquireWakeLock()
                 Timber.i("[MainActivity] 已连接，启用屏幕保持唤醒")
             }
@@ -107,6 +124,45 @@ class MainActivity : ComponentActivity() {
                 Timber.i("[MainActivity] 未连接，释放屏幕保持唤醒")
             }
         }
+    }
+
+    private fun updateForegroundServiceState(connectionState: ConnectionState) {
+        if (connectionState == ConnectionState.CONNECTED) {
+            requestNotificationPermissionIfNeeded()
+            RemoteControlForegroundService.start(
+                context = this,
+                connectionText = buildForegroundConnectionText(),
+                inputText = buildForegroundInputText()
+            )
+            return
+        }
+
+        RemoteControlForegroundService.stop(this)
+    }
+
+    private fun buildForegroundConnectionText(): String {
+        return "连接 ${settingsState.connectionState.displayName}，控制权 ${settingsState.controlOwnershipState.displayName}"
+    }
+
+    private fun buildForegroundInputText(): String {
+        val inputState = settingsState.remoteInputState
+        val statusText = when (inputState.status) {
+            RemoteInputStatus.STOPPED -> "已停止"
+            RemoteInputStatus.STARTING -> "启动中"
+            RemoteInputStatus.RUNNING -> "接收中"
+            RemoteInputStatus.TIMEOUT -> "超时"
+            RemoteInputStatus.ERROR -> "异常"
+        }
+        return "输入 ${inputState.sourceName.ifEmpty { "未连接" }} $statusText"
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        if (notificationPermissionRequested) return
+
+        notificationPermissionRequested = true
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_POST_NOTIFICATIONS)
     }
 
     /**
@@ -158,6 +214,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private companion object {
+        private const val REQUEST_POST_NOTIFICATIONS = 2001
+    }
 }
 
 @Composable

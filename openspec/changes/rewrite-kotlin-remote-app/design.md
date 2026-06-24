@@ -60,6 +60,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 构建栈使用稳定版：Gradle 9.6.0、Android Gradle Plugin 9.2.1、Kotlin 2.4.0、Compose BOM 2026.06.00、Wire 6.4.0。
 - `compileSdk` 使用 37，以满足最新 AndroidX 依赖元数据要求；`targetSdk` 暂不因依赖升级同步改变。
 - AGP 9 内置 Kotlin 支持，构建脚本不得继续应用 `org.jetbrains.kotlin.android` 插件。
+- 连接成功后启动前台服务和常驻通知，作为后台长连接的进程保活锚点；当前切片不迁移 ZMQ 和输入控制归属，后续如需把链路完全托管到 Service，再单独做生命周期重构。
 - 旧游戏手柄输入、旧触屏虚拟摇杆和相关调试组件保留源码，作为后续适配其他遥控器或调试输入的备选组件；第一版主流程不得引用这些组件，也不得把它们接入移动命令输出。
 - 旧协议和厂商相关入口不作为新主流程依赖。
 
