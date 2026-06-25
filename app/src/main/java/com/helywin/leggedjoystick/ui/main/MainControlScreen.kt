@@ -58,8 +58,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -157,6 +160,19 @@ fun MainControlScreen(
         PrimaryVideoSource.HEAD -> settingsState.settings.tailRtspUrl
         PrimaryVideoSource.TAIL -> settingsState.settings.headRtspUrl
     }
+    val onPhotoClick = {
+        val surface = mainVideoSurface
+        if (!isTakingSnapshot) {
+            if (surface == null) {
+                Toast.makeText(context, "视频视图未准备好", Toast.LENGTH_SHORT).show()
+            } else {
+                isTakingSnapshot = true
+                captureRtspSurfaceSnapshot(context, surface) {
+                    isTakingSnapshot = false
+                }
+            }
+        }
+    }
 
     ConnectionDialog(
         connectionState = connectionState,
@@ -187,7 +203,6 @@ fun MainControlScreen(
                     connectionState = connectionState,
                     controlOwnershipState = controlOwnershipState,
                     batteryLevel = batteryLevel,
-                    isTakingSnapshot = isTakingSnapshot,
                     onModeClick = controller::setMode,
                     onControlOwnershipClick = {
                         if (hasControl) {
@@ -204,19 +219,6 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
-                    onPhotoClick = {
-                        val surface = mainVideoSurface
-                        if (!isTakingSnapshot) {
-                            if (surface == null) {
-                                Toast.makeText(context, "视频视图未准备好", Toast.LENGTH_SHORT).show()
-                            } else {
-                                isTakingSnapshot = true
-                                captureRtspSurfaceSnapshot(context, surface) {
-                                    isTakingSnapshot = false
-                                }
-                            }
-                        }
-                    },
                     onSettingsClick = onSettingsClick
                 )
 
@@ -230,7 +232,7 @@ fun MainControlScreen(
                     rtspUrl = secondaryVideoUrl,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(y = 56.dp),
+                        .offset(y = 20.dp),
                     onClick = {
                         primaryVideoSource = when (primaryVideoSource) {
                             PrimaryVideoSource.HEAD -> PrimaryVideoSource.TAIL
@@ -258,13 +260,25 @@ fun MainControlScreen(
                     expanded = speedSelectorVisible,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(y = 218.dp)
+                        .offset(y = 200.dp)
                         .zIndex(1f),
                     onExpandClick = { speedSelectorVisible = !speedSelectorVisible },
                     onLevelSelected = { level ->
                         speedSelectorVisible = false
                         controller.setSpeedLevel(level)
                     }
+                )
+
+                RightToolButton(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .offset(y = (-39).dp),
+                    iconResId = R.drawable.genisdog_icon_photo,
+                    contentDescription = if (isTakingSnapshot) "正在拍照" else "拍照",
+                    selected = false,
+                    clickEnabled = !isTakingSnapshot,
+                    commandEnabled = true,
+                    onClick = onPhotoClick
                 )
 
                 RightToolColumn(
@@ -382,12 +396,10 @@ private fun TopHud(
     connectionState: ConnectionState,
     controlOwnershipState: ControlOwnershipState,
     batteryLevel: Int,
-    isTakingSnapshot: Boolean,
     onModeClick: (AppMode) -> Unit,
     onControlOwnershipClick: () -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
-    onPhotoClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -417,12 +429,6 @@ private fun TopHud(
                 connectionState = connectionState,
                 onClick = onConnectClick
             )
-            HudIconButton(
-                iconResId = R.drawable.genisdog_icon_photo,
-                contentDescription = if (isTakingSnapshot) "正在拍照" else "拍照",
-                enabled = !isTakingSnapshot,
-                onClick = onPhotoClick
-            )
             BatteryIconButton(
                 batteryLevel = batteryLevel,
                 onClick = onBatteryClick
@@ -442,15 +448,16 @@ private fun MotionModeEntry(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Surface(
+    val shape = RoundedCornerShape(12.dp)
+    Box(
         modifier = modifier
-            .height(46.dp)
-            .width(148.dp)
-            .clickable(onClick = onClick),
-        color = Color(0xCC1F2A2B),
-        shape = RoundedCornerShape(12.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 8.dp
+            .height(40.dp)
+            .width(140.dp)
+            .shadow(8.dp, shape)
+            .clip(shape)
+            .background(Color(0xCC1F2A2B))
+            .noIndicationClickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp),
@@ -494,7 +501,7 @@ private fun MiniVideoWindow(
             .width(270.dp)
             .aspectRatio(16f / 9f)
             .clip(videoShape)
-            .clickable(onClick = onClick)
+            .noIndicationClickable(onClick = onClick)
             .border(2.dp, Color.White.copy(alpha = 0.62f), videoShape),
         color = Color(0xFF080A0A),
         shape = videoShape,
@@ -531,105 +538,6 @@ private fun RemoteInputPanel(
     } else {
         "$lastCommandName $lastCommandDetail"
     }
-
-    Surface(
-        modifier = modifier
-            .width(430.dp)
-            .height(326.dp),
-        color = Color(0xCC151B1B),
-        shape = RoundedCornerShape(12.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 6.dp
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Sensors,
-                    contentDescription = null,
-                    tint = remoteInputState.status.statusColor(),
-                    modifier = Modifier.size(17.dp)
-                )
-                Text(
-                    text = remoteInputState.sourceName.ifEmpty { "外部遥控输入" },
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                text = "状态 ${remoteInputState.status.displayName}",
-                fontSize = 12.sp,
-                color = remoteInputState.status.statusColor()
-            )
-            Text(
-                text = if (intent != null) {
-                    "前进 %.2f  平移 %.2f  转向 %.2f".format(
-                        intent.forward,
-                        intent.strafeRight,
-                        intent.yawRight
-                    )
-                } else {
-                    "等待通道帧"
-                },
-                fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "归一化 F %.2f  S %.2f  Y %.2f".format(
-                    axes["forward"] ?: 0f,
-                    axes["strafeRight"] ?: 0f,
-                    axes["yawRight"] ?: 0f
-                ),
-                fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.68f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "驱动 ${driverConnectionTelemetry.summaryText()}  " +
-                    "机器 ${if (driverConnectionTelemetry.robotConnected) "在线" else "离线"}  " +
-                    "故障 ${faultTelemetry.summaryText()}",
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.58f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "机体V ${motionTelemetry.bodyVelocity.formatTriple()}  " +
-                    "里程V ${odometryTelemetry.linearVelocity.formatTriple()}",
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.58f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            for (startIndex in 0 until 16 step 4) {
-                Text(
-                    text = rawChannels.formatChannelLine(startIndex = startIndex),
-                    fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.58f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                text = "发送 $lastCommandText",
-                fontSize = 12.sp,
-                color = AccentCyan.copy(alpha = 0.82f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
 }
 
 @Composable
@@ -642,15 +550,13 @@ private fun VerticalSpeedSelector(
     onLevelSelected: (SpeedLevel) -> Unit
 ) {
     Box(
-        modifier = modifier
-            .width(160.dp)
-            .height(210.dp)
+        modifier = modifier,
     ) {
         Box(
             modifier = Modifier
-                .width(78.dp)
-                .height(46.dp)
-                .clickable(onClick = onExpandClick),
+                .width(60.dp)
+                .height(30.dp)
+                .noIndicationClickable(onClick = onExpandClick),
             contentAlignment = Alignment.Center
         ) {
             Image(
@@ -671,10 +577,10 @@ private fun VerticalSpeedSelector(
         Text(
             text = "%.1f".format(currentSpeedValue),
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(x = 28.dp, y = 62.dp),
+                .align(Alignment.Center)
+                .offset(y = 30.dp),
             color = Color.White.copy(alpha = 0.86f),
-            fontSize = 21.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
@@ -723,7 +629,7 @@ private fun RightToolColumn(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         RightToolButton(
-            iconResId = R.drawable.genisdog_icon_light,
+            iconResId = R.drawable.genisdog_icon_light_white,
             contentDescription = "灯光",
             selected = activePanel == RightToolPanel.LIGHT,
             clickEnabled = true,
@@ -731,13 +637,14 @@ private fun RightToolColumn(
             onClick = { onPanelToggle(RightToolPanel.LIGHT) }
         )
         RightToolButton(
-            iconResId = R.drawable.genisdog_icon_robot_angle,
+            iconResId = headDirection.perspectiveIconResId(),
+            iconSize = 44.dp,
             contentDescription = if (headDirection == HeadDirection.HEAD_DIRECTION_TAIL) {
                 "切回头部方向"
             } else {
                 "切换到尾部方向"
             },
-            selected = headDirection == HeadDirection.HEAD_DIRECTION_TAIL,
+            selected = false,
             clickEnabled = commandEnabled,
             commandEnabled = commandEnabled,
             onClick = onReverseHeadTailClick
@@ -747,52 +654,68 @@ private fun RightToolColumn(
 
 @Composable
 private fun RightToolButton(
+    modifier: Modifier = Modifier,
     iconResId: Int? = null,
     imageVector: ImageVector? = null,
+    iconSize: Dp = 32.dp,
     contentDescription: String,
     selected: Boolean,
     clickEnabled: Boolean,
     commandEnabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    content: (@Composable () -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    val shape = RoundedCornerShape(15.dp)
     val background = when {
         pressed -> PressedActionBackground
         selected -> Color(0x7A27C7C4)
         else -> PanelBackground
     }
 
-    Surface(
-        modifier = Modifier
+    Box(
+        modifier = modifier
             .size(52.dp)
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(background)
             .clickable(
                 enabled = clickEnabled,
-                interactionSource = interactionSource,
-                indication = null,
+//                interactionSource = interactionSource,
+//                indication = null,
                 onClick = onClick
             ),
-        color = background,
-        shape = RoundedCornerShape(15.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (iconResId != null) {
-                Image(
-                    painter = painterResource(iconResId),
-                    contentDescription = contentDescription,
-                    modifier = Modifier.size(32.dp),
-                    contentScale = ContentScale.Fit
-                )
-            } else if (imageVector != null) {
-                Icon(
-                    imageVector = imageVector,
-                    contentDescription = contentDescription,
-                    tint = if (selected) Color.White else AccentCyan,
-                    modifier = Modifier.size(27.dp)
-                )
-            }
+        if (content != null) {
+            content()
+        } else if (iconResId != null) {
+//            Image(
+//                painter = painterResource(iconResId),
+//                contentDescription = contentDescription,
+//                modifier = Modifier
+//                    .size(iconSize)
+//                    .graphicsLayer {
+//                        alpha = if (clickEnabled || commandEnabled) 1f else 0.46f
+//                        scaleX = if (pressed) 0.94f else 1f
+//                        scaleY = if (pressed) 0.94f else 1f
+//                    },
+//                contentScale = ContentScale.Fit
+//            )
+        } else if (imageVector != null) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = contentDescription,
+                tint = if (selected) Color.White else AccentCyan,
+                modifier = Modifier
+                    .size(27.dp)
+                    .graphicsLayer {
+                        alpha = if (clickEnabled || commandEnabled) 1f else 0.46f
+                        scaleX = if (pressed) 0.94f else 1f
+                        scaleY = if (pressed) 0.94f else 1f
+                    }
+            )
         }
     }
 }
@@ -818,9 +741,9 @@ private fun LightControlPanel(
             LightToggleRow(
                 label = "前灯",
                 iconResId = if (frontLightOn) {
-                    R.drawable.genisdog_icon_light_front_on
+                    R.drawable.genisdog_icon_light_front_on_white
                 } else {
-                    R.drawable.genisdog_icon_light
+                    R.drawable.genisdog_icon_light_white
                 },
                 selected = frontLightOn,
                 enabled = enabled,
@@ -829,9 +752,9 @@ private fun LightControlPanel(
             LightToggleRow(
                 label = "后灯",
                 iconResId = if (backLightOn) {
-                    R.drawable.genisdog_icon_light_back_on
+                    R.drawable.genisdog_icon_light_back_on_white
                 } else {
-                    R.drawable.genisdog_icon_light
+                    R.drawable.genisdog_icon_light_white
                 },
                 selected = backLightOn,
                 enabled = enabled,
@@ -840,9 +763,9 @@ private fun LightControlPanel(
             LightToggleRow(
                 label = "自动",
                 iconResId = if (autoModeLightOn) {
-                    R.drawable.genisdog_icon_light_all_on
+                    R.drawable.genisdog_icon_light_all_on_white
                 } else {
-                    R.drawable.genisdog_icon_light_all_off
+                    R.drawable.genisdog_icon_light_all_off_white
                 },
                 selected = autoModeLightOn,
                 enabled = enabled,
@@ -942,27 +865,26 @@ private fun BottomActionGroup(
     if (!expanded) {
         val interactionSource = remember { MutableInteractionSource() }
         val pressed by interactionSource.collectIsPressedAsState()
-        Surface(
+        val shape = RoundedCornerShape(14.dp)
+        Box(
             modifier = modifier
                 .size(52.dp)
+                .shadow(4.dp, shape)
+                .clip(shape)
+                .background(if (pressed) PressedActionBackground else PanelBackground)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onToggle
                 ),
-            color = if (pressed) PressedActionBackground else PanelBackground,
-            shape = RoundedCornerShape(14.dp),
-            tonalElevation = 0.dp,
-            shadowElevation = 4.dp
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Image(
-                    painter = painterResource(R.drawable.genisdog_icon_dog),
-                    contentDescription = "展开动作组",
-                    modifier = Modifier.size(38.dp),
-                    contentScale = ContentScale.Fit
-                )
-            }
+            Image(
+                painter = painterResource(R.drawable.genisdog_icon_dog),
+                contentDescription = "展开动作组",
+                modifier = Modifier.size(38.dp),
+                contentScale = ContentScale.Fit
+            )
         }
         return
     }
@@ -974,27 +896,26 @@ private fun BottomActionGroup(
     ) {
         val toggleInteractionSource = remember { MutableInteractionSource() }
         val togglePressed by toggleInteractionSource.collectIsPressedAsState()
-        Surface(
+        val toggleShape = RoundedCornerShape(16.dp)
+        Box(
             modifier = Modifier
                 .size(54.dp)
+                .shadow(4.dp, toggleShape)
+                .clip(toggleShape)
+                .background(if (togglePressed) PressedActionBackground else PanelBackground)
                 .clickable(
                     interactionSource = toggleInteractionSource,
                     indication = null,
                     onClick = onToggle
                 ),
-            color = if (togglePressed) PressedActionBackground else PanelBackground,
-            shape = RoundedCornerShape(16.dp),
-            tonalElevation = 0.dp,
-            shadowElevation = 4.dp
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Image(
-                    painter = painterResource(R.drawable.genisdog_icon_dog_clicked),
-                    contentDescription = "收缩动作组",
-                    modifier = Modifier.size(40.dp),
-                    contentScale = ContentScale.Fit
-                )
-            }
+            Image(
+                painter = painterResource(R.drawable.genisdog_icon_dog_clicked),
+                contentDescription = "收缩动作组",
+                modifier = Modifier.size(40.dp),
+                contentScale = ContentScale.Fit
+            )
         }
 
         Surface(
@@ -1038,7 +959,7 @@ private fun SpeedLevelMenuItem(
         modifier = Modifier
             .fillMaxWidth()
             .height(34.dp)
-            .clickable(onClick = onClick)
+            .noIndicationClickable(onClick = onClick)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1127,7 +1048,7 @@ private fun MotionModeOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onDismiss)
+                .noIndicationClickable(onClick = onDismiss)
         )
         Surface(
             modifier = Modifier
@@ -1151,26 +1072,21 @@ private fun MotionModeOverlay(
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Surface(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        color = Color.White.copy(alpha = 0.08f),
-                        shape = CircleShape,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .noIndicationClickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clickable(onClick = onDismiss),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "关闭",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "关闭",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                 }
 
@@ -1205,21 +1121,20 @@ private fun MotionModeCard(
     changing: Boolean,
     onClick: () -> Unit
 ) {
-    Surface(
+    val shape = RoundedCornerShape(18.dp)
+    Box(
         modifier = Modifier
             .width(190.dp)
             .height(154.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .shadow(if (selected) 8.dp else 2.dp, shape)
+            .clip(shape)
+            .background(if (selected) Color(0xFF203434) else Color(0xFF121818))
+            .noIndicationClickable(enabled = enabled, onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
                 color = if (selected) AccentCyan else Color.White.copy(alpha = 0.16f),
-                shape = RoundedCornerShape(18.dp)
-            ),
-        color = if (selected) Color(0xFF203434) else Color(0xFF121818),
-        shape = RoundedCornerShape(18.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = if (selected) 8.dp else 2.dp
+                shape = shape
+            )
     ) {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -1317,27 +1232,28 @@ private fun ControlModeToggle(
     } else {
         AppMode.APP_MODE_MANUAL
     }
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Box(
         modifier = Modifier
             .size(46.dp)
-            .clickable(enabled = isConnected) { onModeClick(nextMode) },
-        color = if (currentMode == AppMode.APP_MODE_MANUAL) {
-            Color(0x7A27C7C4)
-        } else {
-            PanelBackground
-        },
-        shape = RoundedCornerShape(14.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Image(
-                painter = painterResource(R.drawable.genisdog_icon_robot),
-                contentDescription = currentMode.displayName,
-                modifier = Modifier.size(28.dp),
-                contentScale = ContentScale.Fit
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(
+                if (currentMode == AppMode.APP_MODE_MANUAL) {
+                    Color(0x7A27C7C4)
+                } else {
+                    PanelBackground
+                }
             )
-        }
+            .noIndicationClickable(enabled = isConnected) { onModeClick(nextMode) },
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(R.drawable.genisdog_icon_robot),
+            contentDescription = currentMode.displayName,
+            modifier = Modifier.size(28.dp),
+            contentScale = ContentScale.Fit
+        )
     }
 }
 
@@ -1370,41 +1286,40 @@ private fun ControlOwnershipButton(
         ControlOwnershipState.AVAILABLE -> "接管"
     }
 
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Row(
         modifier = Modifier
             .width(74.dp)
             .height(46.dp)
-            .clickable(enabled = enabled, onClick = onClick),
-        color = if (state == ControlOwnershipState.OWNED) {
-            Color(0x7A27C7C4)
-        } else {
-            PanelBackground
-        },
-        shape = RoundedCornerShape(14.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(
+                if (state == ControlOwnershipState.OWNED) {
+                    Color(0x7A27C7C4)
+                } else {
+                    PanelBackground
+                }
+            )
+            .noIndicationClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = state.displayName,
-                tint = state.color(),
-                modifier = Modifier.size(17.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = text,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = state.displayName,
+            tint = state.color(),
+            modifier = Modifier.size(17.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1428,23 +1343,22 @@ private fun ConnectionButton(
         ConnectionState.DISCONNECTED -> "连接"
     }
 
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Box(
         modifier = Modifier
             .size(46.dp)
-            .clickable(onClick = onClick),
-        color = PanelBackground,
-        shape = RoundedCornerShape(14.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(PanelBackground)
+            .noIndicationClickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = icon,
-                contentDescription = description,
-                tint = connectionState.color(),
-                modifier = Modifier.size(24.dp)
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = connectionState.color(),
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
@@ -1455,23 +1369,22 @@ private fun HudIconButton(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Box(
         modifier = Modifier
             .size(46.dp)
-            .clickable(enabled = enabled, onClick = onClick),
-        color = PanelBackground,
-        shape = RoundedCornerShape(14.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(PanelBackground)
+            .noIndicationClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Image(
-                painter = painterResource(iconResId),
-                contentDescription = contentDescription,
-                modifier = Modifier.size(30.dp),
-                contentScale = ContentScale.Fit
-            )
-        }
+        Image(
+            painter = painterResource(iconResId),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(30.dp),
+            contentScale = ContentScale.Fit
+        )
     }
 }
 
@@ -1480,34 +1393,31 @@ private fun BatteryIconButton(
     batteryLevel: Int,
     onClick: () -> Unit
 ) {
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Row(
         modifier = Modifier
             .width(64.dp)
             .height(46.dp)
-            .clickable(onClick = onClick),
-        color = PanelBackground,
-        shape = RoundedCornerShape(14.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 4.dp
+            .shadow(4.dp, shape)
+            .clip(shape)
+            .background(PanelBackground)
+            .noIndicationClickable(onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                painter = painterResource(R.drawable.genisdog_icon_battery),
-                contentDescription = "电量",
-                modifier = Modifier.size(22.dp),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(modifier = Modifier.width(3.dp))
-            Text(
-                text = "$batteryLevel",
-                color = batteryLevelColor(batteryLevel),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
+        Image(
+            painter = painterResource(R.drawable.genisdog_icon_battery),
+            contentDescription = "电量",
+            modifier = Modifier.size(22.dp),
+            contentScale = ContentScale.Fit
+        )
+        Spacer(modifier = Modifier.width(3.dp))
+        Text(
+            text = "$batteryLevel",
+            color = batteryLevelColor(batteryLevel),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -1516,6 +1426,20 @@ private fun supportedSportModes(): List<SportMode> {
         SportMode.SPORT_MODE_GENERAL,
         SportMode.SPORT_MODE_IN_PLACE,
         SportMode.SPORT_MODE_STAIR
+    )
+}
+
+@Composable
+private fun Modifier.noIndicationClickable(
+    enabled: Boolean = true,
+    onClick: () -> Unit
+): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
+    return clickable(
+        enabled = enabled,
+        interactionSource = interactionSource,
+        indication = null,
+        onClick = onClick
     )
 }
 
@@ -1635,6 +1559,13 @@ private fun RemoteInputStatus.statusColor(): Color {
         RemoteInputStatus.TIMEOUT,
         RemoteInputStatus.ERROR -> Color(0xFFE45D3D)
         RemoteInputStatus.STOPPED -> Color.White.copy(alpha = 0.52f)
+    }
+}
+
+private fun HeadDirection.perspectiveIconResId(): Int {
+    return when (this) {
+        HeadDirection.HEAD_DIRECTION_TAIL -> R.drawable.genisdog_icon_perspective_tail
+        else -> R.drawable.genisdog_icon_perspective_head
     }
 }
 

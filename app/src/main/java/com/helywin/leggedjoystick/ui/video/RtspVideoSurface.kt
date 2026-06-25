@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -76,10 +77,27 @@ fun RtspVideoSurface(
     showStatus: Boolean = true,
     onSurfaceViewReady: (SurfaceView?) -> Unit = {}
 ) {
+    val isInPreview = LocalInspectionMode.current
+    val latestSurfaceCallback by rememberUpdatedState(onSurfaceViewReady)
+
+    if (isInPreview) {
+        DisposableEffect(Unit) {
+            latestSurfaceCallback(null)
+            onDispose {
+                latestSurfaceCallback(null)
+            }
+        }
+        RtspVideoPreviewPlaceholder(
+            rtspUrl = rtspUrl,
+            showStatus = showStatus,
+            modifier = modifier
+        )
+        return
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val latestRtspUrl by rememberUpdatedState(rtspUrl)
-    val latestSurfaceCallback by rememberUpdatedState(onSurfaceViewReady)
     var playbackState by remember { mutableStateOf(VideoPlaybackState.IDLE) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isViewAttached by remember { mutableStateOf(false) }
@@ -225,6 +243,25 @@ fun RtspVideoSurface(
                 }
                 VideoPlaybackState.PLAYING -> Unit
             }
+        }
+    }
+}
+
+@Composable
+private fun RtspVideoPreviewPlaceholder(
+    rtspUrl: String,
+    showStatus: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.background(Color(0xFF101414)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (showStatus) {
+            Text(
+                text = if (rtspUrl.isBlank()) "未配置视频流" else "视频预览占位",
+                color = Color.White.copy(alpha = 0.72f)
+            )
         }
     }
 }
