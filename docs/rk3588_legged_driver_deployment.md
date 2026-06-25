@@ -114,7 +114,8 @@ RK3588 上 `/tmp/hostapd.conf` 当前热点信息：
 | --- | --- |
 | ZMQ IP | `192.168.234.1` |
 | ZMQ 端口 | `33445` |
-| 视频地址 | `rtsp://192.168.234.1:8554/test` |
+| 头部视频 | `rtsp://192.168.234.1:8554/front` |
+| 尾部视频 | `rtsp://192.168.234.1:8554/back` |
 | 工程 Mock | `false` |
 | UniRC UDP | `127.0.0.1:19856` |
 
@@ -179,6 +180,28 @@ adb -s d shell ping -c 1 -W 2 192.168.234.1
 ```
 
 本轮已验证连接、心跳、订阅、状态显示、接管和释放闭环，尚未做真机方向运动测试。
+
+## 安卓视频流联调结果
+
+2026-06-25 验证主屏双路 RTSP 视频。最初 App 默认地址使用 `/head` 和 `/tail`，`ffprobe` 返回 404。RK3588 上 `robot_camera_node` 和 `mediamtx` 的真实发布路径为：
+
+| 视频源 | RTSP 地址 | 实测码流 |
+| --- | --- | --- |
+| 头部相机 | `rtsp://192.168.234.1:8554/front` | H.264, 1920x1080, 25fps |
+| 尾部相机 | `rtsp://192.168.234.1:8554/back` | H.264, 1920x1080, 25fps |
+
+App 已把默认地址改为 `/front` 和 `/back`，并在读取旧安装偏好时把旧默认 `/head`、`/tail` 迁移到新路径。真机安装 `LeggedJoystick_1.0.2_debug_202606251557.apk` 后，主屏背景和左上小窗均能显示真实相机画面，点击左上小窗可在 App 本地互换主背景和小窗视频源。本轮只验证视频链路，没有点击接管，也没有发送运动或动作命令。
+
+截图记录：
+
+| 场景 | 文件 |
+| --- | --- |
+| 默认头部背景、尾部小窗 | `docs/assets/implementation/main-control-real-video-20260625.png` |
+| 点击小窗后互换 | `docs/assets/implementation/main-control-real-video-swapped-20260625.png` |
+| 背景铺满、小窗 16:9 | `docs/assets/implementation/main-control-video-fill-20260625.png` |
+| 背景铺满后点击小窗互换 | `docs/assets/implementation/main-control-video-fill-swapped-20260625.png` |
+
+当前板端相机配置位于 `/opt/robot/install/robot_camera/share/robot_camera/config/zsm.yaml`，两路 `bps` 均为 `2000000`。1080p/25fps 使用 2Mbps 会在全屏背景下出现明显压缩感；如需提升画质，建议把两路 `bps` 提高到 `4000000` 或 `6000000` 后重启 `robot_camera`，再用 Android 端实测延迟和 Wi-Fi 稳定性。
 
 ## ZMQ 重连问题记录
 

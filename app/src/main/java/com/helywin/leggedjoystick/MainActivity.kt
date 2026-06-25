@@ -27,7 +27,6 @@ import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.ui.main.MainControlScreen
 import com.helywin.leggedjoystick.ui.settings.SettingsScreen
 import com.helywin.leggedjoystick.ui.theme.LeggedJoystickTheme
-import com.helywin.leggedjoystick.ui.video.VideoStreamScreen
 import legged_driver.AppMode
 import legged_driver.SportMode
 import timber.log.Timber
@@ -222,15 +221,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LeggedJoystickApp(controller: Controller) {
     var showSettings by remember { mutableStateOf(false) }
-    var showVideoStream by remember { mutableStateOf(false) }
 
     when {
-        showVideoStream -> {
-            VideoStreamScreen(
-                rtspUrl = settingsState.settings.rtspUrl,
-                onBackClick = { showVideoStream = false }
-            )
-        }
         showSettings -> {
             SettingsScreen(
                 currentSettings = settingsState.settings,
@@ -243,8 +235,7 @@ fun LeggedJoystickApp(controller: Controller) {
         else -> {
             MainControlScreen(
                 controller = controller,
-                onSettingsClick = { showSettings = true },
-                onVideoClick = { showVideoStream = true }
+                onSettingsClick = { showSettings = true }
             )
         }
     }
@@ -268,6 +259,7 @@ fun LeggedJoystickAppPreview() {
             override fun setFrontLight(on: Boolean) {}
             override fun setBackLight(on: Boolean) {}
             override fun setAutoModeLight(on: Boolean) {}
+            override fun reverseHeadTail() {}
             override fun controlHead(leftRight: Float, upDown: Float) {}
             override fun setHighLowStance(stance: HighLowStance) {}
             override fun updateSettings(settings: AppSettings) {}

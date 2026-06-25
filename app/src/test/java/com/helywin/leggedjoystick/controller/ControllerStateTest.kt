@@ -3,6 +3,10 @@ package com.helywin.leggedjoystick.controller
 import com.helywin.leggedjoystick.data.ControlOwnershipState
 import com.helywin.leggedjoystick.data.ConnectionState
 import legged_driver.CtrlSource
+import legged_driver.FillLightStatus
+import legged_driver.HeadDirection
+import legged_driver.MotionStatus
+import legged_driver.RobotStateMessage
 import legged_driver.ConnectionState as DriverConnectionState
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -75,5 +79,26 @@ class ControllerStateTest {
         assertEquals(false, state.driverConnectionTelemetry.robotConnected)
         assertEquals(0, state.batteryLevel)
         assertEquals(0.0, state.currentSpeedValue, 0.0)
+    }
+
+    @Test
+    fun robotStateUpdatesAuxiliaryUiState() {
+        val state = ControllerState()
+
+        state.updateRobotAuxiliaryState(
+            RobotStateMessage(
+                front_fill_light = FillLightStatus.FILL_LIGHT_STATUS_ON,
+                back_fill_light = FillLightStatus.FILL_LIGHT_STATUS_OFF,
+                auto_mode_light = true,
+                head_direction = HeadDirection.HEAD_DIRECTION_TAIL,
+                motion_status = MotionStatus.MOTION_STATUS_STAND_UP
+            )
+        )
+
+        assertEquals(true, state.frontLightOn)
+        assertEquals(false, state.backLightOn)
+        assertEquals(true, state.autoModeLightOn)
+        assertEquals(HeadDirection.HEAD_DIRECTION_TAIL, state.headDirection)
+        assertEquals(MotionStatus.MOTION_STATUS_STAND_UP, state.motionStatus)
     }
 }

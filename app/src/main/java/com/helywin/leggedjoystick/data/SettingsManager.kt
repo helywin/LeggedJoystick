@@ -23,7 +23,8 @@ class SettingsManager(context: Context) {
         private const val KEY_ZMQ_IP = "zmq_ip"
         private const val KEY_ZMQ_PORT = "zmq_port"
         private const val KEY_SPEED_LEVEL = "speed_level"
-        private const val KEY_RTSP_URL = "rtsp_url"
+        private const val KEY_HEAD_RTSP_URL = "head_rtsp_url"
+        private const val KEY_TAIL_RTSP_URL = "tail_rtsp_url"
         private const val KEY_REMOTE_INPUT_HOST = "remote_input_host"
         private const val KEY_REMOTE_INPUT_PORT = "remote_input_port"
         private const val KEY_REMOTE_INPUT_LOCAL_PORT = "remote_input_local_port"
@@ -35,16 +36,16 @@ class SettingsManager(context: Context) {
         private const val KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED = "remote_input_strafe_right_inverted"
         private const val KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL = "remote_input_yaw_right_channel"
         private const val KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED = "remote_input_yaw_right_inverted"
-        private const val KEY_MAIN_TITLE = "main_title"
-        private const val KEY_LOGO_PATH = "logo_path"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_ENGINEERING_MOCK_ENABLED = "engineering_mock_enabled"
 
         // 默认配置
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
-        private const val DEFAULT_RTSP_URL = "rtsp://192.168.234.1:8554/test"
-        private const val LEGACY_REMOTE_INPUT_HOST = "192.168.144.20"
+        private const val DEFAULT_HEAD_RTSP_URL = "rtsp://192.168.234.1:8554/front"
+        private const val DEFAULT_TAIL_RTSP_URL = "rtsp://192.168.234.1:8554/back"
+        private const val OLD_DEFAULT_HEAD_RTSP_URL = "rtsp://192.168.234.1:8554/head"
+        private const val OLD_DEFAULT_TAIL_RTSP_URL = "rtsp://192.168.234.1:8554/tail"
         private const val DEFAULT_REMOTE_INPUT_HOST = "127.0.0.1"
         private const val DEFAULT_REMOTE_INPUT_PORT = 19856
         private const val DEFAULT_REMOTE_INPUT_LOCAL_PORT = 0
@@ -53,8 +54,6 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_REMOTE_INPUT_FORWARD_CHANNEL = 3
         private const val DEFAULT_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL = 4
         private const val DEFAULT_REMOTE_INPUT_YAW_RIGHT_CHANNEL = 1
-        private const val DEFAULT_MAIN_TITLE = "机器狗遥控器"
-        private const val DEFAULT_LOGO_PATH = ""
         private const val DEFAULT_KEEP_SCREEN_ON = true
     }
 
@@ -70,7 +69,8 @@ class SettingsManager(context: Context) {
                 putString(KEY_ZMQ_IP, settings.zmqIp)
                 putInt(KEY_ZMQ_PORT, settings.zmqPort)
                 putString(KEY_SPEED_LEVEL, settings.speedLevel.name)
-                putString(KEY_RTSP_URL, settings.rtspUrl)
+                putString(KEY_HEAD_RTSP_URL, settings.headRtspUrl)
+                putString(KEY_TAIL_RTSP_URL, settings.tailRtspUrl)
                 putString(KEY_REMOTE_INPUT_HOST, settings.remoteInputHost)
                 putInt(KEY_REMOTE_INPUT_PORT, settings.remoteInputPort)
                 putInt(KEY_REMOTE_INPUT_LOCAL_PORT, settings.remoteInputLocalPort)
@@ -82,8 +82,6 @@ class SettingsManager(context: Context) {
                 putBoolean(KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED, settings.remoteInputStrafeRightInverted)
                 putInt(KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL, settings.remoteInputYawRightChannel)
                 putBoolean(KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED, settings.remoteInputYawRightInverted)
-                putString(KEY_MAIN_TITLE, settings.mainTitle)
-                putString(KEY_LOGO_PATH, settings.logoPath)
                 putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
                 putBoolean(KEY_ENGINEERING_MOCK_ENABLED, settings.engineeringMockEnabled)
                 apply()
@@ -106,17 +104,24 @@ class SettingsManager(context: Context) {
                 Timber.w("无效的速度档位: $speedLevelName，使用默认值")
                 SpeedLevel.SLOW
             }
-            val remoteInputHost = sharedPreferences.getString(
-                KEY_REMOTE_INPUT_HOST,
-                DEFAULT_REMOTE_INPUT_HOST
-            ) ?: DEFAULT_REMOTE_INPUT_HOST
-
             AppSettings(
                 zmqIp = sharedPreferences.getString(KEY_ZMQ_IP, DEFAULT_ZMQ_IP) ?: DEFAULT_ZMQ_IP,
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
                 speedLevel = speedLevel,
-                rtspUrl = sharedPreferences.getString(KEY_RTSP_URL, DEFAULT_RTSP_URL) ?: DEFAULT_RTSP_URL,
-                remoteInputHost = remoteInputHost.migrateLegacyRemoteInputHost(),
+                headRtspUrl = normalizeDefaultRtspUrl(
+                    sharedPreferences.getString(KEY_HEAD_RTSP_URL, DEFAULT_HEAD_RTSP_URL),
+                    OLD_DEFAULT_HEAD_RTSP_URL,
+                    DEFAULT_HEAD_RTSP_URL
+                ),
+                tailRtspUrl = normalizeDefaultRtspUrl(
+                    sharedPreferences.getString(KEY_TAIL_RTSP_URL, DEFAULT_TAIL_RTSP_URL),
+                    OLD_DEFAULT_TAIL_RTSP_URL,
+                    DEFAULT_TAIL_RTSP_URL
+                ),
+                remoteInputHost = sharedPreferences.getString(
+                    KEY_REMOTE_INPUT_HOST,
+                    DEFAULT_REMOTE_INPUT_HOST
+                ) ?: DEFAULT_REMOTE_INPUT_HOST,
                 remoteInputPort = sharedPreferences.getInt(KEY_REMOTE_INPUT_PORT, DEFAULT_REMOTE_INPUT_PORT),
                 remoteInputLocalPort = sharedPreferences.getInt(
                     KEY_REMOTE_INPUT_LOCAL_PORT,
@@ -154,8 +159,6 @@ class SettingsManager(context: Context) {
                     KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED,
                     false
                 ),
-                mainTitle = sharedPreferences.getString(KEY_MAIN_TITLE, DEFAULT_MAIN_TITLE) ?: DEFAULT_MAIN_TITLE,
-                logoPath = sharedPreferences.getString(KEY_LOGO_PATH, DEFAULT_LOGO_PATH) ?: DEFAULT_LOGO_PATH,
                 keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON),
                 engineeringMockEnabled = sharedPreferences.getBoolean(KEY_ENGINEERING_MOCK_ENABLED, false)
             ).also {
@@ -167,18 +170,22 @@ class SettingsManager(context: Context) {
         }
     }
 
-    private fun String.migrateLegacyRemoteInputHost(): String {
-        return if (this == LEGACY_REMOTE_INPUT_HOST) {
-            DEFAULT_REMOTE_INPUT_HOST
-        } else {
-            this
-        }
-    }
-
     /**
      * 检查是否是首次启动
      */
     fun isFirstLaunch(): Boolean {
         return !sharedPreferences.contains(KEY_ZMQ_IP)
+    }
+
+    private fun normalizeDefaultRtspUrl(
+        value: String?,
+        oldDefaultValue: String,
+        defaultValue: String
+    ): String {
+        val trimmedValue = value?.trim().orEmpty()
+        return when (trimmedValue) {
+            "", oldDefaultValue -> defaultValue
+            else -> trimmedValue
+        }
     }
 }

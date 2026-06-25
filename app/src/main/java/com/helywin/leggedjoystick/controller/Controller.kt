@@ -45,8 +45,10 @@ import legged_driver.CommandCode
 import legged_driver.CommandResultStage
 import legged_driver.CtrlSource
 import legged_driver.FillLightStatus
+import legged_driver.HeadDirection
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
+import legged_driver.MotionStatus
 import legged_driver.RobotStateMessage
 import legged_driver.SportMode
 import legged_driver.ConnectionState as DriverConnectionState
@@ -104,6 +106,12 @@ class ControllerState {
         private set
 
     var headAngle by mutableStateOf(0.0)
+        private set
+
+    var headDirection by mutableStateOf(HeadDirection.HEAD_DIRECTION_HEAD)
+        private set
+
+    var motionStatus by mutableStateOf(MotionStatus.MOTION_STATUS_UNKNOWN)
         private set
 
     var highLowStance by mutableStateOf(HighLowStance.NORMAL)
@@ -201,6 +209,8 @@ class ControllerState {
         backLightOn = false
         autoModeLightOn = false
         headAngle = 0.0
+        headDirection = HeadDirection.HEAD_DIRECTION_HEAD
+        motionStatus = MotionStatus.MOTION_STATUS_UNKNOWN
         highLowStance = HighLowStance.NORMAL
     }
 
@@ -221,6 +231,16 @@ class ControllerState {
         updateFillLightState(robotState.back_fill_light) { backLightOn = it }
         autoModeLightOn = robotState.auto_mode_light
         headAngle = robotState.head_angle
+        headDirection = robotState.head_direction
+        motionStatus = robotState.motion_status
+    }
+
+    fun updateHeadDirection(direction: HeadDirection) {
+        headDirection = direction
+    }
+
+    fun updateMotionStatus(status: MotionStatus) {
+        motionStatus = status
     }
 
     fun updateFrontLightState(on: Boolean) {
@@ -347,6 +367,7 @@ interface Controller {
     fun setFrontLight(on: Boolean)
     fun setBackLight(on: Boolean)
     fun setAutoModeLight(on: Boolean)
+    fun reverseHeadTail()
     fun controlHead(leftRight: Float, upDown: Float)
     fun setHighLowStance(stance: HighLowStance)
     fun updateSettings(settings: AppSettings)
@@ -716,6 +737,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
 
             settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
             settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
+            settingsState.updateHeadDirection(HeadDirection.HEAD_DIRECTION_HEAD)
+            settingsState.updateMotionStatus(MotionStatus.MOTION_STATUS_STAND_UP)
             settingsState.updateBatteryLevel(72)
             settingsState.updateCurrentSpeedValue(0.0)
             settingsState.updateDriverConnectionTelemetry(
@@ -951,6 +974,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         if (!canSendControlledCommand("动作命令: ${action.displayName}")) return
 
         if (isEngineeringMock()) {
+            settingsState.updateMotionStatus(action.motionStatus)
             settingsState.updateLastCommand("动作", action.displayName)
             Timber.i("[Controller] 工程 Mock 记录动作: %s", action.displayName)
             return
@@ -983,7 +1007,6 @@ class RobotControllerImpl(private val context: Context) : Controller {
         scope.launch {
             val success = zmqClient.setFrontLight(on)
             if (success) {
-                settingsState.updateFrontLightState(on)
                 settingsState.updateLastCommand("前补光灯", if (on) "开" else "关")
                 Timber.i("[Controller] 前补光灯请求已发送: %s", on)
             } else {
@@ -1004,7 +1027,6 @@ class RobotControllerImpl(private val context: Context) : Controller {
         scope.launch {
             val success = zmqClient.setBackLight(on)
             if (success) {
-                settingsState.updateBackLightState(on)
                 settingsState.updateLastCommand("后补光灯", if (on) "开" else "关")
                 Timber.i("[Controller] 后补光灯请求已发送: %s", on)
             } else {
@@ -1025,11 +1047,39 @@ class RobotControllerImpl(private val context: Context) : Controller {
         scope.launch {
             val success = zmqClient.setAutoModeLight(on)
             if (success) {
-                settingsState.updateAutoModeLightState(on)
                 settingsState.updateLastCommand("自动补光", if (on) "开" else "关")
                 Timber.i("[Controller] 自动补光请求已发送: %s", on)
             } else {
                 Timber.w("[Controller] 自动补光请求入队失败: %s", on)
+            }
+        }
+    }
+
+    override fun reverseHeadTail() {
+        if (!canSendControlledCommand("头尾方向切换")) return
+
+        if (isEngineeringMock()) {
+            val nextDirection = if (settingsState.headDirection == HeadDirection.HEAD_DIRECTION_TAIL) {
+                HeadDirection.HEAD_DIRECTION_HEAD
+            } else {
+                HeadDirection.HEAD_DIRECTION_TAIL
+            }
+            settingsState.updateHeadDirection(nextDirection)
+            settingsState.updateLastCommand(
+                "头尾方向",
+                if (nextDirection == HeadDirection.HEAD_DIRECTION_TAIL) "尾向" else "头向"
+            )
+            Timber.i("[Controller] 工程 Mock 切换头尾方向: %s", nextDirection)
+            return
+        }
+
+        scope.launch {
+            val success = zmqClient.sendSimpleCommand(CommandCode.COMMAND_CODE_REVERSE_HEAD_TAIL)
+            if (success) {
+                settingsState.updateLastCommand("头尾方向", "切换")
+                Timber.i("[Controller] 头尾方向切换请求已发送")
+            } else {
+                Timber.w("[Controller] 头尾方向切换请求入队失败")
             }
         }
     }

@@ -56,6 +56,34 @@
 - **WHEN** App 运行在 `Standard-10inch_A2` 横屏设备上
 - **THEN** 主控页、设置页和视频页不得启用完全沉浸式全屏，内容区域必须保留右侧系统虚拟导航栏空间
 
+#### Scenario: 主屏双路视频
+- **WHEN** 用户进入主控页
+- **THEN** App 必须默认将 `rtsp://192.168.234.1:8554/front` 作为主屏背景显示，并将 `rtsp://192.168.234.1:8554/back` 显示在左上小视频窗口；设置模型直接使用 `headRtspUrl` 和 `tailRtspUrl`
+
+#### Scenario: 主屏视频比例
+- **WHEN** 主控页显示 1920x1080 RTSP 视频
+- **THEN** 主屏背景视频必须优先铺满可用屏幕区域，不得出现视频自身黑边；左上小视频窗口必须使用 16:9 容器比例，避免控件比例导致黑边或变形
+
+#### Scenario: 主屏视频源互换
+- **WHEN** 用户点击左上小视频窗口
+- **THEN** App 必须只在本地互换主屏背景和左上小视频窗口的视频源，不得依赖或修改 `RobotState.head_direction`
+
+#### Scenario: 主屏拍照
+- **WHEN** 用户点击顶部拍照按钮
+- **THEN** App 必须截取当前主屏背景视频流画面并保存到系统相册，不得再通过顶部视频按钮跳转到独立视频页
+
+#### Scenario: 头尾方向切换
+- **WHEN** 用户点击右侧工具列的头尾方向切换按钮
+- **THEN** App 必须发送 `COMMAND_CODE_REVERSE_HEAD_TAIL`，并由 `RobotState.head_direction` 驱动按钮状态显示；头尾方向切换不得直接改变主屏背景或左上小视频窗口的视频源
+
+#### Scenario: 动作按钮选中态
+- **WHEN** App 收到 `RobotState.motion_status`
+- **THEN** 底部动作按钮必须按实际动作状态显示选中态，选中图标使用透明背景资源，不得显示逆向素材中的半透明圆形底
+
+#### Scenario: 灯光状态来源
+- **WHEN** 用户发送前灯、后灯或自动补光命令
+- **THEN** 真实链路下 App 不得仅因命令入队成功就长期覆盖 UI 状态，最终显示必须以 driver 可订阅状态或命令完成确认后的状态为准
+
 ### Requirement: 输入层必须处理 UniRC UDP 外部摇杆
 
 App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆或 Android 广播作为正式移动输入。

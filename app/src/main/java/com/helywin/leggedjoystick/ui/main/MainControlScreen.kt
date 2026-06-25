@@ -9,6 +9,8 @@
 
 package com.helywin.leggedjoystick.ui.main
 
+import android.view.SurfaceView
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -35,12 +38,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Refresh
@@ -57,12 +57,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,7 +71,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import coil.compose.rememberAsyncImagePainter
 import com.helywin.leggedjoystick.R
 import com.helywin.leggedjoystick.controller.Controller
 import com.helywin.leggedjoystick.controller.RobotAction
@@ -90,18 +89,24 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
+import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
+import com.helywin.leggedjoystick.ui.video.RtspVideoSurface
+import com.helywin.leggedjoystick.ui.video.captureRtspSurfaceSnapshot
 import legged_driver.AppMode
 import legged_driver.ConnectionState as DriverConnectionState
 import legged_driver.FaultLevel
+import legged_driver.HeadDirection
+import legged_driver.MotionStatus
 import legged_driver.SportMode
 
 private enum class RightToolPanel {
-    LIGHT,
-    HEAD,
-    STANCE
+    LIGHT
 }
 
-private const val HEAD_CONTROL_STEP = 0.5f
+private enum class PrimaryVideoSource {
+    HEAD,
+    TAIL
+}
 
 /**
  * 主控制界面。
@@ -109,10 +114,11 @@ private const val HEAD_CONTROL_STEP = 0.5f
 @Composable
 fun MainControlScreen(
     controller: Controller,
-    onSettingsClick: () -> Unit,
-    onVideoClick: () -> Unit
+    onSettingsClick: () -> Unit
 ) {
+    val context = LocalContext.current
     val currentSportMode = settingsState.robotCtrlMode
+    val motionStatus = settingsState.motionStatus
     val appMode = settingsState.robotMode
     val connectionState = settingsState.connectionState
     val batteryLevel = settingsState.batteryLevel
@@ -121,9 +127,9 @@ fun MainControlScreen(
     val frontLightOn = settingsState.frontLightOn
     val backLightOn = settingsState.backLightOn
     val autoModeLightOn = settingsState.autoModeLightOn
-    val highLowStance = settingsState.highLowStance
     val controlOwnershipState = settingsState.controlOwnershipState
     val remoteInputState = settingsState.remoteInputState
+    val headDirection = settingsState.headDirection
     val lastCommandName = settingsState.lastCommandName
     val lastCommandDetail = settingsState.lastCommandDetail
     val driverConnectionTelemetry = settingsState.driverConnectionTelemetry
@@ -131,18 +137,26 @@ fun MainControlScreen(
     val faultTelemetry = settingsState.faultTelemetry
     val odometryTelemetry = settingsState.odometryTelemetry
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
-    val mainTitle = settingsState.settings.mainTitle
-    val logoPath = settingsState.settings.logoPath
     val isConnected = connectionState == ConnectionState.CONNECTED
     val hasControl = settingsState.hasControl
     val commandEnabled = isConnected && hasControl
-    val inPlaceCommandEnabled = commandEnabled && currentSportMode == SportMode.SPORT_MODE_IN_PLACE
 
     var modeOverlayVisible by remember { mutableStateOf(false) }
     var speedSelectorVisible by remember { mutableStateOf(false) }
     var actionsExpanded by remember { mutableStateOf(true) }
     var batteryOverlayVisible by remember { mutableStateOf(false) }
     var activeRightToolPanel by remember { mutableStateOf<RightToolPanel?>(null) }
+    var mainVideoSurface by remember { mutableStateOf<SurfaceView?>(null) }
+    var isTakingSnapshot by remember { mutableStateOf(false) }
+    var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
+    val primaryVideoUrl = when (primaryVideoSource) {
+        PrimaryVideoSource.HEAD -> settingsState.settings.headRtspUrl
+        PrimaryVideoSource.TAIL -> settingsState.settings.tailRtspUrl
+    }
+    val secondaryVideoUrl = when (primaryVideoSource) {
+        PrimaryVideoSource.HEAD -> settingsState.settings.tailRtspUrl
+        PrimaryVideoSource.TAIL -> settingsState.settings.headRtspUrl
+    }
 
     ConnectionDialog(
         connectionState = connectionState,
@@ -154,7 +168,10 @@ fun MainControlScreen(
         onCancel = controller::cancelConnection
     )
 
-    ControlScreenBackground {
+    ControlScreenBackground(
+        rtspUrl = primaryVideoUrl,
+        onSurfaceViewReady = { mainVideoSurface = it }
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -166,13 +183,11 @@ fun MainControlScreen(
                     .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp)
             ) {
                 TopHud(
-                    title = mainTitle.ifEmpty { "机器狗遥控器" },
-                    logoPath = logoPath,
                     appMode = appMode,
                     connectionState = connectionState,
                     controlOwnershipState = controlOwnershipState,
                     batteryLevel = batteryLevel,
-                    remoteInputState = remoteInputState,
+                    isTakingSnapshot = isTakingSnapshot,
                     onModeClick = controller::setMode,
                     onControlOwnershipClick = {
                         if (hasControl) {
@@ -189,7 +204,19 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
-                    onVideoClick = onVideoClick,
+                    onPhotoClick = {
+                        val surface = mainVideoSurface
+                        if (!isTakingSnapshot) {
+                            if (surface == null) {
+                                Toast.makeText(context, "视频视图未准备好", Toast.LENGTH_SHORT).show()
+                            } else {
+                                isTakingSnapshot = true
+                                captureRtspSurfaceSnapshot(context, surface) {
+                                    isTakingSnapshot = false
+                                }
+                            }
+                        }
+                    },
                     onSettingsClick = onSettingsClick
                 )
 
@@ -200,10 +227,16 @@ fun MainControlScreen(
                 )
 
                 MiniVideoWindow(
-                    logoPath = logoPath,
+                    rtspUrl = secondaryVideoUrl,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(y = 86.dp)
+                        .offset(y = 56.dp),
+                    onClick = {
+                        primaryVideoSource = when (primaryVideoSource) {
+                            PrimaryVideoSource.HEAD -> PrimaryVideoSource.TAIL
+                            PrimaryVideoSource.TAIL -> PrimaryVideoSource.HEAD
+                        }
+                    }
                 )
 
                 RemoteInputPanel(
@@ -216,7 +249,7 @@ fun MainControlScreen(
                     odometryTelemetry = odometryTelemetry,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(x = 258.dp, y = 86.dp)
+                        .offset(x = 288.dp, y = 56.dp)
                 )
 
                 VerticalSpeedSelector(
@@ -225,7 +258,7 @@ fun MainControlScreen(
                     expanded = speedSelectorVisible,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(y = 252.dp)
+                        .offset(y = 218.dp)
                         .zIndex(1f),
                     onExpandClick = { speedSelectorVisible = !speedSelectorVisible },
                     onLevelSelected = { level ->
@@ -236,13 +269,15 @@ fun MainControlScreen(
 
                 RightToolColumn(
                     activePanel = activeRightToolPanel,
+                    headDirection = headDirection,
                     commandEnabled = commandEnabled,
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .offset(y = 54.dp),
                     onPanelToggle = { panel ->
                         activeRightToolPanel = if (activeRightToolPanel == panel) null else panel
-                    }
+                    },
+                    onReverseHeadTailClick = controller::reverseHeadTail
                 )
 
                 when (activeRightToolPanel) {
@@ -261,32 +296,12 @@ fun MainControlScreen(
                             onAutoModeLightClick = { controller.setAutoModeLight(!autoModeLightOn) }
                         )
                     }
-                    RightToolPanel.HEAD -> {
-                        HeadControlPanel(
-                            enabled = inPlaceCommandEnabled,
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .offset(x = (-68).dp, y = 10.dp)
-                                .zIndex(8f),
-                            onControlHead = controller::controlHead
-                        )
-                    }
-                    RightToolPanel.STANCE -> {
-                        StanceControlPanel(
-                            currentStance = highLowStance,
-                            enabled = inPlaceCommandEnabled,
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .offset(x = (-68).dp, y = 94.dp)
-                                .zIndex(8f),
-                            onStanceSelected = controller::setHighLowStance
-                        )
-                    }
                     null -> Unit
                 }
 
                 BottomActionGroup(
                     expanded = actionsExpanded,
+                    currentMotionStatus = motionStatus,
                     commandEnabled = commandEnabled,
                     modifier = Modifier.align(Alignment.BottomCenter),
                     onToggle = { actionsExpanded = !actionsExpanded },
@@ -327,7 +342,11 @@ fun MainControlScreen(
 }
 
 @Composable
-private fun ControlScreenBackground(content: @Composable BoxScope.() -> Unit) {
+private fun ControlScreenBackground(
+    rtspUrl: String,
+    onSurfaceViewReady: (SurfaceView?) -> Unit,
+    content: @Composable BoxScope.() -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -341,24 +360,34 @@ private fun ControlScreenBackground(content: @Composable BoxScope.() -> Unit) {
                 )
             )
     ) {
+        RtspVideoSurface(
+            rtspUrl = rtspUrl,
+            scaleMode = RtspVideoScaleMode.Fill,
+            showStatus = false,
+            onSurfaceViewReady = onSurfaceViewReady,
+            modifier = Modifier.matchParentSize()
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(Color.Black.copy(alpha = 0.10f))
+        )
         content()
     }
 }
 
 @Composable
 private fun TopHud(
-    title: String,
-    logoPath: String,
     appMode: AppMode,
     connectionState: ConnectionState,
     controlOwnershipState: ControlOwnershipState,
     batteryLevel: Int,
-    remoteInputState: RemoteInputRuntimeState,
+    isTakingSnapshot: Boolean,
     onModeClick: (AppMode) -> Unit,
     onControlOwnershipClick: () -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
-    onVideoClick: () -> Unit,
+    onPhotoClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -366,34 +395,8 @@ private fun TopHud(
             .fillMaxWidth()
             .height(62.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.End
     ) {
-        Row(
-            modifier = Modifier.width(330.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            if (logoPath.isNotEmpty()) {
-                Image(
-                    painter = rememberAsyncImagePainter(logoPath),
-                    contentDescription = "应用标识",
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Fit
-                )
-            }
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            RemoteInputIndicator(remoteInputState = remoteInputState)
-        }
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -415,9 +418,10 @@ private fun TopHud(
                 onClick = onConnectClick
             )
             HudIconButton(
-                iconResId = R.drawable.genisdog_icon_video,
-                contentDescription = "视频",
-                onClick = onVideoClick
+                iconResId = R.drawable.genisdog_icon_photo,
+                contentDescription = if (isTakingSnapshot) "正在拍照" else "拍照",
+                enabled = !isTakingSnapshot,
+                onClick = onPhotoClick
             )
             BatteryIconButton(
                 batteryLevel = batteryLevel,
@@ -479,35 +483,31 @@ private fun MotionModeEntry(
 
 @Composable
 private fun MiniVideoWindow(
-    logoPath: String,
-    modifier: Modifier = Modifier
+    rtspUrl: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
 ) {
+    val videoShape = RoundedCornerShape(16.dp)
+
     Surface(
         modifier = modifier
-            .width(240.dp)
-            .height(150.dp)
-            .border(2.dp, Color.White.copy(alpha = 0.62f), RoundedCornerShape(16.dp)),
+            .width(270.dp)
+            .aspectRatio(16f / 9f)
+            .clip(videoShape)
+            .clickable(onClick = onClick)
+            .border(2.dp, Color.White.copy(alpha = 0.62f), videoShape),
         color = Color(0xFF080A0A),
-        shape = RoundedCornerShape(16.dp),
+        shape = videoShape,
         tonalElevation = 0.dp,
         shadowElevation = 8.dp
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (logoPath.isNotEmpty()) {
-                Image(
-                    painter = rememberAsyncImagePainter(logoPath),
-                    contentDescription = "预览画面",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Image(
-                    painter = painterResource(R.drawable.genisdog_icon_video),
-                    contentDescription = "预览画面",
-                    modifier = Modifier.size(46.dp)
-                )
-            }
-        }
+        RtspVideoSurface(
+            rtspUrl = rtspUrl,
+            scaleMode = RtspVideoScaleMode.BestFit,
+            useTextureView = true,
+            showStatus = false,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
@@ -711,9 +711,11 @@ private fun VerticalSpeedSelector(
 @Composable
 private fun RightToolColumn(
     activePanel: RightToolPanel?,
+    headDirection: HeadDirection,
     commandEnabled: Boolean,
     modifier: Modifier = Modifier,
-    onPanelToggle: (RightToolPanel) -> Unit
+    onPanelToggle: (RightToolPanel) -> Unit,
+    onReverseHeadTailClick: () -> Unit
 ) {
     Column(
         modifier = modifier.width(56.dp),
@@ -724,22 +726,21 @@ private fun RightToolColumn(
             iconResId = R.drawable.genisdog_icon_light,
             contentDescription = "灯光",
             selected = activePanel == RightToolPanel.LIGHT,
+            clickEnabled = true,
             commandEnabled = commandEnabled,
             onClick = { onPanelToggle(RightToolPanel.LIGHT) }
         )
         RightToolButton(
-            imageVector = Icons.Filled.Refresh,
-            contentDescription = "头部控制",
-            selected = activePanel == RightToolPanel.HEAD,
+            iconResId = R.drawable.genisdog_icon_robot_angle,
+            contentDescription = if (headDirection == HeadDirection.HEAD_DIRECTION_TAIL) {
+                "切回头部方向"
+            } else {
+                "切换到尾部方向"
+            },
+            selected = headDirection == HeadDirection.HEAD_DIRECTION_TAIL,
+            clickEnabled = commandEnabled,
             commandEnabled = commandEnabled,
-            onClick = { onPanelToggle(RightToolPanel.HEAD) }
-        )
-        RightToolButton(
-            imageVector = Icons.Filled.KeyboardArrowUp,
-            contentDescription = "高低站姿",
-            selected = activePanel == RightToolPanel.STANCE,
-            commandEnabled = commandEnabled,
-            onClick = { onPanelToggle(RightToolPanel.STANCE) }
+            onClick = onReverseHeadTailClick
         )
     }
 }
@@ -750,6 +751,7 @@ private fun RightToolButton(
     imageVector: ImageVector? = null,
     contentDescription: String,
     selected: Boolean,
+    clickEnabled: Boolean,
     commandEnabled: Boolean,
     onClick: () -> Unit
 ) {
@@ -765,11 +767,11 @@ private fun RightToolButton(
         modifier = Modifier
             .size(52.dp)
             .clickable(
+                enabled = clickEnabled,
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
-            )
-            .alpha(if (commandEnabled || selected) 1f else 0.54f),
+            ),
         color = background,
         shape = RoundedCornerShape(15.dp),
         tonalElevation = 0.dp,
@@ -879,7 +881,6 @@ private fun LightToggleRow(
                 indication = null,
                 onClick = onClick
             )
-            .alpha(if (enabled) 1f else 0.46f)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -910,181 +911,6 @@ private fun LightToggleRow(
 }
 
 @Composable
-private fun HeadControlPanel(
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onControlHead: (Float, Float) -> Unit
-) {
-    ToolPanelSurface(modifier = modifier.width(154.dp)) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            HeadControlButton(
-                imageVector = Icons.Filled.KeyboardArrowUp,
-                contentDescription = "抬头",
-                enabled = enabled,
-                onClick = { onControlHead(0f, HEAD_CONTROL_STEP) }
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                HeadControlButton(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                    contentDescription = "左探头",
-                    enabled = enabled,
-                    onClick = { onControlHead(HEAD_CONTROL_STEP, 0f) }
-                )
-                HeadControlButton(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = "头部停止",
-                    enabled = enabled,
-                    onClick = { onControlHead(0f, 0f) }
-                )
-                HeadControlButton(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "右探头",
-                    enabled = enabled,
-                    onClick = { onControlHead(-HEAD_CONTROL_STEP, 0f) }
-                )
-            }
-            HeadControlButton(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = "低头",
-                enabled = enabled,
-                onClick = { onControlHead(0f, -HEAD_CONTROL_STEP) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun HeadControlButton(
-    imageVector: ImageVector,
-    contentDescription: String,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-
-    Surface(
-        modifier = Modifier
-            .size(40.dp)
-            .clickable(
-                enabled = enabled,
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
-            .alpha(if (enabled) 1f else 0.42f),
-        color = if (pressed && enabled) PressedActionBackground else Color.White.copy(alpha = 0.08f),
-        shape = RoundedCornerShape(11.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = imageVector,
-                contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(25.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun StanceControlPanel(
-    currentStance: HighLowStance,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onStanceSelected: (HighLowStance) -> Unit
-) {
-    ToolPanelSurface(modifier = modifier.width(160.dp)) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            StanceChoiceRow(
-                stance = HighLowStance.HIGH,
-                icon = Icons.Filled.KeyboardArrowUp,
-                selected = currentStance == HighLowStance.HIGH,
-                enabled = enabled,
-                onClick = { onStanceSelected(HighLowStance.HIGH) }
-            )
-            StanceChoiceRow(
-                stance = HighLowStance.NORMAL,
-                icon = Icons.Filled.Refresh,
-                selected = currentStance == HighLowStance.NORMAL,
-                enabled = enabled,
-                onClick = { onStanceSelected(HighLowStance.NORMAL) }
-            )
-            StanceChoiceRow(
-                stance = HighLowStance.LOW,
-                icon = Icons.Filled.KeyboardArrowDown,
-                selected = currentStance == HighLowStance.LOW,
-                enabled = enabled,
-                onClick = { onStanceSelected(HighLowStance.LOW) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun StanceChoiceRow(
-    stance: HighLowStance,
-    icon: ImageVector,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                when {
-                    pressed && enabled -> PressedActionBackground
-                    selected -> Color(0x5527C7C4)
-                    else -> Color.Transparent
-                }
-            )
-            .clickable(
-                enabled = enabled,
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
-            .alpha(if (enabled) 1f else 0.46f)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = stance.displayName,
-            tint = if (selected) AccentCyan else Color.White,
-            modifier = Modifier.size(23.dp)
-        )
-        Text(
-            text = stance.displayName,
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
 private fun ToolPanelSurface(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
@@ -1107,6 +933,7 @@ private fun ToolPanelSurface(
 @Composable
 private fun BottomActionGroup(
     expanded: Boolean,
+    currentMotionStatus: MotionStatus,
     commandEnabled: Boolean,
     modifier: Modifier = Modifier,
     onToggle: () -> Unit,
@@ -1191,6 +1018,7 @@ private fun BottomActionGroup(
                 RobotAction.entries.forEach { action ->
                     ActionButton(
                         action = action,
+                        selected = currentMotionStatus == action.motionStatus,
                         enabled = commandEnabled,
                         onClick = { onActionClick(action) }
                     )
@@ -1249,38 +1077,35 @@ private fun SpeedLevelMenuItem(
 @Composable
 private fun ActionButton(
     action: RobotAction,
+    selected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
 
     Column(
         modifier = Modifier
             .width(66.dp)
             .height(58.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (pressed && enabled) PressedActionBackground else Color.Transparent)
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             )
-            .alpha(if (enabled) 1f else 0.46f)
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Image(
-            painter = painterResource(action.iconResId()),
+            painter = painterResource(action.iconResId(selected)),
             contentDescription = action.displayName,
             modifier = Modifier.size(26.dp),
             contentScale = ContentScale.Fit
         )
         Text(
             text = action.displayName,
-            color = Color.White,
+            color = if (selected) AccentCyan else Color.White,
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -1386,7 +1211,6 @@ private fun MotionModeCard(
             .height(154.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .alpha(if (enabled) 1f else 0.48f)
             .border(
                 width = if (selected) 2.dp else 1.dp,
                 color = if (selected) AccentCyan else Color.White.copy(alpha = 0.16f),
@@ -1496,12 +1320,11 @@ private fun ControlModeToggle(
     Surface(
         modifier = Modifier
             .size(46.dp)
-            .clickable(enabled = isConnected) { onModeClick(nextMode) }
-            .alpha(if (isConnected) 1f else 0.46f),
+            .clickable(enabled = isConnected) { onModeClick(nextMode) },
         color = if (currentMode == AppMode.APP_MODE_MANUAL) {
             Color(0x7A27C7C4)
         } else {
-            Color(0x8A17201F)
+            PanelBackground
         },
         shape = RoundedCornerShape(14.dp),
         tonalElevation = 0.dp,
@@ -1551,8 +1374,7 @@ private fun ControlOwnershipButton(
         modifier = Modifier
             .width(74.dp)
             .height(46.dp)
-            .clickable(enabled = enabled, onClick = onClick)
-            .alpha(if (enabled) 1f else 0.48f),
+            .clickable(enabled = enabled, onClick = onClick),
         color = if (state == ControlOwnershipState.OWNED) {
             Color(0x7A27C7C4)
         } else {
@@ -1610,7 +1432,7 @@ private fun ConnectionButton(
         modifier = Modifier
             .size(46.dp)
             .clickable(onClick = onClick),
-        color = Color(0x8A17201F),
+        color = PanelBackground,
         shape = RoundedCornerShape(14.dp),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp
@@ -1630,13 +1452,14 @@ private fun ConnectionButton(
 private fun HudIconButton(
     iconResId: Int,
     contentDescription: String,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .size(46.dp)
-            .clickable(onClick = onClick),
-        color = Color(0x8A17201F),
+            .clickable(enabled = enabled, onClick = onClick),
+        color = PanelBackground,
         shape = RoundedCornerShape(14.dp),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp
@@ -1662,7 +1485,7 @@ private fun BatteryIconButton(
             .width(64.dp)
             .height(46.dp)
             .clickable(onClick = onClick),
-        color = Color(0x8A17201F),
+        color = PanelBackground,
         shape = RoundedCornerShape(14.dp),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp
@@ -1685,27 +1508,6 @@ private fun BatteryIconButton(
                 fontWeight = FontWeight.Bold
             )
         }
-    }
-}
-
-@Composable
-private fun RemoteInputIndicator(remoteInputState: RemoteInputRuntimeState) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Sensors,
-            contentDescription = "遥控输入",
-            tint = remoteInputState.status.statusColor(),
-            modifier = Modifier.size(17.dp)
-        )
-        Text(
-            text = remoteInputState.status.displayName,
-            fontSize = 12.sp,
-            color = remoteInputState.status.statusColor(),
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }
 
@@ -1764,15 +1566,18 @@ private fun SportMode.iconResId(): Int {
     }
 }
 
-private fun RobotAction.iconResId(): Int {
+private fun RobotAction.iconResId(selected: Boolean = false): Int {
     return when (this) {
-        RobotAction.STAND_UP -> R.drawable.genisdog_icon_stand
-        RobotAction.CRAWL -> R.drawable.genisdog_icon_crawl
-        RobotAction.LIE_DOWN -> R.drawable.genisdog_icon_lie_down
-        RobotAction.GAIT -> R.drawable.genisdog_icon_spinning
-        RobotAction.CLIMB -> R.drawable.genisdog_icon_high_platform
-        RobotAction.SLIM -> R.drawable.genisdog_icon_slim
-        RobotAction.LOCKED -> R.drawable.genisdog_icon_lock
+        RobotAction.STAND_UP -> if (selected) R.drawable.genisdog_icon_stand_selected else R.drawable.genisdog_icon_stand
+        RobotAction.CRAWL -> if (selected) R.drawable.genisdog_icon_crawl_selected else R.drawable.genisdog_icon_crawl
+        RobotAction.LIE_DOWN -> if (selected) R.drawable.genisdog_icon_lie_down_selected else R.drawable.genisdog_icon_lie_down
+        RobotAction.CLIMB -> if (selected) {
+            R.drawable.genisdog_icon_high_platform_selected
+        } else {
+            R.drawable.genisdog_icon_high_platform
+        }
+        RobotAction.SLIM -> if (selected) R.drawable.genisdog_icon_slim_selected else R.drawable.genisdog_icon_slim
+        RobotAction.LOCKED -> if (selected) R.drawable.genisdog_icon_lock_selected else R.drawable.genisdog_icon_lock
     }
 }
 
@@ -1843,8 +1648,8 @@ private val RemoteInputStatus.displayName: String
     }
 
 private val AccentCyan = Color(0xFF27C7C4)
-private val PanelBackground = Color(0x8A17201F)
-private val PressedActionBackground = Color(0x6627C7C4)
+private val PanelBackground = Color(0xF217201F)
+private val PressedActionBackground = Color(0xF11D3A38)
 
 @Preview(showBackground = true, widthDp = 960, heightDp = 540)
 @Composable
@@ -1863,6 +1668,7 @@ fun MainControlScreenPreview() {
             override fun setFrontLight(on: Boolean) {}
             override fun setBackLight(on: Boolean) {}
             override fun setAutoModeLight(on: Boolean) {}
+            override fun reverseHeadTail() {}
             override fun controlHead(leftRight: Float, upDown: Float) {}
             override fun setHighLowStance(stance: HighLowStance) {}
             override fun updateSettings(settings: AppSettings) {}
@@ -1877,7 +1683,6 @@ fun MainControlScreenPreview() {
 
     MainControlScreen(
         controller = dummyController,
-        onSettingsClick = {},
-        onVideoClick = {}
+        onSettingsClick = {}
     )
 }

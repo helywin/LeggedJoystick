@@ -40,7 +40,8 @@ data class AppSettings(
     val zmqIp: String = "192.168.234.1",
     val zmqPort: Int = 33445,
     val speedLevel: SpeedLevel = SpeedLevel.SLOW,
-    val rtspUrl: String = "rtsp://192.168.234.1:8554/test",
+    val headRtspUrl: String = "rtsp://192.168.234.1:8554/front",
+    val tailRtspUrl: String = "rtsp://192.168.234.1:8554/back",
     val remoteInputHost: String = "127.0.0.1",
     val remoteInputPort: Int = 19856,
     val remoteInputLocalPort: Int = 0,
@@ -52,15 +53,9 @@ data class AppSettings(
     val remoteInputStrafeRightInverted: Boolean = false,
     val remoteInputYawRightChannel: Int = 1,
     val remoteInputYawRightInverted: Boolean = false,
-    val mainTitle: String = "机器狗遥控器",
-    val logoPath: String = "",
     val keepScreenOn: Boolean = true,
     val engineeringMockEnabled: Boolean = false
-) {
-    // 保持向后兼容的属性，狂暴模式现在等同于快速模式
-    val isRageModeEnabled: Boolean
-        get() = speedLevel == SpeedLevel.FAST
-}
+)
 
 /**
  * 连接状态枚举
