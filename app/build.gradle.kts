@@ -122,7 +122,8 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.wire.runtime)
     implementation(libs.coil.compose)
-    implementation(libs.vlc.android)
+    implementation(libs.ijkplayer.java)
+    implementation(libs.ijkplayer.arm64)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

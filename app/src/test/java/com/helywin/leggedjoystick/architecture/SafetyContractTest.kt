@@ -107,10 +107,14 @@ class SafetyContractTest {
         val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
 
         assertTrue(
-            "RTSP 视频恢复前台时必须复用进程级 VLC 运行时并重新 attach，不能重建 AndroidView 或打开 verbose 日志",
+            "RTSP 视频恢复前台时必须复用进程级 IJKPlayer 运行时并重新 attach TextureView，不能回到 VLC SurfaceView 输出路径",
                 video.contains("Lifecycle.Event.ON_RESUME ->") &&
                 video.contains("resumeGeneration++") &&
                 video.contains("object RtspVideoRuntime") &&
+                video.contains("IjkMediaPlayer") &&
+                video.contains("TextureView") &&
+                video.contains("setSurface") &&
+                video.contains("MEDIA_INFO_VIDEO_RENDERING_START") &&
                 video.contains("registerDefaultNetworkCallback") &&
                 video.contains("ACTION_POWER_DISCONNECTED") &&
                 video.contains("ACTION_USB_STATE") &&
@@ -119,14 +123,13 @@ class SafetyContractTest {
                 video.contains("RTSP_START_TIMEOUT_MS") &&
                 video.contains("scheduleVideoRetry") &&
                 video.contains("RtspVideoRuntime.player(context, slot)") &&
-                video.contains("player.attach(layout, useTextureView, scaleMode)") &&
+                video.contains("player.attach(textureView, scaleMode)") &&
                 video.contains("player.playUrl(rtspUrl, forceReload = networkChanged || retryRequested)") &&
-                video.contains("--quiet") &&
-                video.contains(":no-spu") &&
+                !video.contains("org.videolan") &&
+                !video.contains("VLCVideoLayout") &&
+                !video.contains("SurfaceView") &&
                 !video.contains("key(retryTrigger)") &&
                 !video.contains("-vv") &&
-                !video.contains("--no-drop-late-frames") &&
-                !video.contains("--no-skip-frames") &&
                 mainScreen.contains("slot = RtspVideoSlot.Main") &&
                 mainScreen.contains("slot = RtspVideoSlot.Secondary")
         )

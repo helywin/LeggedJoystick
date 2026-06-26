@@ -9,7 +9,7 @@
 
 package com.helywin.leggedjoystick.ui.main
 
-import android.view.SurfaceView
+import android.view.TextureView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -146,8 +146,8 @@ fun MainControlScreen(
     var actionsExpanded by remember { mutableStateOf(true) }
     var batteryOverlayVisible by remember { mutableStateOf(false) }
     var activeRightToolPanel by remember { mutableStateOf<RightToolPanel?>(null) }
-    var mainVideoSurface by remember { mutableStateOf<SurfaceView?>(null) }
-    var secondaryVideoSurface by remember { mutableStateOf<SurfaceView?>(null) }
+    var mainVideoTexture by remember { mutableStateOf<TextureView?>(null) }
+    var secondaryVideoTexture by remember { mutableStateOf<TextureView?>(null) }
     var isTakingSnapshot by remember { mutableStateOf(false) }
     var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
     val primaryVideoUrl = when (primaryVideoSource) {
@@ -163,8 +163,8 @@ fun MainControlScreen(
             isTakingSnapshot = true
             captureRtspSurfaceSnapshot(
                 context = context,
-                primarySurfaceView = mainVideoSurface,
-                secondarySurfaceView = secondaryVideoSurface
+                primaryTextureView = mainVideoTexture,
+                secondaryTextureView = secondaryVideoTexture
             ) {
                 isTakingSnapshot = false
             }
@@ -183,7 +183,7 @@ fun MainControlScreen(
 
     ControlScreenBackground(
         rtspUrl = primaryVideoUrl,
-        onSurfaceViewReady = { mainVideoSurface = it }
+        onTextureViewReady = { mainVideoTexture = it }
     ) {
         Box(
             modifier = Modifier
@@ -219,7 +219,7 @@ fun MainControlScreen(
 
                 MiniVideoWindow(
                     rtspUrl = secondaryVideoUrl,
-                    onSurfaceViewReady = { secondaryVideoSurface = it },
+                    onTextureViewReady = { secondaryVideoTexture = it },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset(y = 20.dp),
@@ -348,7 +348,7 @@ fun MainControlScreen(
 @Composable
 private fun ControlScreenBackground(
     rtspUrl: String,
-    onSurfaceViewReady: (SurfaceView?) -> Unit,
+    onTextureViewReady: (TextureView?) -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
@@ -369,7 +369,7 @@ private fun ControlScreenBackground(
             slot = RtspVideoSlot.Main,
             scaleMode = RtspVideoScaleMode.Fill,
             showStatus = false,
-            onSurfaceViewReady = onSurfaceViewReady,
+            onTextureViewReady = onTextureViewReady,
             modifier = Modifier.matchParentSize()
         )
         Box(
@@ -475,7 +475,7 @@ private fun MotionModeEntry(
 private fun MiniVideoWindow(
     rtspUrl: String,
     modifier: Modifier = Modifier,
-    onSurfaceViewReady: (SurfaceView?) -> Unit,
+    onTextureViewReady: (TextureView?) -> Unit,
     onClick: () -> Unit
 ) {
 
@@ -493,9 +493,8 @@ private fun MiniVideoWindow(
             rtspUrl = rtspUrl,
             slot = RtspVideoSlot.Secondary,
             scaleMode = RtspVideoScaleMode.BestFit,
-            useTextureView = false,
             showStatus = false,
-            onSurfaceViewReady = onSurfaceViewReady,
+            onTextureViewReady = onTextureViewReady,
             modifier = Modifier.fillMaxSize()
         )
     }

@@ -7,17 +7,20 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.view.PixelCopy
-import android.view.SurfaceView
+import android.view.Surface
+import android.view.TextureView
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -57,11 +60,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.util.VLCVideoLayout
 import timber.log.Timber
+import tv.danmaku.ijk.media.player.IMediaPlayer
+import tv.danmaku.ijk.media.player.IjkMediaPlayer
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -75,6 +76,7 @@ private const val RTSP_RETRY_INITIAL_DELAY_MS = 1_000L
 private const val RTSP_RETRY_MAX_DELAY_MS = 5_000L
 private const val RTSP_START_TIMEOUT_MS = 6_000L
 private const val RTSP_MAX_RETRY_ATTEMPT = 6
+private const val IJK_RTSP_TIMEOUT_US = 5_000_000L
 private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
 private const val DEFAULT_SNAPSHOT_WIDTH = 1920
 private const val DEFAULT_SNAPSHOT_HEIGHT = 1080
@@ -100,7 +102,7 @@ object RtspVideoRuntime {
     private val lock = Any()
     private val players = EnumMap<RtspVideoSlot, RtspVideoPlayer>(RtspVideoSlot::class.java)
     private val networkGeneration = MutableStateFlow(0)
-    private var libVLC: LibVLC? = null
+    private var ijkInitialized = false
     private var appContext: Context? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -108,26 +110,23 @@ object RtspVideoRuntime {
 
     fun player(context: Context, slot: RtspVideoSlot): RtspVideoPlayer {
         synchronized(lock) {
-            val vlc = libVLC ?: createLibVLC(context.applicationContext).also {
-                libVLC = it
-                Timber.i("[RtspVideoRuntime] 进程级 LibVLC 已初始化")
-            }
-            return players.getOrPut(slot) { RtspVideoPlayer(slot, vlc) }
+            ensureIjkInitialized()
+            return players.getOrPut(slot) { RtspVideoPlayer(slot) }
         }
     }
 
-    private fun createLibVLC(context: Context): LibVLC {
-        return LibVLC(
-            context,
-            arrayListOf(
-                "--rtsp-tcp",
-                "--drop-late-frames",
-                "--skip-frames",
-                "--no-video-title-show",
-                "--no-osd",
-                "--quiet"
-            )
-        )
+    private fun ensureIjkInitialized() {
+        if (ijkInitialized) return
+
+        try {
+            IjkMediaPlayer.loadLibrariesOnce(null)
+            IjkMediaPlayer.native_setLogLevel(IjkMediaPlayer.IJK_LOG_SILENT)
+            ijkInitialized = true
+            Timber.i("[RtspVideoRuntime] 进程级 IJKPlayer 已初始化")
+        } catch (e: Throwable) {
+            Timber.e(e, "[RtspVideoRuntime] IJKPlayer 初始化失败")
+            throw e
+        }
     }
 
     fun networkGeneration(context: Context): StateFlow<Int> {
@@ -252,51 +251,67 @@ object RtspVideoRuntime {
             networkCallback = null
             appContext = null
             connectivityManager = null
-            libVLC?.release()
-            libVLC = null
         }
     }
 }
 
+interface RtspVideoPlayerListener {
+    fun onOpening()
+    fun onPlaying()
+    fun onStopped()
+    fun onError(reason: String)
+}
+
 class RtspVideoPlayer internal constructor(
-    private val slot: RtspVideoSlot,
-    private val libVLC: LibVLC
+    private val slot: RtspVideoSlot
 ) {
-    private val mediaPlayer = MediaPlayer(libVLC)
-    private var attachedLayout: VLCVideoLayout? = null
+    private var mediaPlayer: IjkMediaPlayer? = null
+    private var attachedTextureView: TextureView? = null
+    private var attachedSurfaceTexture: SurfaceTexture? = null
+    private var attachedSurface: Surface? = null
+    private var textureListener: TextureView.SurfaceTextureListener? = null
+    private var layoutChangeListener: View.OnLayoutChangeListener? = null
+    private var playbackListener: RtspVideoPlayerListener? = null
     private var attached = false
     private var released = false
     private var currentUrl: String? = null
-    private var currentUseTextureView = false
+    private var currentScaleMode = RtspVideoScaleMode.BestFit
+    private var videoWidth = 0
+    private var videoHeight = 0
 
     val isAttached: Boolean
-        get() = attached && !released
+        get() = attached && !released && attachedSurface?.isValid == true
 
-    fun setEventListener(listener: MediaPlayer.EventListener?) {
-        if (!released) {
-            mediaPlayer.setEventListener(listener)
-        }
+    fun setEventListener(listener: RtspVideoPlayerListener?) {
+        playbackListener = listener
     }
 
     fun attach(
-        layout: VLCVideoLayout,
-        useTextureView: Boolean,
-        scaleMode: RtspVideoScaleMode
+        textureView: TextureView,
+        scaleMode: RtspVideoScaleMode,
+        onSurfaceReady: () -> Unit
     ): Boolean {
         check(!released) { "RTSP 播放器已释放: $slot" }
 
-        val shouldAttach = !attached || attachedLayout !== layout || currentUseTextureView != useTextureView
+        currentScaleMode = scaleMode
+        val shouldAttach = attachedTextureView !== textureView || textureListener == null
         if (shouldAttach) {
-            detachViews("重新绑定视频输出")
-            mediaPlayer.attachViews(layout, null, true, useTextureView)
-            attachedLayout = layout
-            attached = true
-            currentUseTextureView = useTextureView
-            Timber.i("[RtspVideoRuntime] %s 视频输出已绑定，texture=%s", slot, useTextureView)
+            detachTextureView("重新绑定视频输出")
+            attachedTextureView = textureView
+            installTextureCallbacks(textureView, onSurfaceReady)
+            Timber.i("[RtspVideoRuntime] %s 视频输出已绑定到 TextureView", slot)
         }
 
-        mediaPlayer.setVideoScale(scaleMode.toVlcScaleType())
-        return shouldAttach
+        applyVideoTransform()
+        val surfaceBound = if (textureView.isAvailable) {
+            bindSurface(textureView.surfaceTexture, "TextureView 已可用")
+        } else {
+            false
+        }
+        if (surfaceBound) {
+            onSurfaceReady()
+        }
+        return shouldAttach || surfaceBound
     }
 
     fun playUrl(rtspUrl: String, forceReload: Boolean = false) {
@@ -308,51 +323,226 @@ class RtspVideoPlayer internal constructor(
             stopPlayback("空视频地址")
             return
         }
-        if (!forceReload && currentUrl == normalizedUrl && mediaPlayer.isPlaying) {
+        if (!forceReload && currentUrl == normalizedUrl && mediaPlayer.safeIsPlaying()) {
             return
         }
 
-        stopPlayback(if (forceReload) "网络变化后重拉视频流" else "切换视频流")
-        val media = Media(libVLC, Uri.parse(normalizedUrl))
-        media.setHWDecoderEnabled(true, false)
-        media.addOption(":network-caching=300")
-        media.addOption(":live-caching=300")
-        media.addOption(":rtsp-tcp")
-        media.addOption(":no-audio")
-        media.addOption(":no-spu")
-        media.addOption(":no-sub-autodetect-file")
-        mediaPlayer.media = media
-        media.release()
+        closeMediaPlayer(if (forceReload) "网络变化后重拉视频流" else "切换视频流")
         currentUrl = normalizedUrl
-        mediaPlayer.play()
-        Timber.i("[RtspVideoRuntime] %s 开始加载 RTSP 流: %s, forceReload=%s", slot, normalizedUrl, forceReload)
+        videoWidth = 0
+        videoHeight = 0
+
+        val player = createMediaPlayer(normalizedUrl)
+        mediaPlayer = player
+        attachedSurface?.takeIf { it.isValid }?.let { player.setSurface(it) }
+        playbackListener?.onOpening()
+        player.prepareAsync()
+        Timber.i("[RtspVideoRuntime] %s 开始加载 IJK RTSP 流: %s, forceReload=%s", slot, normalizedUrl, forceReload)
     }
 
     fun stopPlayback(reason: String) {
         if (released) return
-        try {
-            mediaPlayer.stop()
-        } catch (e: Exception) {
-            Timber.w(e, "[RtspVideoRuntime] %s 停止视频流失败: %s", slot, reason)
-        } finally {
-            currentUrl = null
-        }
+        closeMediaPlayer(reason)
+        currentUrl = null
+        playbackListener?.onStopped()
     }
 
     fun stopAndDetach(reason: String) {
         stopPlayback(reason)
-        detachViews(reason)
+        detachTextureView(reason)
     }
 
-    private fun detachViews(reason: String) {
+    private fun createMediaPlayer(rtspUrl: String): IjkMediaPlayer {
+        return IjkMediaPlayer().apply {
+            setLogEnabled(false)
+            setVolume(0f, 0f)
+            setAudioStreamType(AudioManager.STREAM_MUSIC)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "tcp")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "stimeout", IJK_RTSP_TIMEOUT_US)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "timeout", IJK_RTSP_TIMEOUT_US)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize", 32L * 1024L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "infbuf", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "framedrop", 5L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared", 0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec", 0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-handle-resolution-change", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 48L)
+            setOnPreparedListener { player ->
+                try {
+                    player.start()
+                    Timber.i("[RtspVideoRuntime] %s IJK RTSP 已准备并开始播放", slot)
+                } catch (e: Exception) {
+                    Timber.e(e, "[RtspVideoRuntime] %s IJK RTSP start 失败", slot)
+                    playbackListener?.onError("IJK start 失败")
+                }
+            }
+            setOnInfoListener { _, what, extra ->
+                handlePlayerInfo(what, extra)
+                false
+            }
+            setOnErrorListener { _, what, extra ->
+                val reason = "IJK 播放错误 what=$what extra=$extra"
+                Timber.e("[RtspVideoRuntime] %s %s", slot, reason)
+                playbackListener?.onError(reason)
+                true
+            }
+            setOnCompletionListener {
+                Timber.w("[RtspVideoRuntime] %s IJK RTSP 流结束", slot)
+                playbackListener?.onError("IJK 视频流结束")
+            }
+            setOnVideoSizeChangedListener { player, width, height, _, _ ->
+                this@RtspVideoPlayer.videoWidth = width.takeIf { it > 0 } ?: player.videoWidth
+                this@RtspVideoPlayer.videoHeight = height.takeIf { it > 0 } ?: player.videoHeight
+                applyVideoTransform()
+            }
+            setDataSource(rtspUrl)
+        }
+    }
+
+    private fun handlePlayerInfo(what: Int, extra: Int) {
+        when (what) {
+            IMediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START,
+            IMediaPlayer.MEDIA_INFO_VIDEO_DECODED_START -> {
+                playbackListener?.onPlaying()
+                Timber.i("[RtspVideoRuntime] %s IJK 首帧开始渲染: info=%s extra=%s", slot, what, extra)
+            }
+            IMediaPlayer.MEDIA_INFO_BUFFERING_START -> playbackListener?.onOpening()
+            IMediaPlayer.MEDIA_INFO_BUFFERING_END -> playbackListener?.onPlaying()
+            else -> Unit
+        }
+    }
+
+    private fun closeMediaPlayer(reason: String) {
+        val player = mediaPlayer ?: return
+        mediaPlayer = null
         if (released) return
         try {
-            mediaPlayer.detachViews()
+            player.setOnPreparedListener(null)
+            player.setOnInfoListener(null)
+            player.setOnErrorListener(null)
+            player.setOnCompletionListener(null)
+            player.setOnVideoSizeChangedListener(null)
+            player.setSurface(null)
+            try {
+                player.stop()
+            } catch (e: Exception) {
+                Timber.d(e, "[RtspVideoRuntime] %s IJK stop 忽略异常: %s", slot, reason)
+            }
+            player.release()
         } catch (e: Exception) {
-            Timber.w(e, "[RtspVideoRuntime] %s 解绑视频输出失败: %s", slot, reason)
-        } finally {
-            attached = false
-            attachedLayout = null
+            Timber.w(e, "[RtspVideoRuntime] %s 释放 IJK 播放器失败: %s", slot, reason)
+        }
+    }
+
+    private fun installTextureCallbacks(
+        textureView: TextureView,
+        onSurfaceReady: () -> Unit
+    ) {
+        val listener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                if (bindSurface(surface, "TextureView 可用")) {
+                    onSurfaceReady()
+                }
+                applyVideoTransform()
+            }
+
+            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                applyVideoTransform()
+            }
+
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                stopPlayback("TextureView 销毁")
+                releaseSurface("TextureView 销毁")
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+        }
+        val onLayoutChange = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            applyVideoTransform()
+        }
+        textureListener = listener
+        layoutChangeListener = onLayoutChange
+        textureView.surfaceTextureListener = listener
+        textureView.addOnLayoutChangeListener(onLayoutChange)
+    }
+
+    private fun bindSurface(surfaceTexture: SurfaceTexture?, reason: String): Boolean {
+        if (surfaceTexture == null || released) return false
+        if (attachedSurfaceTexture === surfaceTexture && attachedSurface?.isValid == true) {
+            return false
+        }
+
+        releaseSurface("更换视频输出")
+        attachedSurfaceTexture = surfaceTexture
+        attachedSurface = Surface(surfaceTexture)
+        attached = true
+        mediaPlayer?.setSurface(attachedSurface)
+        Timber.i("[RtspVideoRuntime] %s IJK Surface 已绑定: %s", slot, reason)
+        return true
+    }
+
+    private fun detachTextureView(reason: String) {
+        attachedTextureView?.let { textureView ->
+            if (textureView.surfaceTextureListener === textureListener) {
+                textureView.surfaceTextureListener = null
+            }
+            layoutChangeListener?.let(textureView::removeOnLayoutChangeListener)
+        }
+        textureListener = null
+        layoutChangeListener = null
+        attachedTextureView = null
+        releaseSurface(reason)
+    }
+
+    private fun releaseSurface(reason: String) {
+        try {
+            mediaPlayer?.setSurface(null)
+        } catch (e: Exception) {
+            Timber.d(e, "[RtspVideoRuntime] %s 清理 IJK Surface 时忽略异常: %s", slot, reason)
+        }
+        attachedSurface?.release()
+        attachedSurface = null
+        attachedSurfaceTexture = null
+        attached = false
+    }
+
+    private fun applyVideoTransform() {
+        val textureView = attachedTextureView ?: return
+        val viewWidth = textureView.width
+        val viewHeight = textureView.height
+        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {
+            textureView.setTransform(null)
+            return
+        }
+
+        val scaleX = viewWidth.toFloat() / videoWidth.toFloat()
+        val scaleY = viewHeight.toFloat() / videoHeight.toFloat()
+        val scale = when (currentScaleMode) {
+            RtspVideoScaleMode.BestFit -> minOf(scaleX, scaleY)
+            RtspVideoScaleMode.Fill -> maxOf(scaleX, scaleY)
+        }
+        val scaledWidth = videoWidth * scale
+        val scaledHeight = videoHeight * scale
+        val matrix = Matrix().apply {
+            setScale(
+                scaledWidth / viewWidth.toFloat(),
+                scaledHeight / viewHeight.toFloat(),
+                viewWidth / 2f,
+                viewHeight / 2f
+            )
+        }
+        textureView.setTransform(matrix)
+    }
+
+    private fun IjkMediaPlayer?.safeIsPlaying(): Boolean {
+        return try {
+            this?.isPlaying == true
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -360,7 +550,6 @@ class RtspVideoPlayer internal constructor(
         if (released) return
         stopAndDetach("释放播放器")
         setEventListener(null)
-        mediaPlayer.release()
         released = true
     }
 }
@@ -371,18 +560,17 @@ fun RtspVideoSurface(
     modifier: Modifier = Modifier,
     slot: RtspVideoSlot = RtspVideoSlot.Main,
     scaleMode: RtspVideoScaleMode = RtspVideoScaleMode.BestFit,
-    useTextureView: Boolean = false,
     showStatus: Boolean = true,
-    onSurfaceViewReady: (SurfaceView?) -> Unit = {}
+    onTextureViewReady: (TextureView?) -> Unit = {}
 ) {
     val isInPreview = LocalInspectionMode.current
-    val latestSurfaceCallback by rememberUpdatedState(onSurfaceViewReady)
+    val latestTextureCallback by rememberUpdatedState(onTextureViewReady)
 
     if (isInPreview) {
         DisposableEffect(Unit) {
-            latestSurfaceCallback(null)
+            latestTextureCallback(null)
             onDispose {
-                latestSurfaceCallback(null)
+                latestTextureCallback(null)
             }
         }
         RtspVideoPreviewPlaceholder(
@@ -448,7 +636,7 @@ fun RtspVideoSurface(
                     lifecycleActive = false
                     player.stopAndDetach("Activity 进入后台")
                     playbackState = VideoPlaybackState.IDLE
-                    latestSurfaceCallback(null)
+                    latestTextureCallback(null)
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     lifecycleActive = true
@@ -464,37 +652,34 @@ fun RtspVideoSurface(
     }
 
     DisposableEffect(player) {
-        val eventListener = MediaPlayer.EventListener { event ->
-            runOnMain {
-                when (event.type) {
-                    MediaPlayer.Event.Opening -> playbackState = VideoPlaybackState.LOADING
-                    MediaPlayer.Event.Buffering -> {
-                        playbackState = if (event.buffering >= 100f) {
-                            retryAttempt = 0
-                            errorMessage = null
-                            VideoPlaybackState.PLAYING
-                        } else {
-                            VideoPlaybackState.LOADING
-                        }
-                    }
-                    MediaPlayer.Event.Playing -> {
-                        retryAttempt = 0
-                        errorMessage = null
-                        playbackState = VideoPlaybackState.PLAYING
-                    }
-                    MediaPlayer.Event.Stopped -> playbackState = VideoPlaybackState.IDLE
-                    MediaPlayer.Event.EndReached -> {
-                        playbackState = VideoPlaybackState.LOADING
-                        scheduleVideoRetry("VLC 视频流结束")
-                    }
-                    MediaPlayer.Event.EncounteredError -> {
-                        player.stopPlayback("VLC 播放错误")
-                        playbackState = VideoPlaybackState.LOADING
-                        errorMessage = "正在重连视频流"
-                        Timber.e("[RtspVideoSurface] VLC 播放错误，继续重连: %s", latestRtspUrl)
-                        scheduleVideoRetry("VLC 播放错误")
-                    }
-                    else -> Unit
+        val eventListener = object : RtspVideoPlayerListener {
+            override fun onOpening() {
+                runOnMain {
+                    playbackState = VideoPlaybackState.LOADING
+                }
+            }
+
+            override fun onPlaying() {
+                runOnMain {
+                    retryAttempt = 0
+                    errorMessage = null
+                    playbackState = VideoPlaybackState.PLAYING
+                }
+            }
+
+            override fun onStopped() {
+                runOnMain {
+                    playbackState = VideoPlaybackState.IDLE
+                }
+            }
+
+            override fun onError(reason: String) {
+                runOnMain {
+                    player.stopPlayback(reason)
+                    playbackState = VideoPlaybackState.LOADING
+                    errorMessage = "正在重连视频流"
+                    Timber.e("[RtspVideoSurface] IJK 播放异常，继续重连: %s, reason=%s", latestRtspUrl, reason)
+                    scheduleVideoRetry(reason)
                 }
             }
         }
@@ -503,7 +688,7 @@ fun RtspVideoSurface(
         onDispose {
             player.setEventListener(null)
             player.stopAndDetach("RTSP 组件离开组合")
-            latestSurfaceCallback(null)
+            latestTextureCallback(null)
             Timber.d("[RtspVideoSurface] RTSP 组件已解绑: %s", latestRtspUrl)
         }
     }
@@ -540,8 +725,8 @@ fun RtspVideoSurface(
         } catch (e: Exception) {
             playbackState = VideoPlaybackState.LOADING
             errorMessage = "正在重连视频流"
-            Timber.e(e, "[RtspVideoSurface] VLC RTSP 流加载失败，继续重试: %s", rtspUrl)
-            scheduleVideoRetry("VLC RTSP 流加载异常")
+            Timber.e(e, "[RtspVideoSurface] IJK RTSP 流加载失败，继续重试: %s", rtspUrl)
+            scheduleVideoRetry("IJK RTSP 流加载异常")
         }
     }
 
@@ -563,20 +748,20 @@ fun RtspVideoSurface(
     ) {
         AndroidView(
             factory = { ctx ->
-                VLCVideoLayout(ctx).apply {
+                TextureView(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    isOpaque = true
                 }
             },
             modifier = Modifier.fillMaxSize(),
-            update = { layout ->
-                val attached = player.attach(layout, useTextureView, scaleMode)
-                if (attached) {
+            update = { textureView ->
+                latestTextureCallback(textureView)
+                player.attach(textureView, scaleMode) {
                     attachGeneration++
                 }
-                latestSurfaceCallback(findRtspSurfaceView(layout))
             }
         )
 
@@ -626,76 +811,54 @@ private fun RtspVideoPreviewPlaceholder(
     }
 }
 
-private fun RtspVideoScaleMode.toVlcScaleType(): MediaPlayer.ScaleType {
-    return when (this) {
-        RtspVideoScaleMode.BestFit -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
-        RtspVideoScaleMode.Fill -> MediaPlayer.ScaleType.SURFACE_FILL
-    }
-}
-
 fun captureRtspSurfaceSnapshot(
     context: Context,
-    primarySurfaceView: SurfaceView?,
-    secondarySurfaceView: SurfaceView?,
+    primaryTextureView: TextureView?,
+    secondaryTextureView: TextureView?,
     onFinished: (Boolean) -> Unit
 ) {
-    val handler = Handler(Looper.getMainLooper())
-    captureSurfaceFrame(primarySurfaceView, "主背景", handler) { primary ->
-        captureSurfaceFrame(secondarySurfaceView, "小视频", handler) { secondary ->
-            val combinedBitmap = createStackedSnapshot(primary, secondary)
-            primary.bitmap?.recycle()
-            secondary.bitmap?.recycle()
-            saveBitmapToGallery(context, combinedBitmap, onFinished)
-        }
-    }
+    val primary = captureTextureFrame(primaryTextureView, "主背景")
+    val secondary = captureTextureFrame(secondaryTextureView, "小视频")
+    val combinedBitmap = createStackedSnapshot(primary, secondary)
+    primary.bitmap?.recycle()
+    secondary.bitmap?.recycle()
+    saveBitmapToGallery(context, combinedBitmap, onFinished)
 }
 
-private data class SurfaceSnapshotFrame(
+private data class VideoSnapshotFrame(
     val bitmap: Bitmap?,
     val sourceWidth: Int,
     val sourceHeight: Int
 )
 
-private fun captureSurfaceFrame(
-    surfaceView: SurfaceView?,
-    label: String,
-    handler: Handler,
-    onResult: (SurfaceSnapshotFrame) -> Unit
-) {
-    if (surfaceView == null || surfaceView.width <= 0 || surfaceView.height <= 0) {
-        Timber.w("[RtspVideoSurface] %s视频 Surface 未准备好，截图使用黑色占位", label)
-        onResult(SurfaceSnapshotFrame(null, DEFAULT_SNAPSHOT_WIDTH, DEFAULT_SNAPSHOT_HEIGHT))
-        return
+private fun captureTextureFrame(
+    textureView: TextureView?,
+    label: String
+): VideoSnapshotFrame {
+    if (textureView == null || !textureView.isAvailable || textureView.width <= 0 || textureView.height <= 0) {
+        Timber.w("[RtspVideoSurface] %s视频 TextureView 未准备好，截图使用黑色占位", label)
+        return VideoSnapshotFrame(null, DEFAULT_SNAPSHOT_WIDTH, DEFAULT_SNAPSHOT_HEIGHT)
     }
 
-    val width = surfaceView.width
-    val height = surfaceView.height
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val width = textureView.width
+    val height = textureView.height
     try {
-        PixelCopy.request(
-            surfaceView,
-            bitmap,
-            { copyResult ->
-                if (copyResult == PixelCopy.SUCCESS) {
-                    onResult(SurfaceSnapshotFrame(bitmap, width, height))
-                } else {
-                    bitmap.recycle()
-                    Timber.e("[RtspVideoSurface] %s视频 PixelCopy 失败，截图使用黑色占位: %s", label, copyResult)
-                    onResult(SurfaceSnapshotFrame(null, width, height))
-                }
-            },
-            handler
-        )
+        val bitmap = textureView.getBitmap(width, height)
+        return if (bitmap != null) {
+            VideoSnapshotFrame(bitmap, width, height)
+        } else {
+            Timber.e("[RtspVideoSurface] %s视频 TextureView 取帧失败，截图使用黑色占位", label)
+            VideoSnapshotFrame(null, width, height)
+        }
     } catch (e: Exception) {
-        bitmap.recycle()
-        Timber.e(e, "[RtspVideoSurface] %s视频 PixelCopy 异常，截图使用黑色占位", label)
-        onResult(SurfaceSnapshotFrame(null, width, height))
+        Timber.e(e, "[RtspVideoSurface] %s视频 TextureView 取帧异常，截图使用黑色占位", label)
+        return VideoSnapshotFrame(null, width, height)
     }
 }
 
 private fun createStackedSnapshot(
-    primary: SurfaceSnapshotFrame,
-    secondary: SurfaceSnapshotFrame
+    primary: VideoSnapshotFrame,
+    secondary: VideoSnapshotFrame
 ): Bitmap {
     val targetWidth = maxOf(
         primary.sourceWidth.takeIf { it > 0 } ?: DEFAULT_SNAPSHOT_WIDTH,
@@ -721,7 +884,7 @@ private fun createStackedSnapshot(
     return output
 }
 
-private fun scaledSnapshotHeight(frame: SurfaceSnapshotFrame, targetWidth: Int): Int {
+private fun scaledSnapshotHeight(frame: VideoSnapshotFrame, targetWidth: Int): Int {
     val sourceWidth = frame.sourceWidth.takeIf { it > 0 } ?: DEFAULT_SNAPSHOT_WIDTH
     val sourceHeight = frame.sourceHeight.takeIf { it > 0 } ?: DEFAULT_SNAPSHOT_HEIGHT
     return (targetWidth.toFloat() * sourceHeight / sourceWidth).roundToInt().coerceAtLeast(1)
@@ -729,7 +892,7 @@ private fun scaledSnapshotHeight(frame: SurfaceSnapshotFrame, targetWidth: Int):
 
 private fun drawSnapshotFrame(
     canvas: Canvas,
-    frame: SurfaceSnapshotFrame,
+    frame: VideoSnapshotFrame,
     targetWidth: Int,
     targetHeight: Int,
     top: Int
@@ -743,20 +906,6 @@ private fun drawSnapshotFrame(
             scaledBitmap.recycle()
         }
     }
-}
-
-private fun findRtspSurfaceView(viewGroup: ViewGroup): SurfaceView? {
-    for (index in 0 until viewGroup.childCount) {
-        val child = viewGroup.getChildAt(index)
-        if (child is SurfaceView) {
-            return child
-        }
-        if (child is ViewGroup) {
-            val found = findRtspSurfaceView(child)
-            if (found != null) return found
-        }
-    }
-    return null
 }
 
 @Composable

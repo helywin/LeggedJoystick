@@ -19,3 +19,10 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# IJKPlayer 通过 JNI 反射调用 native 方法，release 混淆时需要保留播放器 API。
+-keep class tv.danmaku.ijk.media.player.** { *; }
+-keep class tv.danmaku.ijk.media.player.pragma.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

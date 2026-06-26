@@ -14,7 +14,7 @@ timber = "5.0.1"
 gson = "2.14.0"
 wire = "6.4.0"
 coil = "2.7.0"
-vlc = "3.7.4"
+ijkplayer = "0.0.26"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,7 +37,8 @@ timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
-vlc-android = { module = "org.videolan.android:libvlc-all", version.ref = "vlc" }
+ijkplayer-java = { module = "io.github.jdpxiaoming:ijkplayer-java", version.ref = "ijkplayer" }
+ijkplayer-arm64 = { module = "io.github.jdpxiaoming:ijkplayer-arm64", version.ref = "ijkplayer" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

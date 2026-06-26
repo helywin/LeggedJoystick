@@ -16,6 +16,12 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://maven.aliyun.com/repository/public") {
+            content {
+                includeGroup("tv.danmaku.ijk.media")
+                includeGroup("io.github.jdpxiaoming")
+            }
+        }
     }
 }
 

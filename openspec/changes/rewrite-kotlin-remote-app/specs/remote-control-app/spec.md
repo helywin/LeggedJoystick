@@ -79,7 +79,7 @@
 
 ### Requirement: 后台恢复后主屏视频必须重新显示
 
-主屏 RTSP 视频组件 MUST 使用进程级 VLC 运行时管理视频资源，在 Activity 从后台恢复后重新绑定视频输出并重新加载当前 RTSP 地址，避免背景视频黑屏、重复创建 VLC 输出或日志风暴。
+主屏 RTSP 视频组件 MUST 使用进程级 IJKPlayer 运行时管理视频资源，通过 `TextureView` 输出视频，在 Activity 从后台恢复后重新绑定视频输出并重新加载当前 RTSP 地址，避免背景视频黑屏、重复创建播放器输出或日志风暴。
 
 #### Scenario: 后台再回前台
 - **WHEN** 用户将 App 切到后台后再回到主屏
@@ -87,11 +87,15 @@
 
 #### Scenario: 默认网络或 USB 链路变化后恢复视频
 - **WHEN** Android 默认网络因为 Wi-Fi 重连、路由变化而切换，或用户拔插 USB/ADB 调试线
-- **THEN** 背景视频和左上小视频必须重拉当前 RTSP 地址，不得停留在 VLC 错误或黑屏状态等待用户重启 App
+- **THEN** 背景视频和左上小视频必须重拉当前 RTSP 地址，不得停留在播放器错误或黑屏状态等待用户重启 App
 
 #### Scenario: RTSP 失败后持续重试
 - **WHEN** RTSP 播放器出现打开失败、播放错误、视频流结束或长时间未进入播放状态
 - **THEN** App 必须持续重试加载当前 RTSP 地址，直到视频恢复播放、用户清空视频地址或组件离开前台
+
+#### Scenario: 使用 TextureView 播放 RTSP
+- **WHEN** 主屏显示背景视频和左上小视频
+- **THEN** App 必须使用 `IjkMediaPlayer` 绑定 `TextureView` 播放 RTSP，不得继续使用 VLC 的 `SurfaceView` 输出路径
 
 ### Requirement: 主屏必须复刻 GenisDog 的核心遥控布局
 
