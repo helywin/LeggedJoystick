@@ -40,6 +40,59 @@
 - **WHEN** 用户在已连接状态下要求重新连接
 - **THEN** App 必须先停止移动输出、发送必要的停止命令、关闭现有连接资源，然后再进入新的连接尝试
 
+#### Scenario: 正常断开通知 driver
+- **WHEN** 用户主动断开已建立或正在验证的 ZMQ 连接
+- **THEN** App 必须在关闭 socket 前发送 `MESSAGE_TYPE_CLIENT_DISCONNECT`
+- **AND** `legged_driver` 收到后必须立即删除该客户端 identity、订阅状态和相关连接记录，不得依赖心跳超时完成正常断开清理
+
+### Requirement: 控制链路必须脱离 Activity 生命周期
+
+新遥控 App MUST 将控制器、ZMQ 客户端、输入源和全局状态保存在进程级 `object` 中，Activity 重建不得销毁已建立的遥控连接。
+
+#### Scenario: Activity 重建
+- **WHEN** Activity 因后台恢复、配置变化或系统回收后重建
+- **THEN** 新 Activity 必须复用同一个进程级控制器和状态实例，不得重新创建第二套 ZMQ 客户端或输入源
+
+#### Scenario: Activity 销毁
+- **WHEN** Activity 执行 `onDestroy()`
+- **THEN** Activity 不得直接调用控制器 `cleanup()`、不得停止已连接链路对应的前台服务；只有用户主动断开连接或进程退出才释放控制资源
+
+### Requirement: 连接后必须自动进入可控状态
+
+`legged_driver` MUST 在 SDK 与机器狗连接成功后自动尝试接管控制权；Android App MUST 不要求用户点击接管按钮才能发送手动控制命令。
+
+#### Scenario: driver 自动接管机器狗
+- **WHEN** `legged_driver` 检测到 SDK 与机器狗从未连接变为已连接
+- **THEN** driver 必须异步发送一次 `takeControl`，并记录成功或失败日志；同一个已连接周期内不得重复刷屏发送接管请求
+
+#### Scenario: App 连接 driver 后可控
+- **WHEN** Android App 的 ZMQ 连接验证成功
+- **THEN** App 必须将本地控制权状态更新为已接管，并发送手动 AppMode 与当前速度档初始化命令
+
+#### Scenario: App 不再需要接管点击
+- **WHEN** 用户完成连接并触发速度、模式、动作或移动输入
+- **THEN** App 不得因为用户没有点击接管按钮而拦截命令
+
+#### Scenario: 主控页不显示手动接管入口
+- **WHEN** 用户进入主控页
+- **THEN** App 不得显示接管、释放或重试接管按钮；用户只需要使用连接按钮建立或断开 driver 链路
+
+### Requirement: 后台恢复后主屏视频必须重新显示
+
+主屏 RTSP 视频组件 MUST 使用进程级 VLC 运行时管理视频资源，在 Activity 从后台恢复后重新绑定视频输出并重新加载当前 RTSP 地址，避免背景视频黑屏、重复创建 VLC 输出或日志风暴。
+
+#### Scenario: 后台再回前台
+- **WHEN** 用户将 App 切到后台后再回到主屏
+- **THEN** 背景视频和左上小视频必须复用稳定播放器槽位，重新 attach 当前播放器视图并恢复播放当前 RTSP 流
+
+#### Scenario: 默认网络或 USB 链路变化后恢复视频
+- **WHEN** Android 默认网络因为 Wi-Fi 重连、路由变化而切换，或用户拔插 USB/ADB 调试线
+- **THEN** 背景视频和左上小视频必须重拉当前 RTSP 地址，不得停留在 VLC 错误或黑屏状态等待用户重启 App
+
+#### Scenario: RTSP 失败后持续重试
+- **WHEN** RTSP 播放器出现打开失败、播放错误、视频流结束或长时间未进入播放状态
+- **THEN** App 必须持续重试加载当前 RTSP 地址，直到视频恢复播放、用户清空视频地址或组件离开前台
+
 ### Requirement: 主屏必须复刻 GenisDog 的核心遥控布局
 
 主屏 MUST 参考 `docs/genisdog_main_screen_layout.md`，保留横屏主控背景、顶部模式栏、左侧速度区、右侧工具列、底部动作组和状态 overlay；在 `Standard-10inch_A2` 上不得覆盖右侧系统虚拟导航栏。
@@ -70,7 +123,8 @@
 
 #### Scenario: 主屏拍照
 - **WHEN** 用户点击顶部拍照按钮
-- **THEN** App 必须截取当前主屏背景视频流画面并保存到系统相册，不得再通过顶部视频按钮跳转到独立视频页
+- **THEN** App 必须截取当前主屏背景视频流和左上小视频流画面，上下拼接成一张图片并保存到系统相册，不得再通过顶部视频按钮跳转到独立视频页
+- **AND** 任意一路视频 Surface 未准备好或截图失败时，该路画面必须使用黑色占位，仍然保存合成图片
 
 #### Scenario: 头尾方向切换
 - **WHEN** 用户点击右侧工具列的头尾方向切换按钮

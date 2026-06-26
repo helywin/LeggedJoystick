@@ -36,6 +36,14 @@ data class UniRcMovementMappingResult(
     val normalizedAxes: Map<String, Float>
 )
 
+data class UniRcFrameInfo(
+    val ctrl: Int,
+    val sequence: Int,
+    val commandId: Int,
+    val dataLength: Int,
+    val expectedLength: Int
+)
+
 object UniRcProtocol {
     const val CMD_CHANNELS = 0x42
     const val CHANNEL_COUNT = 16
@@ -45,6 +53,37 @@ object UniRcProtocol {
     private const val STX_1 = 0x66
     private const val HEADER_LENGTH = 8
     private const val CRC_LENGTH = 2
+
+    fun inspectFrame(data: ByteArray): UniRcFrameInfo? {
+        if (data.size < HEADER_LENGTH + CRC_LENGTH) return null
+        if (data[0].toUnsignedInt() != STX_0 || data[1].toUnsignedInt() != STX_1) return null
+
+        val dataLength = data.readUInt16LE(3)
+        val expectedLength = HEADER_LENGTH + dataLength + CRC_LENGTH
+        if (data.size < expectedLength) return null
+
+        return UniRcFrameInfo(
+            ctrl = data[2].toUnsignedInt(),
+            sequence = data.readUInt16LE(5),
+            commandId = data[7].toUnsignedInt(),
+            dataLength = dataLength,
+            expectedLength = expectedLength
+        )
+    }
+
+    fun isChannelDataFrame(data: ByteArray): Boolean {
+        val info = inspectFrame(data) ?: return false
+        return info.commandId == CMD_CHANNELS && info.dataLength == CHANNEL_PAYLOAD_LENGTH
+    }
+
+    fun isIgnorableNonChannelFrame(data: ByteArray): Boolean {
+        val info = inspectFrame(data) ?: return false
+        if (info.commandId == CMD_CHANNELS && info.dataLength == CHANNEL_PAYLOAD_LENGTH) return false
+
+        val expectedCrc = data.readUInt16LE(HEADER_LENGTH + info.dataLength)
+        val actualCrc = crc16(data, info.expectedLength - CRC_LENGTH)
+        return expectedCrc == actualCrc
+    }
 
     fun parseChannelFrame(data: ByteArray): UniRcChannelFrame {
         require(data.size >= HEADER_LENGTH + CRC_LENGTH) { "UniRC 帧长度不足" }

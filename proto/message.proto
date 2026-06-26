@@ -29,6 +29,7 @@ enum MessageType {
     MESSAGE_TYPE_CONTROL_AVAILABLE = 14;
     MESSAGE_TYPE_TAKE_CONTROL_ACK = 15;
     MESSAGE_TYPE_RELEASE_CONTROL_ACK = 16;
+    MESSAGE_TYPE_CLIENT_DISCONNECT = 17;
 }
 
 // 应用层调度模式，决定导航端和遥控端的控制优先级
@@ -425,6 +426,10 @@ message ReleaseControlAckMessage {
     string reason = 3;
 }
 
+message ClientDisconnectMessage {
+    string reason = 1;
+}
+
 // 主消息结构
 message LeggedDriverMessage {
     uint64 timestamp_ms = 1;     // 时间戳，精确到毫秒
@@ -450,6 +455,7 @@ message LeggedDriverMessage {
         ControlAvailableMessage control_available = 23;
         TakeControlAckMessage take_control_ack = 24;
         ReleaseControlAckMessage release_control_ack = 25;
+        ClientDisconnectMessage client_disconnect = 26;
     }
     
     uint32 crc32 = 50;          // CRC32校验码 - 放在最后

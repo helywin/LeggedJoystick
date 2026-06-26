@@ -46,6 +46,10 @@ class UniRcUdpInputSourceTest {
                 )
 
                 peer.send(
+                    data = createSubscriptionAckFrame(sequence = 0xC24B),
+                    target = subscribePacket.sender
+                )
+                peer.send(
                     data = createChannelFrame(
                         sequence = 7,
                         channels = MutableList(16) { 1500 }.also {
@@ -207,6 +211,25 @@ class UniRcUdpInputSourceTest {
             payload[index * 2 + 1] = ((value ushr 8) and 0xFF).toByte()
         }
         val withoutCrc = header + payload
+        val crc = UniRcProtocol.crc16(withoutCrc)
+        return withoutCrc + byteArrayOf(
+            (crc and 0xFF).toByte(),
+            ((crc ushr 8) and 0xFF).toByte()
+        )
+    }
+
+    private fun createSubscriptionAckFrame(sequence: Int): ByteArray {
+        val withoutCrc = byteArrayOf(
+            0x55,
+            0x66,
+            0x02,
+            0x01,
+            0x00,
+            (sequence and 0xFF).toByte(),
+            ((sequence ushr 8) and 0xFF).toByte(),
+            UniRcProtocol.CMD_CHANNELS.toByte(),
+            0x01
+        )
         val crc = UniRcProtocol.crc16(withoutCrc)
         return withoutCrc + byteArrayOf(
             (crc and 0xFF).toByte(),

@@ -76,6 +76,19 @@ class MessageUtilsTest {
     }
 
     @Test
+    fun clientDisconnect_hasPayloadAndValidCrc() {
+        val message = MessageUtils.createClientDisconnectMessage(
+            deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
+            deviceId = DEVICE_ID,
+            reason = "unit_test"
+        )
+
+        assertTrue(MessageUtils.verifyMessage(message))
+        assertEquals(MessageType.MESSAGE_TYPE_CLIENT_DISCONNECT, message.message_type)
+        assertEquals("unit_test", message.client_disconnect?.reason)
+    }
+
+    @Test
     fun speedLevelCommand_usesProtocolEnumValue() {
         val message = MessageUtils.createSetSpeedLevelCommand(
             deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,

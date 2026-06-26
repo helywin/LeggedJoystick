@@ -44,12 +44,14 @@ class NewZmqClient(
         private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 1000L
         private const val SOCKET_RECV_TIMEOUT_MS = 0
         private const val SOCKET_SEND_TIMEOUT_MS = 100
+        private const val SOCKET_LINGER_MS = 100
         private const val MAX_SEND_QUEUE_SIZE = 256
         private const val MAX_DRAIN_SEND_PER_TICK = 32
         private const val MAX_DRAIN_RECV_PER_TICK = 64
         private const val IO_IDLE_SLEEP_MS = 10L
         private const val CONNECTION_VERIFY_TIMEOUT_MS = 2500L
         private const val SERVER_MESSAGE_TIMEOUT_MS = 3000L
+        private const val SUBSCRIPTION_RETRY_INTERVAL_MS = 500L
         private const val EXECUTOR_SHUTDOWN_TIMEOUT_MS = 1200L
     }
 
@@ -58,6 +60,7 @@ class NewZmqClient(
     private val connectionState = AtomicReference(ConnectionState.DISCONNECTED)
     private val sendQueue = LinkedBlockingQueue<ByteArray>(MAX_SEND_QUEUE_SIZE)
     private val connectionAttemptId = AtomicLong(0)
+    private val gracefulDisconnectRequested = AtomicBoolean(false)
 
     @Volatile
     private var ioExecutor: ExecutorService? = null
@@ -65,8 +68,9 @@ class NewZmqClient(
     @Volatile
     private var ioFuture: Future<*>? = null
 
-    private val deviceId = MessageUtils.generateDeviceId(deviceType)
+    private val deviceId = AtomicReference(MessageUtils.generateDeviceId(deviceType))
     private val lastHeartbeatTime = AtomicLong(0)
+    private val lastSubscriptionTime = AtomicLong(0)
     private val lastServerMessageTime = AtomicLong(0)
     private val consecutiveFailures = AtomicInteger(0)
     private val serverConnected = AtomicBoolean(false)
@@ -100,9 +104,12 @@ class NewZmqClient(
 
             stopCurrentAttemptLocked()
             resetRuntimeState()
+            gracefulDisconnectRequested.set(false)
 
             val attemptId = connectionAttemptId.incrementAndGet()
             val endpointSnapshot = tcpEndpoint
+            val deviceIdSnapshot = MessageUtils.generateDeviceId(deviceType)
+            deviceId.set(deviceIdSnapshot)
             running.set(true)
             updateConnectionState(ConnectionState.CONNECTING)
 
@@ -111,14 +118,14 @@ class NewZmqClient(
                     isDaemon = true
                 }
             }
-            ioFuture = ioExecutor?.submit { runIoLoop(endpointSnapshot, attemptId) }
-            Timber.i("[ZMQ] 开始新的连接尝试: %s", endpointSnapshot)
+            ioFuture = ioExecutor?.submit { runIoLoop(endpointSnapshot, attemptId, deviceIdSnapshot) }
+            Timber.i("[ZMQ] 开始新的连接尝试: %s, client=%s", endpointSnapshot, deviceIdSnapshot)
         }
     }
 
     fun disconnect() {
         synchronized(lifecycleLock) {
-            stopCurrentAttemptLocked()
+            stopCurrentAttemptLocked(sendClientDisconnect = true)
             updateConnectionState(ConnectionState.DISCONNECTED)
             Timber.i("[ZMQ] 已断开连接")
         }
@@ -156,7 +163,7 @@ class NewZmqClient(
         enqueueMessage(
             MessageUtils.createHeartbeatMessage(
                 deviceType = deviceType,
-                deviceId = deviceId
+                deviceId = currentDeviceId()
             )
         )
     }
@@ -165,7 +172,7 @@ class NewZmqClient(
         enqueueMessage(
             MessageUtils.createSubscriptionRequestMessage(
                 deviceType = deviceType,
-                deviceId = deviceId
+                deviceId = currentDeviceId()
             )
         )
     }
@@ -174,7 +181,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createSetAppModeCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 mode = mode
             )
         ).also {
@@ -186,7 +193,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createSetSportModeCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 mode = sportMode
             )
         ).also {
@@ -198,7 +205,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createSetSpeedLevelCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 speedLevel = speedLevel
             )
         ).also {
@@ -210,7 +217,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createTakeControlCommand(
                 deviceType = deviceType,
-                deviceId = deviceId
+                deviceId = currentDeviceId()
             )
         ).also {
             if (it) Timber.i("[ZMQ] 请求接管控制权")
@@ -221,7 +228,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createReleaseControlCommand(
                 deviceType = deviceType,
-                deviceId = deviceId
+                deviceId = currentDeviceId()
             )
         ).also {
             if (it) Timber.i("[ZMQ] 请求释放控制权")
@@ -232,7 +239,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createSimpleCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 commandCode = commandCode
             )
         )
@@ -242,7 +249,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createFrontLightCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 on = on
             )
         ).also {
@@ -254,7 +261,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createBackLightCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 on = on
             )
         ).also {
@@ -266,7 +273,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createAutoModeLightCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 on = on
             )
         ).also {
@@ -278,7 +285,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createControlHeadCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 leftRight = leftRight,
                 upDown = upDown
             )
@@ -291,7 +298,7 @@ class NewZmqClient(
         return enqueueMessage(
             MessageUtils.createHighLowStanceCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 stance = stance
             )
         ).also {
@@ -303,7 +310,7 @@ class NewZmqClient(
         enqueueMessage(
             MessageUtils.createMoveCommand(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 leftRight = leftRight,
                 forwardBack = forwardBack,
                 yaw = yaw
@@ -315,7 +322,7 @@ class NewZmqClient(
         enqueueMessage(
             MessageUtils.createMoveCommandFromOperatorIntent(
                 deviceType = deviceType,
-                deviceId = deviceId,
+                deviceId = currentDeviceId(),
                 strafeRight = strafeRight,
                 forward = forward,
                 yawRight = yawRight
@@ -323,7 +330,7 @@ class NewZmqClient(
         )
     }
 
-    private fun runIoLoop(endpoint: String, attemptId: Long) {
+    private fun runIoLoop(endpoint: String, attemptId: Long, deviceIdSnapshot: String) {
         var context: ZContext? = null
         var socket: ZMQ.Socket? = null
         val attemptStartedAt = System.currentTimeMillis()
@@ -333,22 +340,31 @@ class NewZmqClient(
             socket = context.createSocket(SocketType.DEALER).apply {
                 receiveTimeOut = SOCKET_RECV_TIMEOUT_MS
                 sendTimeOut = SOCKET_SEND_TIMEOUT_MS
-                linger = 0
-                identity = deviceId.toByteArray(Charsets.UTF_8)
+                linger = SOCKET_LINGER_MS
+                identity = deviceIdSnapshot.toByteArray(Charsets.UTF_8)
                 connect(endpoint)
             }
-            Timber.i("[ZMQ] I/O 线程已创建 socket: %s", endpoint)
+            Timber.i("[ZMQ] I/O 线程已创建 socket: %s, client=%s", endpoint, deviceIdSnapshot)
 
-            sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceId))
-            sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceId))
-            lastHeartbeatTime.set(System.currentTimeMillis())
+            sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceIdSnapshot))
+            sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceIdSnapshot))
+            val initialSendTime = System.currentTimeMillis()
+            lastHeartbeatTime.set(initialSendTime)
+            lastSubscriptionTime.set(initialSendTime)
 
             while (running.get() && isCurrentAttempt(attemptId) && !Thread.currentThread().isInterrupted) {
                 val now = System.currentTimeMillis()
 
+                if (gracefulDisconnectRequested.get()) {
+                    drainSendQueue(socket, attemptId)
+                    sendClientDisconnect(socket, deviceIdSnapshot)
+                    break
+                }
+
                 drainSendQueue(socket, attemptId)
                 drainReceive(socket, attemptId)
-                sendHeartbeatIfNeeded(socket, now)
+                sendHeartbeatIfNeeded(socket, now, deviceIdSnapshot)
+                sendSubscriptionIfNeeded(socket, now, deviceIdSnapshot)
                 checkConnectionTimeouts(now, attemptStartedAt, attemptId)
 
                 Thread.sleep(IO_IDLE_SLEEP_MS)
@@ -399,11 +415,19 @@ class NewZmqClient(
         }
     }
 
-    private fun sendHeartbeatIfNeeded(socket: ZMQ.Socket, now: Long) {
+    private fun sendHeartbeatIfNeeded(socket: ZMQ.Socket, now: Long, deviceIdSnapshot: String) {
         if (now - lastHeartbeatTime.get() < heartbeatIntervalMs) return
 
-        sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceId))
+        sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceIdSnapshot))
         lastHeartbeatTime.set(now)
+    }
+
+    private fun sendSubscriptionIfNeeded(socket: ZMQ.Socket, now: Long, deviceIdSnapshot: String) {
+        if (connectionState.get() != ConnectionState.CONNECTING) return
+        if (now - lastSubscriptionTime.get() < SUBSCRIPTION_RETRY_INTERVAL_MS) return
+
+        sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceIdSnapshot))
+        lastSubscriptionTime.set(now)
     }
 
     private fun checkConnectionTimeouts(now: Long, attemptStartedAt: Long, attemptId: Long) {
@@ -521,6 +545,25 @@ class NewZmqClient(
         return sendRaw(socket, MessageUtils.serializeMessage(message))
     }
 
+    private fun sendClientDisconnect(socket: ZMQ.Socket, deviceIdSnapshot: String) {
+        val message = MessageUtils.createClientDisconnectMessage(
+            deviceType = deviceType,
+            deviceId = deviceIdSnapshot
+        )
+        val sent = try {
+            socket.send(MessageUtils.serializeMessage(message), 0)
+        } catch (e: ZMQException) {
+            Timber.w(e, "[ZMQ] 主动断开通知发送异常")
+            false
+        }
+
+        if (sent) {
+            Timber.i("[ZMQ] 已发送主动断开通知: client=%s", deviceIdSnapshot)
+        } else {
+            Timber.w("[ZMQ] 主动断开通知未发送成功: client=%s", deviceIdSnapshot)
+        }
+    }
+
     private fun sendRaw(socket: ZMQ.Socket, data: ByteArray): Boolean {
         return try {
             socket.send(data, ZMQ.NOBLOCK).also { sent ->
@@ -549,19 +592,26 @@ class NewZmqClient(
         sendQueue.clear()
         consecutiveFailures.set(0)
         lastHeartbeatTime.set(0)
+        lastSubscriptionTime.set(0)
         lastServerMessageTime.set(0)
         serverConnected.set(false)
     }
 
-    private fun stopCurrentAttemptLocked() {
-        connectionAttemptId.incrementAndGet()
-        running.set(false)
+    private fun stopCurrentAttemptLocked(sendClientDisconnect: Boolean = false) {
+        val hasActiveAttempt = running.get() && ioExecutor != null
+        if (sendClientDisconnect && hasActiveAttempt) {
+            gracefulDisconnectRequested.set(true)
+        } else {
+            running.set(false)
+        }
 
         ioExecutor?.shutdown()
         try {
             val terminated = ioExecutor?.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS) ?: true
             if (!terminated) {
                 Timber.w("[ZMQ] I/O 线程未按时退出，强制中断")
+                running.set(false)
+                gracefulDisconnectRequested.set(false)
                 ioFuture?.cancel(true)
                 ioExecutor?.shutdownNow()
                 ioExecutor?.awaitTermination(EXECUTOR_SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -571,6 +621,8 @@ class NewZmqClient(
         } finally {
             ioFuture = null
             ioExecutor = null
+            connectionAttemptId.incrementAndGet()
+            gracefulDisconnectRequested.set(false)
         }
 
         sendQueue.clear()
@@ -601,6 +653,8 @@ class NewZmqClient(
     private fun isCurrentAttempt(attemptId: Long): Boolean {
         return connectionAttemptId.get() == attemptId
     }
+
+    private fun currentDeviceId(): String = deviceId.get()
 
     private fun RobotStateMessage.toBatteryPercent(): Int {
         val batteryData = battery ?: return 0

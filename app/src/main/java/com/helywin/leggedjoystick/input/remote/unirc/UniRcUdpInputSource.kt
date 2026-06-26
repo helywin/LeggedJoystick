@@ -86,6 +86,8 @@ class UniRcUdpInputSource(
         var lastSubscribeAtMs = 0L
         var timeoutEmitted = false
         var firstFrameLogged = false
+        var ignoredNonChannelFrameCount = 0
+        var invalidFrameCount = 0
         val frameAssembler = UniRcFrameAssembler()
 
         try {
@@ -114,6 +116,21 @@ class UniRcUdpInputSource(
                         receiveBuffer.get(data)
 
                         frameAssembler.append(data).forEach { rawFrame ->
+                            if (UniRcProtocol.isIgnorableNonChannelFrame(rawFrame)) {
+                                ignoredNonChannelFrameCount++
+                                if (ignoredNonChannelFrameCount == 1 || ignoredNonChannelFrameCount % 200 == 0) {
+                                    val info = UniRcProtocol.inspectFrame(rawFrame)
+                                    Timber.d(
+                                        "[UniRC] 忽略非通道帧，cmd=0x%02X，dataLen=%d，来源=%s，累计=%d",
+                                        info?.commandId ?: -1,
+                                        info?.dataLength ?: -1,
+                                        senderAddress,
+                                        ignoredNonChannelFrameCount
+                                    )
+                                }
+                                return@forEach
+                            }
+
                             try {
                                 val frame = UniRcProtocol.parseChannelFrame(rawFrame)
                                 val mapping = UniRcProtocol.mapMovement(frame.channels, config.normalization)
@@ -141,13 +158,17 @@ class UniRcUdpInputSource(
                                 }
                                 listener.onSnapshot(snapshot)
                             } catch (e: IllegalArgumentException) {
-                                Timber.w(
-                                    e,
-                                    "[UniRC] 丢弃无效通道帧，长度=%d，来源=%s，数据=%s",
-                                    rawFrame.size,
-                                    senderAddress,
-                                    rawFrame.toHexPreview()
-                                )
+                                invalidFrameCount++
+                                if (invalidFrameCount <= 3 || invalidFrameCount % 100 == 0) {
+                                    Timber.w(
+                                        "[UniRC] 丢弃无效通道帧，原因=%s，长度=%d，来源=%s，数据=%s，累计=%d",
+                                        e.message,
+                                        rawFrame.size,
+                                        senderAddress,
+                                        rawFrame.toHexPreview(),
+                                        invalidFrameCount
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -222,7 +243,6 @@ class UniRcUdpInputSource(
             val frame = UniRcProtocol.createChannelFrequencyFrame(index, config.frequency)
             channel.send(ByteBuffer.wrap(frame), remoteAddress)
         }
-        Timber.d("[UniRC] 已发送通道订阅请求，频率=%s", config.frequency)
     }
 
     private fun ByteArray.toHexPreview(maxBytes: Int = 32): String {

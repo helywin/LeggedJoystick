@@ -10,7 +10,6 @@
 package com.helywin.leggedjoystick.ui.main
 
 import android.view.SurfaceView
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,7 +57,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -80,7 +78,6 @@ import com.helywin.leggedjoystick.controller.RobotAction
 import com.helywin.leggedjoystick.controller.settingsState
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
-import com.helywin.leggedjoystick.data.ControlOwnershipState
 import com.helywin.leggedjoystick.data.DriverConnectionTelemetry
 import com.helywin.leggedjoystick.data.FaultTelemetry
 import com.helywin.leggedjoystick.data.HighLowStance
@@ -93,6 +90,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
+import com.helywin.leggedjoystick.ui.video.RtspVideoSlot
 import com.helywin.leggedjoystick.ui.video.RtspVideoSurface
 import com.helywin.leggedjoystick.ui.video.captureRtspSurfaceSnapshot
 import legged_driver.AppMode
@@ -130,7 +128,6 @@ fun MainControlScreen(
     val frontLightOn = settingsState.frontLightOn
     val backLightOn = settingsState.backLightOn
     val autoModeLightOn = settingsState.autoModeLightOn
-    val controlOwnershipState = settingsState.controlOwnershipState
     val remoteInputState = settingsState.remoteInputState
     val headDirection = settingsState.headDirection
     val lastCommandName = settingsState.lastCommandName
@@ -150,6 +147,7 @@ fun MainControlScreen(
     var batteryOverlayVisible by remember { mutableStateOf(false) }
     var activeRightToolPanel by remember { mutableStateOf<RightToolPanel?>(null) }
     var mainVideoSurface by remember { mutableStateOf<SurfaceView?>(null) }
+    var secondaryVideoSurface by remember { mutableStateOf<SurfaceView?>(null) }
     var isTakingSnapshot by remember { mutableStateOf(false) }
     var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
     val primaryVideoUrl = when (primaryVideoSource) {
@@ -161,15 +159,14 @@ fun MainControlScreen(
         PrimaryVideoSource.TAIL -> settingsState.settings.headRtspUrl
     }
     val onPhotoClick = {
-        val surface = mainVideoSurface
         if (!isTakingSnapshot) {
-            if (surface == null) {
-                Toast.makeText(context, "视频视图未准备好", Toast.LENGTH_SHORT).show()
-            } else {
-                isTakingSnapshot = true
-                captureRtspSurfaceSnapshot(context, surface) {
-                    isTakingSnapshot = false
-                }
+            isTakingSnapshot = true
+            captureRtspSurfaceSnapshot(
+                context = context,
+                primarySurfaceView = mainVideoSurface,
+                secondarySurfaceView = secondaryVideoSurface
+            ) {
+                isTakingSnapshot = false
             }
         }
     }
@@ -201,16 +198,8 @@ fun MainControlScreen(
                 TopHud(
                     appMode = appMode,
                     connectionState = connectionState,
-                    controlOwnershipState = controlOwnershipState,
                     batteryLevel = batteryLevel,
                     onModeClick = controller::setMode,
-                    onControlOwnershipClick = {
-                        if (hasControl) {
-                            controller.releaseControl()
-                        } else {
-                            controller.takeControl()
-                        }
-                    },
                     onConnectClick = {
                         when (connectionState) {
                             ConnectionState.CONNECTED -> controller.disconnect()
@@ -230,6 +219,7 @@ fun MainControlScreen(
 
                 MiniVideoWindow(
                     rtspUrl = secondaryVideoUrl,
+                    onSurfaceViewReady = { secondaryVideoSurface = it },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset(y = 20.dp),
@@ -376,6 +366,7 @@ private fun ControlScreenBackground(
     ) {
         RtspVideoSurface(
             rtspUrl = rtspUrl,
+            slot = RtspVideoSlot.Main,
             scaleMode = RtspVideoScaleMode.Fill,
             showStatus = false,
             onSurfaceViewReady = onSurfaceViewReady,
@@ -394,10 +385,8 @@ private fun ControlScreenBackground(
 private fun TopHud(
     appMode: AppMode,
     connectionState: ConnectionState,
-    controlOwnershipState: ControlOwnershipState,
     batteryLevel: Int,
     onModeClick: (AppMode) -> Unit,
-    onControlOwnershipClick: () -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
     onSettingsClick: () -> Unit
@@ -416,15 +405,10 @@ private fun TopHud(
             if (connectionState == ConnectionState.CONNECTED) {
                 ControlModeToggle(
                     currentMode = appMode,
-                    isConnected = controlOwnershipState == ControlOwnershipState.OWNED,
+                    isConnected = true,
                     onModeClick = onModeClick
                 )
             }
-            ControlOwnershipButton(
-                state = controlOwnershipState,
-                isConnected = connectionState == ConnectionState.CONNECTED,
-                onClick = onControlOwnershipClick
-            )
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -453,7 +437,6 @@ private fun MotionModeEntry(
         modifier = modifier
             .height(40.dp)
             .width(140.dp)
-            .shadow(8.dp, shape)
             .clip(shape)
             .background(Color(0xCC1F2A2B))
             .noIndicationClickable(onClick = onClick),
@@ -492,27 +475,27 @@ private fun MotionModeEntry(
 private fun MiniVideoWindow(
     rtspUrl: String,
     modifier: Modifier = Modifier,
+    onSurfaceViewReady: (SurfaceView?) -> Unit,
     onClick: () -> Unit
 ) {
-    val videoShape = RoundedCornerShape(16.dp)
 
     Surface(
         modifier = modifier
             .width(270.dp)
             .aspectRatio(16f / 9f)
-            .clip(videoShape)
             .noIndicationClickable(onClick = onClick)
-            .border(2.dp, Color.White.copy(alpha = 0.62f), videoShape),
+            .border(2.dp, Color.White.copy(alpha = 0.62f)),
         color = Color(0xFF080A0A),
-        shape = videoShape,
         tonalElevation = 0.dp,
         shadowElevation = 8.dp
     ) {
         RtspVideoSurface(
             rtspUrl = rtspUrl,
+            slot = RtspVideoSlot.Secondary,
             scaleMode = RtspVideoScaleMode.BestFit,
-            useTextureView = true,
+            useTextureView = false,
             showStatus = false,
+            onSurfaceViewReady = onSurfaceViewReady,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -677,13 +660,12 @@ private fun RightToolButton(
     Box(
         modifier = modifier
             .size(52.dp)
-            .shadow(4.dp, shape)
             .clip(shape)
             .background(background)
             .clickable(
                 enabled = clickEnabled,
-//                interactionSource = interactionSource,
-//                indication = null,
+                interactionSource = interactionSource,
+                indication = null,
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -691,18 +673,18 @@ private fun RightToolButton(
         if (content != null) {
             content()
         } else if (iconResId != null) {
-//            Image(
-//                painter = painterResource(iconResId),
-//                contentDescription = contentDescription,
-//                modifier = Modifier
-//                    .size(iconSize)
-//                    .graphicsLayer {
-//                        alpha = if (clickEnabled || commandEnabled) 1f else 0.46f
-//                        scaleX = if (pressed) 0.94f else 1f
-//                        scaleY = if (pressed) 0.94f else 1f
-//                    },
-//                contentScale = ContentScale.Fit
-//            )
+            Image(
+                painter = painterResource(iconResId),
+                contentDescription = contentDescription,
+                modifier = Modifier
+                    .size(iconSize)
+                    .graphicsLayer {
+                        alpha = if (clickEnabled || commandEnabled) 1f else 0.46f
+                        scaleX = if (pressed) 0.94f else 1f
+                        scaleY = if (pressed) 0.94f else 1f
+                    },
+                contentScale = ContentScale.Fit
+            )
         } else if (imageVector != null) {
             Icon(
                 imageVector = imageVector,
@@ -869,7 +851,6 @@ private fun BottomActionGroup(
         Box(
             modifier = modifier
                 .size(52.dp)
-                .shadow(4.dp, shape)
                 .clip(shape)
                 .background(if (pressed) PressedActionBackground else PanelBackground)
                 .clickable(
@@ -900,7 +881,6 @@ private fun BottomActionGroup(
         Box(
             modifier = Modifier
                 .size(54.dp)
-                .shadow(4.dp, toggleShape)
                 .clip(toggleShape)
                 .background(if (togglePressed) PressedActionBackground else PanelBackground)
                 .clickable(
@@ -924,10 +904,10 @@ private fun BottomActionGroup(
                 .border(
                     width = 1.dp,
                     color = Color.White.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(15.dp)
                 ),
             color = PanelBackground,
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(15.dp),
             tonalElevation = 0.dp,
             shadowElevation = 6.dp
         ) {
@@ -1003,11 +983,20 @@ private fun ActionButton(
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val background = when {
+        pressed -> PressedActionBackground
+        selected -> Color(0x7A27C7C4)
+        else -> PanelBackground
+    }
+
 
     Column(
         modifier = Modifier
             .width(66.dp)
-            .height(58.dp)
+            .height(66.dp)
+            .background(background)
+            .clip(RoundedCornerShape(15.dp))
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,
@@ -1016,7 +1005,7 @@ private fun ActionButton(
             )
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.Center
     ) {
         Image(
             painter = painterResource(action.iconResId(selected)),
@@ -1094,7 +1083,7 @@ private fun MotionModeOverlay(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
+                    horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     supportedSportModes().forEach { mode ->
@@ -1105,7 +1094,6 @@ private fun MotionModeOverlay(
                             changing = isChanging && currentMode != mode,
                             onClick = { onModeSelected(mode) }
                         )
-                        Spacer(modifier = Modifier.width(18.dp))
                     }
                 }
             }
@@ -1126,7 +1114,6 @@ private fun MotionModeCard(
         modifier = Modifier
             .width(190.dp)
             .height(154.dp)
-            .shadow(if (selected) 8.dp else 2.dp, shape)
             .clip(shape)
             .background(if (selected) Color(0xFF203434) else Color(0xFF121818))
             .noIndicationClickable(enabled = enabled, onClick = onClick)
@@ -1137,27 +1124,36 @@ private fun MotionModeCard(
             )
     ) {
         Column(
-            modifier = Modifier.padding(18.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            if (changing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(34.dp),
-                    strokeWidth = 3.dp,
-                    color = AccentCyan
-                )
-            } else {
-                Image(
-                    painter = painterResource(mode.iconResId()),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .width(92.dp)
-                        .height(58.dp),
-                    contentScale = ContentScale.Fit
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                if (changing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(34.dp),
+                        strokeWidth = 3.dp,
+                        color = AccentCyan
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(mode.iconResId()),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(92.dp)
+                            .height(58.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = mode.displayName,
                 color = Color.White,
@@ -1236,7 +1232,6 @@ private fun ControlModeToggle(
     Box(
         modifier = Modifier
             .size(46.dp)
-            .shadow(4.dp, shape)
             .clip(shape)
             .background(
                 if (currentMode == AppMode.APP_MODE_MANUAL) {
@@ -1253,72 +1248,6 @@ private fun ControlModeToggle(
             contentDescription = currentMode.displayName,
             modifier = Modifier.size(28.dp),
             contentScale = ContentScale.Fit
-        )
-    }
-}
-
-@Composable
-private fun ControlOwnershipButton(
-    state: ControlOwnershipState,
-    isConnected: Boolean,
-    onClick: () -> Unit
-) {
-    val isPending = state == ControlOwnershipState.TAKING || state == ControlOwnershipState.RELEASING
-    val enabled = isConnected && !isPending
-    val icon = when (state) {
-        ControlOwnershipState.OWNED -> Icons.Filled.Check
-        ControlOwnershipState.TAKING,
-        ControlOwnershipState.RELEASING -> Icons.Filled.Sync
-        ControlOwnershipState.DENIED,
-        ControlOwnershipState.LOST -> Icons.Filled.Refresh
-        ControlOwnershipState.OCCUPIED -> Icons.Filled.LinkOff
-        ControlOwnershipState.UNKNOWN,
-        ControlOwnershipState.AVAILABLE -> Icons.Filled.Link
-    }
-    val text = when (state) {
-        ControlOwnershipState.OWNED -> "释放"
-        ControlOwnershipState.TAKING -> "接管中"
-        ControlOwnershipState.RELEASING -> "释放中"
-        ControlOwnershipState.OCCUPIED -> "占用"
-        ControlOwnershipState.DENIED -> "重试"
-        ControlOwnershipState.LOST -> "重接"
-        ControlOwnershipState.UNKNOWN,
-        ControlOwnershipState.AVAILABLE -> "接管"
-    }
-
-    val shape = RoundedCornerShape(14.dp)
-    Row(
-        modifier = Modifier
-            .width(74.dp)
-            .height(46.dp)
-            .shadow(4.dp, shape)
-            .clip(shape)
-            .background(
-                if (state == ControlOwnershipState.OWNED) {
-                    Color(0x7A27C7C4)
-                } else {
-                    PanelBackground
-                }
-            )
-            .noIndicationClickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = state.displayName,
-            tint = state.color(),
-            modifier = Modifier.size(17.dp)
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = text,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -1347,7 +1276,6 @@ private fun ConnectionButton(
     Box(
         modifier = Modifier
             .size(46.dp)
-            .shadow(4.dp, shape)
             .clip(shape)
             .background(PanelBackground)
             .noIndicationClickable(onClick = onClick),
@@ -1373,7 +1301,6 @@ private fun HudIconButton(
     Box(
         modifier = Modifier
             .size(46.dp)
-            .shadow(4.dp, shape)
             .clip(shape)
             .background(PanelBackground)
             .noIndicationClickable(enabled = enabled, onClick = onClick),
@@ -1398,7 +1325,6 @@ private fun BatteryIconButton(
         modifier = Modifier
             .width(64.dp)
             .height(46.dp)
-            .shadow(4.dp, shape)
             .clip(shape)
             .background(PanelBackground)
             .noIndicationClickable(onClick = onClick),
@@ -1408,7 +1334,7 @@ private fun BatteryIconButton(
         Image(
             painter = painterResource(R.drawable.genisdog_icon_battery),
             contentDescription = "电量",
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(24.dp),
             contentScale = ContentScale.Fit
         )
         Spacer(modifier = Modifier.width(3.dp))
@@ -1536,19 +1462,6 @@ private fun ConnectionState.color(): Color {
         ConnectionState.CONNECTION_FAILED,
         ConnectionState.CONNECTION_TIMEOUT -> Color(0xFFE45D3D)
         ConnectionState.DISCONNECTED -> Color(0xFF52635F)
-    }
-}
-
-private fun ControlOwnershipState.color(): Color {
-    return when (this) {
-        ControlOwnershipState.OWNED,
-        ControlOwnershipState.AVAILABLE -> Color(0xFF1AAE9F)
-        ControlOwnershipState.TAKING,
-        ControlOwnershipState.RELEASING -> Color(0xFFE2A72E)
-        ControlOwnershipState.DENIED,
-        ControlOwnershipState.LOST -> Color(0xFFE45D3D)
-        ControlOwnershipState.OCCUPIED -> Color(0xFFE2A72E)
-        ControlOwnershipState.UNKNOWN -> Color.White.copy(alpha = 0.58f)
     }
 }
 

@@ -7,6 +7,7 @@ import legged_driver.CommandCode
 import legged_driver.CommandRequestMessage
 import legged_driver.ConnectionState
 import legged_driver.ControlHeadCommandParams
+import legged_driver.ClientDisconnectMessage
 import legged_driver.DeviceType
 import legged_driver.FrontLightParams
 import legged_driver.HeartbeatMessage
@@ -170,6 +171,20 @@ object MessageUtils {
                     topics = topics
                 )
             )
+        }
+    }
+
+    fun createClientDisconnectMessage(
+        deviceType: DeviceType,
+        deviceId: String,
+        reason: String = "normal_disconnect"
+    ): LeggedDriverMessage {
+        return createEnvelope(
+            deviceType = deviceType,
+            deviceId = deviceId,
+            messageType = MessageType.MESSAGE_TYPE_CLIENT_DISCONNECT
+        ) {
+            client_disconnect(ClientDisconnectMessage(reason = reason))
         }
     }
 

@@ -19,11 +19,6 @@ class SafetyContractTest {
             requiredTokens = listOf("controller.pauseMovementOutput()")
         )
         assertBlockContains(
-            source = mainActivity,
-            functionName = "onDestroy",
-            requiredTokens = listOf("controller.cleanup()")
-        )
-        assertBlockContains(
             source = controller,
             functionName = "pauseMovementOutput",
             requiredTokens = listOf("currentMovementIntent = MovementIntent.ZERO", "stopVelocityLoop()", "stopHeadControl()")
@@ -31,12 +26,109 @@ class SafetyContractTest {
         assertBlockContains(
             source = controller,
             functionName = "disconnect",
-            requiredTokens = listOf("stopVelocityLoop()", "stopHeadControl()")
+            requiredTokens = listOf("stopVelocityLoop()", "stopHeadControl()", "stopRemoteInput()")
         )
         assertBlockContains(
             source = controller,
             functionName = "cleanup",
             requiredTokens = listOf("disconnect()", "stopRemoteInput()")
+        )
+        assertBlockContains(
+            source = controller,
+            functionName = "resumeMovementOutput",
+            requiredTokens = listOf("if (settingsState.isConnected)", "startRemoteInput()", "startVelocityLoop()")
+        )
+    }
+
+    @Test
+    fun activityDoesNotOwnControllerLifecycle() {
+        val projectRoot = locateProjectRoot()
+        val mainActivity = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/MainActivity.kt"))
+        val controller = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt"))
+
+        assertTrue(
+            "控制器必须是进程级 object",
+            controller.contains("object RobotControllerImpl : Controller") &&
+                controller.contains("object ControllerRuntime") &&
+                controller.contains("get() = ControllerRuntime.settingsState")
+        )
+        assertTrue(
+            "Activity 必须复用进程级控制器，不能重新构造控制器实例",
+            mainActivity.contains("private val controller: Controller = RobotControllerImpl") &&
+                mainActivity.contains("RobotControllerImpl.initialize(applicationContext)") &&
+                !mainActivity.contains("RobotControllerImpl(this)")
+        )
+        assertBlockDoesNotContain(
+            source = mainActivity,
+            functionName = "onDestroy",
+            forbiddenTokens = listOf("controller.cleanup()", "RemoteControlForegroundService.stop(this)")
+        )
+    }
+
+    @Test
+    fun connectedStateAutoMarksControlOwned() {
+        val projectRoot = locateProjectRoot()
+        val controller = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt"))
+
+        assertBlockContains(
+            source = controller,
+            functionName = "handleConnectionState",
+            requiredTokens = listOf(
+                "markControlOwned(\"driver 已自动接管\")",
+                "startRemoteInput()"
+            )
+        )
+        assertBlockContains(
+            source = controller,
+            functionName = "markControlOwned",
+            requiredTokens = listOf("sendInitialCommandsAfterTake()")
+        )
+    }
+
+    @Test
+    fun mainScreenDoesNotExposeManualTakeover() {
+        val projectRoot = locateProjectRoot()
+        val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
+        val settingsScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/settings/SettingsScreen.kt"))
+
+        assertTrue(
+            "driver 自动接管后，主控 UI 不得再提供手动接管或释放入口",
+            !mainScreen.contains("ControlOwnershipButton") &&
+                !mainScreen.contains("controller.takeControl()") &&
+                !mainScreen.contains("controller.releaseControl()") &&
+                !settingsScreen.contains("接管控制权后")
+        )
+    }
+
+    @Test
+    fun rtspVideoReattachesAfterResume() {
+        val projectRoot = locateProjectRoot()
+        val video = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/video/RtspVideoSurface.kt"))
+        val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
+
+        assertTrue(
+            "RTSP 视频恢复前台时必须复用进程级 VLC 运行时并重新 attach，不能重建 AndroidView 或打开 verbose 日志",
+                video.contains("Lifecycle.Event.ON_RESUME ->") &&
+                video.contains("resumeGeneration++") &&
+                video.contains("object RtspVideoRuntime") &&
+                video.contains("registerDefaultNetworkCallback") &&
+                video.contains("ACTION_POWER_DISCONNECTED") &&
+                video.contains("ACTION_USB_STATE") &&
+                video.contains("networkGeneration") &&
+                video.contains("retryGeneration") &&
+                video.contains("RTSP_START_TIMEOUT_MS") &&
+                video.contains("scheduleVideoRetry") &&
+                video.contains("RtspVideoRuntime.player(context, slot)") &&
+                video.contains("player.attach(layout, useTextureView, scaleMode)") &&
+                video.contains("player.playUrl(rtspUrl, forceReload = networkChanged || retryRequested)") &&
+                video.contains("--quiet") &&
+                video.contains(":no-spu") &&
+                !video.contains("key(retryTrigger)") &&
+                !video.contains("-vv") &&
+                !video.contains("--no-drop-late-frames") &&
+                !video.contains("--no-skip-frames") &&
+                mainScreen.contains("slot = RtspVideoSlot.Main") &&
+                mainScreen.contains("slot = RtspVideoSlot.Secondary")
         )
     }
 
@@ -71,7 +163,7 @@ class SafetyContractTest {
         assertBlockContains(
             source = controller,
             functionName = "handleConnectionState",
-            requiredTokens = listOf("stopVelocityLoop()", "ControlOwnershipState.UNKNOWN")
+            requiredTokens = listOf("stopVelocityLoop()", "stopRemoteInput()", "ControlOwnershipState.UNKNOWN")
         )
     }
 
@@ -105,6 +197,21 @@ class SafetyContractTest {
         assertTrue(
             "$functionName 缺少安全保护调用: $missing",
             missing.isEmpty()
+        )
+    }
+
+    private fun assertBlockDoesNotContain(source: String, functionName: String, forbiddenTokens: List<String>) {
+        val functionMarker = if (source.contains("override fun $functionName")) {
+            "override fun $functionName"
+        } else {
+            "fun $functionName"
+        }
+        val block = source.substringAfter(functionMarker)
+            .substringBefore("\n    }\n")
+        val found = forbiddenTokens.filter { token -> block.contains(token) }
+        assertTrue(
+            "$functionName 不应包含 Activity 生命周期绑定清理: $found",
+            found.isEmpty()
         )
     }
 

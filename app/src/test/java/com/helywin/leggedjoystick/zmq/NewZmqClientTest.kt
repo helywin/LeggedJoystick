@@ -9,6 +9,7 @@ import legged_driver.MessageType
 import legged_driver.SubscriptionTopic
 import legged_driver.ConnectionState as DriverConnectionState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.zeromq.SocketType
@@ -61,6 +62,34 @@ class NewZmqClientTest {
 
             val subscription = server.waitForMessage(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
             assertEquals(MessageUtils.defaultStateTopics(), subscription.subscription_request?.topics)
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+        } finally {
+            client.disconnect()
+            server.close()
+        }
+    }
+
+    @Test
+    fun connect_whenInitialSubscriptionIsDropped_retriesSubscriptionAndConnects() {
+        val port = findFreePort()
+        val server = TestRouterServer(
+            port = port,
+            replyToHeartbeat = false,
+            ignoredSubscriptionsBeforeReply = 1
+        ).start()
+        val client = NewZmqClient(
+            tcpEndpoint = "tcp://127.0.0.1:$port",
+            heartbeatIntervalMs = 100L
+        )
+
+        try {
+            client.connect()
+
+            val firstSubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            val retrySubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+
+            assertEquals(firstSubscription.identity, retrySubscription.identity)
+            assertEquals(MessageUtils.defaultStateTopics(), retrySubscription.message.subscription_request?.topics)
             assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
         } finally {
             client.disconnect()
@@ -130,13 +159,71 @@ class NewZmqClientTest {
         }
     }
 
+    @Test
+    fun disconnect_sendsClientDisconnectBeforeClosingSocket() {
+        val port = findFreePort()
+        val server = TestRouterServer(port).start()
+        val client = NewZmqClient(
+            tcpEndpoint = "tcp://127.0.0.1:$port",
+            heartbeatIntervalMs = 100L
+        )
+
+        try {
+            client.connect()
+            val firstSubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+
+            client.disconnect()
+
+            val disconnect = server.waitForEnvelope(MessageType.MESSAGE_TYPE_CLIENT_DISCONNECT)
+            assertEquals(firstSubscription.identity, disconnect.identity)
+            assertEquals(firstSubscription.identity, disconnect.message.device_id)
+            assertEquals("normal_disconnect", disconnect.message.client_disconnect?.reason)
+        } finally {
+            client.disconnect()
+            server.close()
+        }
+    }
+
+    @Test
+    fun connect_afterDisconnectUsesFreshDealerIdentity() {
+        val port = findFreePort()
+        val server = TestRouterServer(port).start()
+        val client = NewZmqClient(
+            tcpEndpoint = "tcp://127.0.0.1:$port",
+            heartbeatIntervalMs = 100L
+        )
+
+        try {
+            client.connect()
+            val firstSubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+
+            client.disconnect()
+            assertEquals(ConnectionState.DISCONNECTED, client.getConnectionState())
+
+            client.connect()
+            val secondSubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+
+            assertEquals(firstSubscription.identity, firstSubscription.message.device_id)
+            assertEquals(secondSubscription.identity, secondSubscription.message.device_id)
+            assertNotEquals(firstSubscription.identity, secondSubscription.identity)
+        } finally {
+            client.disconnect()
+            server.close()
+        }
+    }
+
     private class TestRouterServer(
         private val port: Int,
-        private val replyToHeartbeat: Boolean = true
+        private val replyToHeartbeat: Boolean = true,
+        private val ignoredSubscriptionsBeforeReply: Int = 0
     ) : AutoCloseable {
         private val running = AtomicBoolean(false)
         private val ready = CountDownLatch(1)
-        private val messages = LinkedBlockingQueue<LeggedDriverMessage>()
+        private val messages = LinkedBlockingQueue<ReceivedMessage>()
+        private var remainingIgnoredSubscriptions = ignoredSubscriptionsBeforeReply
         private var thread: Thread? = null
 
         fun start(): TestRouterServer {
@@ -150,11 +237,15 @@ class NewZmqClientTest {
         }
 
         fun waitForMessage(messageType: MessageType): LeggedDriverMessage {
+            return waitForEnvelope(messageType).message
+        }
+
+        fun waitForEnvelope(messageType: MessageType): ReceivedMessage {
             val deadline = System.currentTimeMillis() + 2500L
             while (System.currentTimeMillis() < deadline) {
-                val message = messages.poll(50, TimeUnit.MILLISECONDS) ?: continue
-                if (message.message_type == messageType) {
-                    return message
+                val envelope = messages.poll(50, TimeUnit.MILLISECONDS) ?: continue
+                if (envelope.message.message_type == messageType) {
+                    return envelope
                 }
             }
             throw AssertionError("未收到消息: $messageType")
@@ -179,7 +270,12 @@ class NewZmqClientTest {
                     val payload = socket.recv(0) ?: continue
                     val message = MessageUtils.deserializeMessage(payload)
                     if (MessageUtils.verifyMessage(message)) {
-                        messages.offer(message)
+                        messages.offer(
+                            ReceivedMessage(
+                                identity = String(identity, Charsets.UTF_8),
+                                message = message
+                            )
+                        )
                     }
                     when (message.message_type) {
                         MessageType.MESSAGE_TYPE_HEARTBEAT -> {
@@ -188,7 +284,11 @@ class NewZmqClientTest {
                             }
                         }
                         MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST -> {
-                            sendHeartbeatSnapshot(socket, identity)
+                            if (remainingIgnoredSubscriptions > 0) {
+                                remainingIgnoredSubscriptions -= 1
+                            } else {
+                                sendHeartbeatSnapshot(socket, identity)
+                            }
                         }
                         else -> Unit
                     }
@@ -216,6 +316,11 @@ class NewZmqClientTest {
             )
         }
     }
+
+    private data class ReceivedMessage(
+        val identity: String,
+        val message: LeggedDriverMessage
+    )
 
     private companion object {
         fun findFreePort(): Int {

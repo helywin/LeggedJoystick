@@ -19,6 +19,7 @@
 package com.helywin.leggedjoystick
 
 import android.app.Application
+import com.helywin.leggedjoystick.controller.RobotControllerImpl
 import timber.log.Timber
 
 class LeggedJoystickApplication : Application() {
@@ -29,7 +30,8 @@ class LeggedJoystickApplication : Application() {
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
-        
+
+        RobotControllerImpl.initialize(this)
         Timber.i("LeggedJoystick应用程序已启动")
     }
 }

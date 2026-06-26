@@ -32,7 +32,7 @@ import legged_driver.SportMode
 import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
-    private lateinit var controller: Controller
+    private val controller: Controller = RobotControllerImpl
     private var wakeLock: PowerManager.WakeLock? = null
     private var notificationPermissionRequested = false
 
@@ -42,8 +42,7 @@ class MainActivity : ComponentActivity() {
         // 初始化WakeLock
         initializeWakeLock()
 
-        // 初始化机器人控制器，传入Context
-        controller = RobotControllerImpl(this)
+        RobotControllerImpl.initialize(applicationContext)
 
         setContent {
             // 监听连接状态变化
@@ -93,8 +92,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         releaseWakeLock()
-        RemoteControlForegroundService.stop(this)
-        controller.cleanup()
     }
 
     /**

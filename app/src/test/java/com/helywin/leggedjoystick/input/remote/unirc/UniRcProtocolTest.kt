@@ -3,7 +3,9 @@ package com.helywin.leggedjoystick.input.remote.unirc
 import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniRcProtocolTest {
@@ -47,6 +49,33 @@ class UniRcProtocolTest {
         val frame = createChannelFrame(sequence = 1, channels = List(16) { 1500 })
         frame[frame.lastIndex] = 0x00
 
+        assertThrows(IllegalArgumentException::class.java) {
+            UniRcProtocol.parseChannelFrame(frame)
+        }
+    }
+
+    @Test
+    fun inspectFrame_recognizesSubscriptionAckAsIgnorableNonChannelFrame() {
+        val frame = byteArrayOf(
+            0x55,
+            0x66,
+            0x02,
+            0x01,
+            0x00,
+            0x4B,
+            0xC2.toByte(),
+            UniRcProtocol.CMD_CHANNELS.toByte(),
+            0x01,
+            0x40,
+            0x10
+        )
+
+        val info = UniRcProtocol.inspectFrame(frame)
+
+        assertEquals(0xC24B, info?.sequence)
+        assertEquals(1, info?.dataLength)
+        assertFalse(UniRcProtocol.isChannelDataFrame(frame))
+        assertTrue(UniRcProtocol.isIgnorableNonChannelFrame(frame))
         assertThrows(IllegalArgumentException::class.java) {
             UniRcProtocol.parseChannelFrame(frame)
         }

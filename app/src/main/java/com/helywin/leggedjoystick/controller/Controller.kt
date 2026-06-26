@@ -349,7 +349,12 @@ class ControllerState {
 /**
  * 全局状态实例
  */
-val settingsState = ControllerState()
+object ControllerRuntime {
+    val settingsState = ControllerState()
+}
+
+val settingsState: ControllerState
+    get() = ControllerRuntime.settingsState
 
 /**
  * 机器人控制器接口
@@ -380,22 +385,24 @@ interface Controller {
 }
 
 /**
- * 机器人控制器实现类
+ * 机器人控制器进程级单例。
+ *
+ * Activity 只负责呈现 UI 和转发生命周期事件，ZMQ、输入源和状态缓存都归属于本对象。
  */
-class RobotControllerImpl(private val context: Context) : Controller {
+object RobotControllerImpl : Controller {
     private val zmqClient = NewZmqClient()
-    private val settingsManager = SettingsManager(context)
+    private lateinit var settingsManager: SettingsManager
 
     // 协程相关
-    private val supervisorJob = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Main + supervisorJob)
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.Main + supervisorJob)
 
     // 连接任务
     private var connectJob: Job? = null
     private var mockStateJob: Job? = null
 
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
-    private val siyiUdpBridgeController = SiyiUdpBridgeController(context)
+    private lateinit var siyiUdpBridgeController: SiyiUdpBridgeController
     private var remoteInputRequested = false
     private var currentMovementIntent = MovementIntent.ZERO
     private var lastCommandSent = false  // 跟踪是否发送过速度指令
@@ -404,19 +411,43 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private var velocitySendJob: Job? = null
     private var headControlStopJob: Job? = null
     private var headControlActive = false
+    private const val HEAD_CONTROL_PULSE_MS = 250L
 
-    init {
-        // 设置ZMQ客户端回调
-        zmqClient.setMessageCallback { message ->
-            handleIncomingMessage(message)
+    @Volatile
+    private var initialized = false
+
+    fun initialize(context: Context) {
+        synchronized(this) {
+            ensureActiveScope()
+            if (initialized) {
+                return
+            }
+
+            val appContext = context.applicationContext
+            settingsManager = SettingsManager(appContext)
+            siyiUdpBridgeController = SiyiUdpBridgeController(appContext)
+            zmqClient.setMessageCallback { message ->
+                handleIncomingMessage(message)
+            }
+            zmqClient.setConnectionStateCallback {
+                handleConnectionState(it)
+            }
+            initialized = true
+            loadSettings()
+            Timber.i("[Controller] 进程级控制器已初始化")
         }
+    }
 
-        zmqClient.setConnectionStateCallback {
-            handleConnectionState(it)
+    private fun ensureInitialized() {
+        check(initialized) { "RobotControllerImpl 尚未初始化" }
+    }
+
+    private fun ensureActiveScope() {
+        if (!supervisorJob.isCancelled) {
+            return
         }
-
-        // 启动时加载设置
-        loadSettings()
+        supervisorJob = SupervisorJob()
+        scope = CoroutineScope(Dispatchers.Main + supervisorJob)
     }
 
     /**
@@ -474,7 +505,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             MessageType.MESSAGE_TYPE_MOTION_DATA -> {
                 message.motion_data?.let { motionData ->
                     settingsState.updateMotionTelemetry(motionData.toMotionTelemetry())
-                    Timber.v("[Controller] 收到运动数据")
+//                    Timber.v("[Controller] 收到运动数据")
                 }
             }
             MessageType.MESSAGE_TYPE_FAULT_DATA -> {
@@ -486,7 +517,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
             MessageType.MESSAGE_TYPE_ODOMETRY -> {
                 message.odometry?.let { odometry ->
                     settingsState.updateOdometryTelemetry(odometry.toOdometryTelemetry())
-                    Timber.v("[Controller] 收到里程数据")
+//                    Timber.v("[Controller] 收到里程数据")
                 }
             }
             MessageType.MESSAGE_TYPE_TAKE_CONTROL_ACK -> {
@@ -532,7 +563,9 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 Timber.w("[Controller] 收到控制权丢失通知")
             }
             MessageType.MESSAGE_TYPE_CONTROL_AVAILABLE -> {
-                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "控制权可用")
+                if (!settingsState.hasControl || settingsState.controlOwnershipState == ControlOwnershipState.RELEASING) {
+                    settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "控制权可用")
+                }
                 Timber.i("[Controller] 收到控制权可用通知")
             }
             else -> {
@@ -659,17 +692,21 @@ class RobotControllerImpl(private val context: Context) : Controller {
     private fun handleConnectionState(state: ConnectionState) {
         scope.launch {
             if (settingsState.connectionState == state) {
-                // 状态未变化，忽略
+                if (state == ConnectionState.CONNECTED && !settingsState.hasControl) {
+                    markControlOwned("driver 已自动接管")
+                }
                 return@launch
             }
             if (state == ConnectionState.CONNECTED) {
-                settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "已连接，等待接管")
-                startVelocityLoop()
+                settingsState.updateConnectionState(state)
+                markControlOwned("driver 已自动接管")
+                startRemoteInput()
             } else {
                 stopVelocityLoop()
+                stopRemoteInput()
                 settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
+                settingsState.updateConnectionState(state)
             }
-            settingsState.updateConnectionState(state)
             Timber.i("[Controller] 连接状态更新: $state")
         }
     }
@@ -678,6 +715,8 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 连接到机器人
      */
     override fun connect() {
+        ensureInitialized()
+        ensureActiveScope()
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             Timber.w("[Controller] 正在连接中，忽略重复连接请求")
             return
@@ -746,11 +785,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
                 robotConnected = true
             )
             settingsState.updateConnectionState(ConnectionState.CONNECTED)
-            settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, "工程 Mock，等待接管")
             settingsState.updateLastCommand("Mock", "连接")
             startMockStateLoop()
             startRemoteInput()
-            startVelocityLoop()
+            markControlOwned("工程 Mock 已自动接管")
             Timber.i("[Controller] 工程 Mock 已连接")
         }
     }
@@ -759,9 +797,11 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 断开连接
      */
     override fun disconnect() {
+        ensureInitialized()
         cancelConnection()
         stopVelocityLoop()
         stopHeadControl()
+        stopRemoteInput()
         stopMockStateLoop()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
@@ -777,6 +817,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
             zmqClient.disconnect()
+            stopRemoteInput()
             stopMockStateLoop()
             settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
             settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
@@ -784,6 +825,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun takeControl() {
+        ensureInitialized()
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法接管控制权")
             return
@@ -823,6 +865,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun releaseControl() {
+        ensureInitialized()
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法释放控制权")
             return
@@ -860,6 +903,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 设置机器人模式（自动/手动）
      */
     override fun setMode(mode: AppMode) {
+        ensureInitialized()
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法设置模式")
             return
@@ -906,6 +950,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 设置机器人控制模式（站立/趴下/阻尼）
      */
     override fun setControlMode(controlMode: SportMode) {
+        ensureInitialized()
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法设置运动模式")
             return
@@ -952,6 +997,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 设置速度档位
      */
     override fun setSpeedLevel(level: SpeedLevel) {
+        ensureInitialized()
         settingsState.setSpeedLevel(level)
         if (isEngineeringMock() && settingsState.isConnected && settingsState.hasControl) {
             settingsState.updateLastCommand("速度档位", level.displayName)
@@ -971,6 +1017,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 发送主控页底部动作按钮命令。
      */
     override fun performAction(action: RobotAction) {
+        ensureInitialized()
         if (!canSendControlledCommand("动作命令: ${action.displayName}")) return
 
         if (isEngineeringMock()) {
@@ -996,6 +1043,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun setFrontLight(on: Boolean) {
+        ensureInitialized()
         if (!canSendControlledCommand("前补光灯")) return
 
         if (isEngineeringMock()) {
@@ -1016,6 +1064,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun setBackLight(on: Boolean) {
+        ensureInitialized()
         if (!canSendControlledCommand("后补光灯")) return
 
         if (isEngineeringMock()) {
@@ -1036,6 +1085,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun setAutoModeLight(on: Boolean) {
+        ensureInitialized()
         if (!canSendControlledCommand("自动补光")) return
 
         if (isEngineeringMock()) {
@@ -1056,6 +1106,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun reverseHeadTail() {
+        ensureInitialized()
         if (!canSendControlledCommand("头尾方向切换")) return
 
         if (isEngineeringMock()) {
@@ -1085,6 +1136,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun controlHead(leftRight: Float, upDown: Float) {
+        ensureInitialized()
         if (!canSendControlledCommand("头部控制")) return
         if (!settingsState.isInPlaceModeForAuxCommand("头部控制")) return
 
@@ -1125,6 +1177,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun setHighLowStance(stance: HighLowStance) {
+        ensureInitialized()
         if (!canSendControlledCommand("高低站姿")) return
         if (!settingsState.isInPlaceModeForAuxCommand("高低站姿")) return
 
@@ -1150,6 +1203,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 更新设置
      */
     override fun updateSettings(settings: AppSettings) {
+        ensureInitialized()
         val mockModeChanged = settingsState.settings.engineeringMockEnabled != settings.engineeringMockEnabled
         if (mockModeChanged && settingsState.connectionState != ConnectionState.DISCONNECTED) {
             disconnect()
@@ -1165,6 +1219,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 加载设置
      */
     override fun loadSettings() {
+        ensureInitialized()
         try {
             val settings = settingsManager.loadSettings()
             settingsState.updateSettings(settings)
@@ -1179,6 +1234,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 保存设置
      */
     override fun saveSettings(settings: AppSettings) {
+        ensureInitialized()
         try {
             settingsManager.saveSettings(settings)
             Timber.d("[Controller] 设置已保存到存储")
@@ -1202,8 +1258,10 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     override fun resumeMovementOutput() {
-        startRemoteInput()
+        ensureInitialized()
+        ensureActiveScope()
         if (settingsState.isConnected) {
+            startRemoteInput()
             startVelocityLoop()
         }
         Timber.i("[Controller] 已恢复输入采集")
@@ -1352,12 +1410,14 @@ class RobotControllerImpl(private val context: Context) : Controller {
      * 清理资源
      */
     override fun cleanup() {
+        ensureInitialized()
         disconnect()
         stopRemoteInput()
         supervisorJob.cancel()
     }
 
     private fun startRemoteInput() {
+        ensureInitialized()
         remoteInputRequested = true
         if (
             !isEngineeringMock() &&
@@ -1369,6 +1429,7 @@ class RobotControllerImpl(private val context: Context) : Controller {
     }
 
     private fun stopRemoteInput() {
+        ensureInitialized()
         remoteInputRequested = false
         remoteInputSource.stop()
         siyiUdpBridgeController.release()
@@ -1490,7 +1551,4 @@ class RobotControllerImpl(private val context: Context) : Controller {
         return hypot(speedData.line, speedData.translation)
     }
 
-    private companion object {
-        private const val HEAD_CONTROL_PULSE_MS = 250L
-    }
 }
