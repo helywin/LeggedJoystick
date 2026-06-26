@@ -369,6 +369,7 @@ private fun ControlScreenBackground(
             slot = RtspVideoSlot.Main,
             scaleMode = RtspVideoScaleMode.Fill,
             showStatus = false,
+            showReconnectIndicator = true,
             onTextureViewReady = onTextureViewReady,
             modifier = Modifier.matchParentSize()
         )
@@ -494,6 +495,7 @@ private fun MiniVideoWindow(
             slot = RtspVideoSlot.Secondary,
             scaleMode = RtspVideoScaleMode.BestFit,
             showStatus = false,
+            showReconnectIndicator = true,
             onTextureViewReady = onTextureViewReady,
             modifier = Modifier.fillMaxSize()
         )

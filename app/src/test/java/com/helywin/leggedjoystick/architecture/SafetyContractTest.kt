@@ -121,7 +121,12 @@ class SafetyContractTest {
                 video.contains("networkGeneration") &&
                 video.contains("retryGeneration") &&
                 video.contains("RTSP_START_TIMEOUT_MS") &&
+                video.contains("RTSP_FRAME_STALL_TIMEOUT_MS") &&
                 video.contains("scheduleVideoRetry") &&
+                video.contains("onSurfaceTextureUpdated") &&
+                video.contains("VideoReconnectIndicator") &&
+                video.contains("captureRtspSurfaceSnapshot") &&
+                video.contains("textureView.getBitmap") &&
                 video.contains("RtspVideoRuntime.player(context, slot)") &&
                 video.contains("player.attach(textureView, scaleMode)") &&
                 video.contains("player.playUrl(rtspUrl, forceReload = networkChanged || retryRequested)") &&
@@ -131,7 +136,8 @@ class SafetyContractTest {
                 !video.contains("key(retryTrigger)") &&
                 !video.contains("-vv") &&
                 mainScreen.contains("slot = RtspVideoSlot.Main") &&
-                mainScreen.contains("slot = RtspVideoSlot.Secondary")
+                mainScreen.contains("slot = RtspVideoSlot.Secondary") &&
+                mainScreen.split("showReconnectIndicator = true").size >= 3
         )
     }
 

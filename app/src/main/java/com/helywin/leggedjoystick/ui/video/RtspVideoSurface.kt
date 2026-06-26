@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.Surface
 import android.view.TextureView
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +49,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -75,6 +78,8 @@ private const val NETWORK_RECOVERY_DELAY_MS = 700L
 private const val RTSP_RETRY_INITIAL_DELAY_MS = 1_000L
 private const val RTSP_RETRY_MAX_DELAY_MS = 5_000L
 private const val RTSP_START_TIMEOUT_MS = 6_000L
+private const val RTSP_STALL_CHECK_INTERVAL_MS = 1_000L
+private const val RTSP_FRAME_STALL_TIMEOUT_MS = 4_000L
 private const val RTSP_MAX_RETRY_ATTEMPT = 6
 private const val IJK_RTSP_TIMEOUT_US = 5_000_000L
 private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
@@ -279,6 +284,9 @@ class RtspVideoPlayer internal constructor(
     private var videoWidth = 0
     private var videoHeight = 0
 
+    var lastFrameUpdateUptimeMillis: Long = 0L
+        private set
+
     val isAttached: Boolean
         get() = attached && !released && attachedSurface?.isValid == true
 
@@ -331,6 +339,7 @@ class RtspVideoPlayer internal constructor(
         currentUrl = normalizedUrl
         videoWidth = 0
         videoHeight = 0
+        lastFrameUpdateUptimeMillis = 0L
 
         val player = createMediaPlayer(normalizedUrl)
         mediaPlayer = player
@@ -459,7 +468,9 @@ class RtspVideoPlayer internal constructor(
                 return true
             }
 
-            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+                lastFrameUpdateUptimeMillis = SystemClock.uptimeMillis()
+            }
         }
         val onLayoutChange = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             applyVideoTransform()
@@ -561,6 +572,7 @@ fun RtspVideoSurface(
     slot: RtspVideoSlot = RtspVideoSlot.Main,
     scaleMode: RtspVideoScaleMode = RtspVideoScaleMode.BestFit,
     showStatus: Boolean = true,
+    showReconnectIndicator: Boolean = false,
     onTextureViewReady: (TextureView?) -> Unit = {}
 ) {
     val isInPreview = LocalInspectionMode.current
@@ -743,6 +755,33 @@ fun RtspVideoSurface(
         }
     }
 
+    LaunchedEffect(playbackState, playAttemptGeneration, rtspUrl) {
+        if (playbackState != VideoPlaybackState.PLAYING || rtspUrl.isBlank()) return@LaunchedEffect
+        val playingSince = SystemClock.uptimeMillis()
+        while (true) {
+            delay(RTSP_STALL_CHECK_INTERVAL_MS)
+            if (
+                player.isAttached &&
+                latestLifecycleActive &&
+                latestRtspUrl.isNotBlank() &&
+                latestPlaybackState == VideoPlaybackState.PLAYING
+            ) {
+                val lastFrameTime = player.lastFrameUpdateUptimeMillis.takeIf { it > 0L } ?: playingSince
+                val stalledForMillis = SystemClock.uptimeMillis() - lastFrameTime
+                if (stalledForMillis >= RTSP_FRAME_STALL_TIMEOUT_MS) {
+                    Timber.w(
+                        "[RtspVideoSurface] RTSP 画面更新超时，准备重连: slot=%s, stalledForMs=%s, url=%s",
+                        slot,
+                        stalledForMillis,
+                        latestRtspUrl
+                    )
+                    scheduleVideoRetry("RTSP 画面更新超时")
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
+
     Box(
         modifier = modifier.background(Color.Black)
     ) {
@@ -776,6 +815,8 @@ fun RtspVideoSurface(
                 }
                 VideoPlaybackState.PLAYING -> Unit
             }
+        } else if (showReconnectIndicator && playbackState == VideoPlaybackState.LOADING && rtspUrl.isNotBlank()) {
+            VideoReconnectIndicator()
         }
     }
 }
@@ -790,6 +831,28 @@ private fun RtspVideoSlot.startDelayMillis(): Long {
 private fun retryDelayMillis(attempt: Int): Long {
     if (attempt <= 1) return RTSP_RETRY_INITIAL_DELAY_MS
     return (RTSP_RETRY_INITIAL_DELAY_MS * attempt).coerceAtMost(RTSP_RETRY_MAX_DELAY_MS)
+}
+
+@Composable
+private fun VideoReconnectIndicator() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.42f)),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(26.dp),
+                color = Color.White,
+                strokeWidth = 2.dp
+            )
+        }
+    }
 }
 
 @Composable
