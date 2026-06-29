@@ -38,6 +38,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputConfig
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputSource
+import com.helywin.leggedjoystick.input.remote.unirc.UniRcRawUdpForwardConfig
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.SiyiUdpBridgeController
@@ -1559,6 +1560,10 @@ object RobotControllerImpl : Controller {
                 remoteHost = settings.remoteInputHost,
                 remotePort = settings.remoteInputPort,
                 localPort = settings.remoteInputLocalPort,
+                rawForward = UniRcRawUdpForwardConfig(
+                    enabled = settings.remoteInputRawForwardEnabled,
+                    targetPort = settings.remoteInputRawForwardPort
+                ),
                 normalization = normalization
             )
         )

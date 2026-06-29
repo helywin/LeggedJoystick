@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     private val controller: Controller = RobotControllerImpl
     private var wakeLock: PowerManager.WakeLock? = null
     private var notificationPermissionRequested = false
+    private var initialAutoConnectRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +65,10 @@ class MainActivity : ComponentActivity() {
                 updateScreenOnFlag(settingsState.settings.keepScreenOn)
             }
 
+            LaunchedEffect(Unit) {
+                requestInitialAutoConnect()
+            }
+
             LeggedJoystickTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -72,6 +77,20 @@ class MainActivity : ComponentActivity() {
                     LeggedJoystickApp(controller)
                 }
             }
+        }
+    }
+
+    private fun requestInitialAutoConnect() {
+        if (initialAutoConnectRequested) return
+        initialAutoConnectRequested = true
+
+        if (
+            settingsState.connectionState == ConnectionState.DISCONNECTED ||
+            settingsState.connectionState == ConnectionState.CONNECTION_FAILED ||
+            settingsState.connectionState == ConnectionState.CONNECTION_TIMEOUT
+        ) {
+            Timber.i("[MainActivity] 首次打开自动连接")
+            controller.connect()
         }
     }
 

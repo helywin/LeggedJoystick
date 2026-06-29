@@ -45,6 +45,8 @@ data class AppSettings(
     val remoteInputHost: String = "127.0.0.1",
     val remoteInputPort: Int = 19856,
     val remoteInputLocalPort: Int = 0,
+    val remoteInputRawForwardEnabled: Boolean = true,
+    val remoteInputRawForwardPort: Int = 19857,
     val remoteInputDeadZone: Float = 0.06f,
     val remoteInputTimeoutMs: Long = 300L,
     val remoteInputForwardChannel: Int = 3,

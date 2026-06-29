@@ -24,7 +24,14 @@ data class UniRcUdpInputConfig(
     val subscribeRepeatCount: Int = 3,
     val receiveTimeoutMs: Int = 100,
     val resubscribeIntervalMs: Long = 1000L,
+    val rawForward: UniRcRawUdpForwardConfig = UniRcRawUdpForwardConfig(),
     val normalization: RemoteInputNormalizationConfig = RemoteInputNormalizationConfig()
+)
+
+data class UniRcRawUdpForwardConfig(
+    val enabled: Boolean = true,
+    val targetHost: String = "127.0.0.1",
+    val targetPort: Int = 19857
 )
 
 class UniRcUdpInputSource(
@@ -96,6 +103,12 @@ class UniRcUdpInputSource(
                 channel = currentChannel
                 currentChannel.configureBlocking(false)
                 currentChannel.bind(InetSocketAddress(config.localPort))
+                val rawForwarder = UniRcRawUdpPacketForwarder(
+                    config = config.rawForward,
+                    inputLocalPort = currentChannel.socket().localPort,
+                    remoteAddress = remoteAddress
+                )
+                try {
                 listener.onStatusChanged(descriptor, RemoteInputStatus.STARTING, "等待 UniRC 通道帧")
                 Timber.i(
                     "[UniRC] UDP 输入源启动，本地端口=%d，远端=%s:%d",
@@ -115,6 +128,7 @@ class UniRcUdpInputSource(
                         receiveBuffer.flip()
                         val data = ByteArray(receiveBuffer.remaining())
                         receiveBuffer.get(data)
+                        rawForwarder.forward(data)
 
                         frameAssembler.append(data).forEach { rawFrame ->
                             if (UniRcProtocol.isIgnorableNonChannelFrame(rawFrame)) {
@@ -205,6 +219,9 @@ class UniRcUdpInputSource(
                         Thread.sleep(config.receiveTimeoutMs.coerceIn(10, 20).toLong())
                     }
                 }
+                } finally {
+                    rawForwarder.close()
+                }
             }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -268,4 +285,77 @@ class UniRcUdpInputSource(
         val timeoutEmitted: Boolean,
         val subscribedAtMs: Long
     )
+}
+
+private class UniRcRawUdpPacketForwarder(
+    config: UniRcRawUdpForwardConfig,
+    inputLocalPort: Int,
+    remoteAddress: InetSocketAddress
+) : AutoCloseable {
+    private val targetAddress: InetSocketAddress?
+    private val forwardChannel: DatagramChannel?
+    private var failureCount = 0
+
+    init {
+        val targetHost = config.targetHost.trim().ifEmpty { "127.0.0.1" }
+        val targetPort = config.targetPort
+        targetAddress = when {
+            !config.enabled -> null
+            targetPort !in 1..65535 -> {
+                Timber.w("[UniRC] 原始 UDP 转发端口无效: %d", targetPort)
+                null
+            }
+            isLoopbackHost(targetHost) && targetPort == inputLocalPort -> {
+                Timber.w("[UniRC] 原始 UDP 转发端口不能等于输入本地端口: %d", targetPort)
+                null
+            }
+            isRemoteTarget(targetHost, targetPort, remoteAddress) -> {
+                Timber.w("[UniRC] 原始 UDP 转发目标不能等于 UniRC 远端: %s:%d", targetHost, targetPort)
+                null
+            }
+            else -> InetSocketAddress(targetHost, targetPort)
+        }
+        forwardChannel = targetAddress?.let { target ->
+            try {
+                DatagramChannel.open().also { channel ->
+                    channel.configureBlocking(false)
+                    Timber.i("[UniRC] 原始 UDP 转发已开启，目标=%s", target)
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "[UniRC] 原始 UDP 转发 socket 打开失败，目标=%s", target)
+                null
+            }
+        }
+    }
+
+    fun forward(rawDatagram: ByteArray) {
+        val channel = forwardChannel ?: return
+        val target = targetAddress ?: return
+        try {
+            channel.send(ByteBuffer.wrap(rawDatagram), target)
+        } catch (e: Exception) {
+            failureCount++
+            if (failureCount <= 3 || failureCount % 100 == 0) {
+                Timber.w(e, "[UniRC] 原始 UDP 转发失败，目标=%s，累计=%d", target, failureCount)
+            }
+        }
+    }
+
+    override fun close() {
+        try {
+            forwardChannel?.close()
+        } catch (e: Exception) {
+            Timber.w(e, "[UniRC] 关闭原始 UDP 转发 socket 失败")
+        }
+    }
+
+    private fun isLoopbackHost(host: String): Boolean {
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    private fun isRemoteTarget(host: String, port: Int, remoteAddress: InetSocketAddress): Boolean {
+        if (port != remoteAddress.port) return false
+        return host == remoteAddress.hostString ||
+            (isLoopbackHost(host) && remoteAddress.address?.isLoopbackAddress == true)
+    }
 }

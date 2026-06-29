@@ -49,6 +49,8 @@ fun SettingsScreen(
     var remoteInputHost by remember { mutableStateOf(currentSettings.remoteInputHost) }
     var remoteInputPort by remember { mutableStateOf(currentSettings.remoteInputPort.toString()) }
     var remoteInputLocalPort by remember { mutableStateOf(currentSettings.remoteInputLocalPort.toString()) }
+    var remoteInputRawForwardEnabled by remember { mutableStateOf(currentSettings.remoteInputRawForwardEnabled) }
+    var remoteInputRawForwardPort by remember { mutableStateOf(currentSettings.remoteInputRawForwardPort.toString()) }
     var remoteInputDeadZone by remember { mutableStateOf(currentSettings.remoteInputDeadZone.toString()) }
     var remoteInputTimeoutMs by remember { mutableStateOf(currentSettings.remoteInputTimeoutMs.toString()) }
     var forwardChannel by remember { mutableStateOf(currentSettings.remoteInputForwardChannel.toString()) }
@@ -232,6 +234,37 @@ fun SettingsScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "原始 UDP 转发",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "收到的 UniRC 原始报文转发到 127.0.0.1，供其他 App 自行解析",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = remoteInputRawForwardEnabled,
+                            onCheckedChange = { remoteInputRawForwardEnabled = it }
+                        )
+                        NumberSettingField(
+                            value = remoteInputRawForwardPort,
+                            onValueChange = { remoteInputRawForwardPort = it },
+                            label = "转发端口",
+                            modifier = Modifier.width(128.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         DecimalSettingField(
@@ -368,6 +401,11 @@ fun SettingsScreen(
                             remoteInputLocalPort,
                             currentSettings.remoteInputLocalPort
                         ),
+                        remoteInputRawForwardEnabled = remoteInputRawForwardEnabled,
+                        remoteInputRawForwardPort = parsePort(
+                            remoteInputRawForwardPort,
+                            currentSettings.remoteInputRawForwardPort
+                        ),
                         remoteInputDeadZone = parseDeadZone(
                             remoteInputDeadZone,
                             currentSettings.remoteInputDeadZone
@@ -464,6 +502,7 @@ fun SettingsScreen(
                     Text("• 点击连接按钮连接到机器人，等待连接成功")
                     Text("• 连接成功后由 driver 自动接管，移动、动作、速度、模式和辅助命令可直接发送")
                     Text("• UniRC UDP 输入负责移动轴和原地姿态轴，动作和模式由主屏按钮触发")
+                    Text("• 原始 UDP 转发默认开启，其他 App 可监听 127.0.0.1:19857 自行解析")
                     Text("• 调试通道映射时先保持低速，确认方向后再提高速度")
                     Text("• 主屏显示头尾双路视频，点击拍照按钮可保存当前主画面")
                 }

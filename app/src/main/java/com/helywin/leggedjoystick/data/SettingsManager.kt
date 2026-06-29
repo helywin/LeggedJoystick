@@ -28,6 +28,8 @@ class SettingsManager(context: Context) {
         private const val KEY_REMOTE_INPUT_HOST = "remote_input_host"
         private const val KEY_REMOTE_INPUT_PORT = "remote_input_port"
         private const val KEY_REMOTE_INPUT_LOCAL_PORT = "remote_input_local_port"
+        private const val KEY_REMOTE_INPUT_RAW_FORWARD_ENABLED = "remote_input_raw_forward_enabled"
+        private const val KEY_REMOTE_INPUT_RAW_FORWARD_PORT = "remote_input_raw_forward_port"
         private const val KEY_REMOTE_INPUT_DEAD_ZONE = "remote_input_dead_zone"
         private const val KEY_REMOTE_INPUT_TIMEOUT_MS = "remote_input_timeout_ms"
         private const val KEY_REMOTE_INPUT_FORWARD_CHANNEL = "remote_input_forward_channel"
@@ -53,6 +55,8 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_REMOTE_INPUT_HOST = "127.0.0.1"
         private const val DEFAULT_REMOTE_INPUT_PORT = 19856
         private const val DEFAULT_REMOTE_INPUT_LOCAL_PORT = 0
+        private const val DEFAULT_REMOTE_INPUT_RAW_FORWARD_ENABLED = true
+        private const val DEFAULT_REMOTE_INPUT_RAW_FORWARD_PORT = 19857
         private const val DEFAULT_REMOTE_INPUT_DEAD_ZONE = 0.06f
         private const val DEFAULT_REMOTE_INPUT_TIMEOUT_MS = 300L
         private const val DEFAULT_REMOTE_INPUT_FORWARD_CHANNEL = 3
@@ -80,6 +84,8 @@ class SettingsManager(context: Context) {
                 putString(KEY_REMOTE_INPUT_HOST, settings.remoteInputHost)
                 putInt(KEY_REMOTE_INPUT_PORT, settings.remoteInputPort)
                 putInt(KEY_REMOTE_INPUT_LOCAL_PORT, settings.remoteInputLocalPort)
+                putBoolean(KEY_REMOTE_INPUT_RAW_FORWARD_ENABLED, settings.remoteInputRawForwardEnabled)
+                putInt(KEY_REMOTE_INPUT_RAW_FORWARD_PORT, settings.remoteInputRawForwardPort)
                 putFloat(KEY_REMOTE_INPUT_DEAD_ZONE, settings.remoteInputDeadZone)
                 putLong(KEY_REMOTE_INPUT_TIMEOUT_MS, settings.remoteInputTimeoutMs)
                 putInt(KEY_REMOTE_INPUT_FORWARD_CHANNEL, settings.remoteInputForwardChannel)
@@ -130,6 +136,14 @@ class SettingsManager(context: Context) {
                     KEY_REMOTE_INPUT_LOCAL_PORT,
                     DEFAULT_REMOTE_INPUT_LOCAL_PORT
                 ),
+                remoteInputRawForwardEnabled = sharedPreferences.getBoolean(
+                    KEY_REMOTE_INPUT_RAW_FORWARD_ENABLED,
+                    DEFAULT_REMOTE_INPUT_RAW_FORWARD_ENABLED
+                ),
+                remoteInputRawForwardPort = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_RAW_FORWARD_PORT,
+                    DEFAULT_REMOTE_INPUT_RAW_FORWARD_PORT
+                ).coerceIn(1, 65535),
                 remoteInputDeadZone = sharedPreferences.getFloat(
                     KEY_REMOTE_INPUT_DEAD_ZONE,
                     DEFAULT_REMOTE_INPUT_DEAD_ZONE

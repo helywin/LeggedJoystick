@@ -77,6 +77,11 @@
 - **WHEN** 用户进入主控页
 - **THEN** App 不得显示接管、释放或重试接管按钮；用户只需要使用连接按钮建立或断开 driver 链路
 
+#### Scenario: App 打开后自动连接
+- **WHEN** App 进程首次打开并完成控制器初始化
+- **THEN** App 必须自动触发一次连接请求
+- **AND** 如果用户在同一轮界面中手动断开，不得因为自动连接逻辑立即再次重连
+
 ### Requirement: 后台恢复后主屏视频必须重新显示
 
 主屏 RTSP 视频组件 MUST 使用进程级 IJKPlayer 运行时管理视频资源，通过 `TextureView` 输出视频，在 Activity 从后台恢复后重新绑定视频输出并重新加载当前 RTSP 地址，避免背景视频黑屏、重复创建播放器输出或日志风暴。
@@ -188,13 +193,19 @@ App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；
 - **AND** 速度按钮只能触发 `COMMAND_CODE_SET_SPEED_LEVEL`，不得改变 `COMMAND_CODE_MOVE` 的轴值倍率
 - **AND** App 启动或输入链路重建后的首个 CH5 速度请求只作为基线，不得覆盖接管后默认低速；只有后续 CH5 变化才允许触发速度档切换
 
+#### Scenario: 原始 UDP 报文转发
+- **WHEN** UniRC 输入源从 UDP 套接字收到任意 datagram
+- **THEN** App 必须在解析前把该 datagram 的原始字节原样转发到本机可配置 UDP 端口
+- **AND** 转发不得依赖 Android 广播、不得要求其他 App 绑定原 UniRC 输入端口、不得影响当前 App 的帧解析和运动安全保护
+- **AND** 没有监听者或转发失败时不得中断当前 App 的输入源
+
 ### Requirement: 多 App 共用摇杆数据不得依赖 UDP 同端口复用
 
 App MUST NOT 设计为多个进程绑定同一个本地 UDP 端口来共享单播摇杆流。
 
 #### Scenario: 需要多个 App 共用摇杆数据
 - **WHEN** UniRC 数据需要被多个 App 使用
-- **THEN** 不得依赖同端口 UDP 复用、不同客户端 UDP 端口并发订阅或 UDP 桥加直接串口读取；必须使用单采集者独占 UDP 或串口，再通过绑定服务或受限广播分发
+- **THEN** 不得依赖同端口 UDP 复用、不同客户端 UDP 端口并发订阅或 UDP 桥加直接串口读取；必须使用单采集者独占 UDP 或串口，再通过本机 UDP 原始报文转发给其他监听端口
 
 #### Scenario: 本机 UDP 桥使用最近客户端地址
 - **WHEN** 多个本机 UDP 客户端端口同时向 `com.siyi.udpservice` 订阅 UniRC 通道帧

@@ -94,6 +94,20 @@ class SafetyContractTest {
     }
 
     @Test
+    fun appLaunchAutoConnectsOnce() {
+        val projectRoot = locateProjectRoot()
+        val mainActivity = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/MainActivity.kt"))
+
+        assertTrue(
+            "App 首次打开必须自动触发一次连接",
+            mainActivity.contains("LaunchedEffect(Unit)") &&
+                mainActivity.contains("requestInitialAutoConnect()") &&
+                mainActivity.contains("initialAutoConnectRequested = true") &&
+                mainActivity.contains("controller.connect()")
+        )
+    }
+
+    @Test
     fun mainScreenDoesNotExposeManualTakeover() {
         val projectRoot = locateProjectRoot()
         val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
@@ -268,6 +282,28 @@ class SafetyContractTest {
             controller.contains("remoteSpeedLevelSnapshotSeen") &&
                 controller.contains("lastRemoteSpeedLevelRequest = speedLevelRequest") &&
                 controller.contains("外部遥控速度基线")
+        )
+    }
+
+    @Test
+    fun unircRawUdpForwardingUsesLocalUdpNotAndroidBroadcast() {
+        val projectRoot = locateProjectRoot()
+        val inputSource = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/input/remote/unirc/UniRcUdpInputSource.kt"))
+        val controller = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt"))
+
+        assertTrue(
+            "UniRC 原始报文必须在解析前按 UDP datagram 原样转发",
+            inputSource.contains("data = ByteArray(receiveBuffer.remaining())") &&
+                inputSource.contains("rawForwarder.forward(data)") &&
+                inputSource.indexOf("rawForwarder.forward(data)") < inputSource.indexOf("frameAssembler.append(data)") &&
+                inputSource.contains("DatagramChannel.open()") &&
+                !inputSource.contains("sendBroadcast")
+        )
+        assertTrue(
+            "控制器必须把设置里的原始转发端口传给 UniRC 输入源",
+            controller.contains("UniRcRawUdpForwardConfig") &&
+                controller.contains("enabled = settings.remoteInputRawForwardEnabled") &&
+                controller.contains("targetPort = settings.remoteInputRawForwardPort")
         )
     }
 

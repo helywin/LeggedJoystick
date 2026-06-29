@@ -80,6 +80,55 @@ class UniRcUdpInputSourceTest {
     }
 
     @Test
+    fun start_forwardsRawUdpDatagramsToConfiguredLocalPort() {
+        TestUdpPeer().use { peer ->
+            TestUdpPeer().use { forwardTarget ->
+                val listener = RecordingRemoteInputListener()
+                val source = UniRcUdpInputSource(
+                    UniRcUdpInputConfig(
+                        remoteHost = "127.0.0.1",
+                        remotePort = peer.localPort,
+                        localPort = 0,
+                        subscribeRepeatCount = 1,
+                        receiveTimeoutMs = 10,
+                        resubscribeIntervalMs = 1000L,
+                        rawForward = UniRcRawUdpForwardConfig(
+                            enabled = true,
+                            targetHost = "127.0.0.1",
+                            targetPort = forwardTarget.localPort
+                        ),
+                        normalization = RemoteInputNormalizationConfig(
+                            deadZone = 0f,
+                            timeoutMs = 500L
+                        )
+                    )
+                )
+
+                try {
+                    source.start(listener)
+
+                    val subscribePacket = peer.receivePacket()
+                    val ackFrame = createSubscriptionAckFrame(sequence = 0xC24B)
+                    val channelFrame = createChannelFrame(
+                        sequence = 8,
+                        channels = MutableList(16) { 1500 }.also {
+                            it[2] = 1950
+                        }
+                    )
+                    peer.send(data = ackFrame, target = subscribePacket.sender)
+                    peer.send(data = channelFrame, target = subscribePacket.sender)
+
+                    assertEquals(ackFrame.toList(), forwardTarget.receivePacket().data.toList())
+                    assertEquals(channelFrame.toList(), forwardTarget.receivePacket().data.toList())
+                    assertEquals(8, listener.awaitSnapshot().sequence)
+                } finally {
+                    source.stop()
+                }
+            }
+        }
+    }
+
+    @Test
     fun stop_doesNotSendStopFrequencyFrame() {
         TestUdpPeer().use { peer ->
             val listener = RecordingRemoteInputListener()
