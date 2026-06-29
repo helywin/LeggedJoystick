@@ -63,7 +63,7 @@ class RemoteControlForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_dog)
+            .setSmallIcon(R.drawable.ic_rescue_remote_notification)
             .setContentTitle("机器狗遥控运行中")
             .setContentText(connectionText)
             .setStyle(
