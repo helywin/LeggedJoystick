@@ -552,12 +552,12 @@ private fun VerticalSpeedSelector(
         }
 
         Text(
-            text = "%.1f".format(currentSpeedValue),
+            text = "%.1f m/s".format(currentSpeedValue),
             modifier = Modifier
                 .align(Alignment.Center)
                 .offset(y = 30.dp),
             color = Color.White.copy(alpha = 0.86f),
-            fontSize = 18.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
@@ -906,7 +906,7 @@ private fun BottomActionGroup(
             shadowElevation = 6.dp
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
+                modifier = Modifier.padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
