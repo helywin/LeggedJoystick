@@ -67,7 +67,7 @@
 
 #### Scenario: App 连接 driver 后可控
 - **WHEN** Android App 的 ZMQ 连接验证成功
-- **THEN** App 必须将本地控制权状态更新为已接管，并发送手动 AppMode 与当前速度档初始化命令
+- **THEN** App 必须将本地控制权状态更新为已接管，并发送手动 AppMode 与低速速度档初始化命令
 
 #### Scenario: App 不再需要接管点击
 - **WHEN** 用户完成连接并触发速度、模式、动作或移动输入
@@ -171,9 +171,22 @@ App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；
 - **WHEN** 用户左手前推、左手右推或右手右推
 - **THEN** 内部移动意图必须分别表示为前进正值、右平移正值和右转正值；发送 `MoveCommandParams` 时必须保持 `forward_back` 正数前进，并把右平移、右转分别转换为负的 `left_right` 和负的 `yaw`
 
+#### Scenario: 原地模式右杆姿态俯仰
+- **WHEN** 机器人处于 `SPORT_MODE_IN_PLACE` 且用户推动右杆上下
+- **THEN** 输入层必须从右杆上下通道输出独立姿态俯仰意图，默认映射为 UniRC CH2，并按真机方向反向后使右杆上推为抬头正值
+- **AND** 控制层必须通过 `COMMAND_CODE_CONTROL_HEAD` 连续发送姿态控制，`up_down` 正值表示抬头，右杆左右必须映射到 `left_right` 姿态左右控制
+- **AND** 用户松开右杆、输入超时、页面后台、断连或失去控制权时必须停止连续姿态输出并发送 `CONTROL_HEAD(0, 0)`
+
 #### Scenario: 速度档处理
 - **WHEN** 用户切换低速、中速或高速
 - **THEN** App 必须通过 `COMMAND_CODE_SET_SPEED_LEVEL` 更新速度等级，输入层不得再按速度档对 `COMMAND_CODE_MOVE` 做二次倍率缩放
+
+#### Scenario: 外部遥控器左侧速度按钮
+- **WHEN** 用户按下 UniRC 左侧 L1、L2 或 L3 按钮
+- **THEN** 输入层必须按真机观测到的 CH5 离散值将 `1000`、`1200`、`1400` 分别解析为低速、中速、高速请求
+- **AND** 控制层必须在按钮按下边沿调用速度档控制，不得由输入层直接拼装或发送底层协议帧
+- **AND** 速度按钮只能触发 `COMMAND_CODE_SET_SPEED_LEVEL`，不得改变 `COMMAND_CODE_MOVE` 的轴值倍率
+- **AND** App 启动或输入链路重建后的首个 CH5 速度请求只作为基线，不得覆盖接管后默认低速；只有后续 CH5 变化才允许触发速度档切换
 
 ### Requirement: 多 App 共用摇杆数据不得依赖 UDP 同端口复用
 

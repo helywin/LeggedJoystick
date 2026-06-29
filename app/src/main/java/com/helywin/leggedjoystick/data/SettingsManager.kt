@@ -36,10 +36,14 @@ class SettingsManager(context: Context) {
         private const val KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED = "remote_input_strafe_right_inverted"
         private const val KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL = "remote_input_yaw_right_channel"
         private const val KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED = "remote_input_yaw_right_inverted"
+        private const val KEY_REMOTE_INPUT_HEAD_PITCH_CHANNEL = "remote_input_head_pitch_channel"
+        private const val KEY_REMOTE_INPUT_HEAD_PITCH_INVERTED = "remote_input_head_pitch_inverted"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_ENGINEERING_MOCK_ENABLED = "engineering_mock_enabled"
+        private const val KEY_SETTINGS_VERSION = "settings_version"
 
         // 默认配置
+        private const val CURRENT_SETTINGS_VERSION = 2
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
         private const val DEFAULT_HEAD_RTSP_URL = "rtsp://192.168.234.1:8554/front"
@@ -54,6 +58,8 @@ class SettingsManager(context: Context) {
         private const val DEFAULT_REMOTE_INPUT_FORWARD_CHANNEL = 3
         private const val DEFAULT_REMOTE_INPUT_STRAFE_RIGHT_CHANNEL = 4
         private const val DEFAULT_REMOTE_INPUT_YAW_RIGHT_CHANNEL = 1
+        private const val DEFAULT_REMOTE_INPUT_HEAD_PITCH_CHANNEL = 2
+        private const val DEFAULT_REMOTE_INPUT_HEAD_PITCH_INVERTED = true
         private const val DEFAULT_KEEP_SCREEN_ON = true
     }
 
@@ -82,8 +88,11 @@ class SettingsManager(context: Context) {
                 putBoolean(KEY_REMOTE_INPUT_STRAFE_RIGHT_INVERTED, settings.remoteInputStrafeRightInverted)
                 putInt(KEY_REMOTE_INPUT_YAW_RIGHT_CHANNEL, settings.remoteInputYawRightChannel)
                 putBoolean(KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED, settings.remoteInputYawRightInverted)
+                putInt(KEY_REMOTE_INPUT_HEAD_PITCH_CHANNEL, settings.remoteInputHeadPitchChannel)
+                putBoolean(KEY_REMOTE_INPUT_HEAD_PITCH_INVERTED, settings.remoteInputHeadPitchInverted)
                 putBoolean(KEY_KEEP_SCREEN_ON, settings.keepScreenOn)
                 putBoolean(KEY_ENGINEERING_MOCK_ENABLED, settings.engineeringMockEnabled)
+                putInt(KEY_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
                 apply()
             }
             Timber.d("设置已保存: $settings")
@@ -97,17 +106,11 @@ class SettingsManager(context: Context) {
      */
     fun loadSettings(): AppSettings {
         return try {
-            val speedLevelName = sharedPreferences.getString(KEY_SPEED_LEVEL, SpeedLevel.SLOW.name)
-            val speedLevel = try {
-                SpeedLevel.valueOf(speedLevelName ?: SpeedLevel.SLOW.name)
-            } catch (e: IllegalArgumentException) {
-                Timber.w("无效的速度档位: $speedLevelName，使用默认值")
-                SpeedLevel.SLOW
-            }
+            val storedSettingsVersion = sharedPreferences.getInt(KEY_SETTINGS_VERSION, 1)
             AppSettings(
                 zmqIp = sharedPreferences.getString(KEY_ZMQ_IP, DEFAULT_ZMQ_IP) ?: DEFAULT_ZMQ_IP,
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
-                speedLevel = speedLevel,
+                speedLevel = SpeedLevel.SLOW,
                 headRtspUrl = normalizeDefaultRtspUrl(
                     sharedPreferences.getString(KEY_HEAD_RTSP_URL, DEFAULT_HEAD_RTSP_URL),
                     OLD_DEFAULT_HEAD_RTSP_URL,
@@ -159,15 +162,41 @@ class SettingsManager(context: Context) {
                     KEY_REMOTE_INPUT_YAW_RIGHT_INVERTED,
                     false
                 ),
+                remoteInputHeadPitchChannel = sharedPreferences.getInt(
+                    KEY_REMOTE_INPUT_HEAD_PITCH_CHANNEL,
+                    DEFAULT_REMOTE_INPUT_HEAD_PITCH_CHANNEL
+                ).coerceIn(1, 16),
+                remoteInputHeadPitchInverted = loadHeadPitchInverted(storedSettingsVersion),
                 keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON),
                 engineeringMockEnabled = sharedPreferences.getBoolean(KEY_ENGINEERING_MOCK_ENABLED, false)
             ).also {
+                if (storedSettingsVersion < CURRENT_SETTINGS_VERSION) {
+                    migrateSettingsVersion(it)
+                }
                 Timber.d("设置已加载: $it")
             }
         } catch (e: Exception) {
             Timber.e(e, "加载设置失败，使用默认设置")
             AppSettings() // 返回默认设置
         }
+    }
+
+    private fun loadHeadPitchInverted(storedSettingsVersion: Int): Boolean {
+        if (storedSettingsVersion < CURRENT_SETTINGS_VERSION) {
+            return DEFAULT_REMOTE_INPUT_HEAD_PITCH_INVERTED
+        }
+        return sharedPreferences.getBoolean(
+            KEY_REMOTE_INPUT_HEAD_PITCH_INVERTED,
+            DEFAULT_REMOTE_INPUT_HEAD_PITCH_INVERTED
+        )
+    }
+
+    private fun migrateSettingsVersion(settings: AppSettings) {
+        sharedPreferences.edit {
+            putBoolean(KEY_REMOTE_INPUT_HEAD_PITCH_INVERTED, settings.remoteInputHeadPitchInverted)
+            putInt(KEY_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
+        }
+        Timber.i("设置已迁移到版本 %d", CURRENT_SETTINGS_VERSION)
     }
 
     /**

@@ -38,9 +38,34 @@ data class MovementIntent(
     }
 }
 
+data class HeadControlIntent(
+    val pitchUp: Float
+) {
+    val isZero: Boolean
+        get() = pitchUp == 0f
+
+    fun clamped(): HeadControlIntent {
+        return HeadControlIntent(
+            pitchUp = pitchUp.coerceIn(-1f, 1f)
+        )
+    }
+
+    companion object {
+        val ZERO = HeadControlIntent(0f)
+    }
+}
+
+enum class RemoteSpeedLevelRequest {
+    LOW,
+    MEDIUM,
+    HIGH
+}
+
 data class RemoteInputSnapshot(
     val descriptor: RemoteInputSourceDescriptor,
     val movementIntent: MovementIntent,
+    val headControlIntent: HeadControlIntent = HeadControlIntent.ZERO,
+    val speedLevelRequest: RemoteSpeedLevelRequest? = null,
     val rawChannels: List<Int> = emptyList(),
     val normalizedAxes: Map<String, Float> = emptyMap(),
     val sequence: Int = 0,
@@ -60,10 +85,20 @@ data class RemoteInputAxisMapping(
     val inverted: Boolean = false
 )
 
+data class RemoteInputSpeedSelectorMapping(
+    val channel: Int,
+    val lowRaw: Int = 1000,
+    val mediumRaw: Int = 1200,
+    val highRaw: Int = 1400,
+    val tolerance: Int = 90
+)
+
 data class RemoteInputChannelMapping(
     val forward: RemoteInputAxisMapping = RemoteInputAxisMapping(channel = 3),
     val strafeRight: RemoteInputAxisMapping = RemoteInputAxisMapping(channel = 4),
-    val yawRight: RemoteInputAxisMapping = RemoteInputAxisMapping(channel = 1)
+    val yawRight: RemoteInputAxisMapping = RemoteInputAxisMapping(channel = 1),
+    val headPitchUp: RemoteInputAxisMapping = RemoteInputAxisMapping(channel = 2, inverted = true),
+    val speedSelector: RemoteInputSpeedSelectorMapping = RemoteInputSpeedSelectorMapping(channel = 5)
 )
 
 data class RemoteInputNormalizationConfig(

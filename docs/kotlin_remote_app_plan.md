@@ -145,9 +145,14 @@ UniRC 通道默认值范围为 1050 到 1950，中位为 1500。初版不要把�
 | forward_back | CH3 | 左手前后 |
 | strafe_right | CH4 | 左手左右平移，右推为正的内部意图 |
 | yaw_right | CH1 | 右手转向，右推为正的内部意图 |
-速度等级只由屏幕左侧速度选择器设置，不解析 L1/L2/L3，也不从外部摇杆通道切换速度档。
+| head_pitch_up | CH2 | 原地模式右手上下姿态俯仰，默认反向后使上推为正并映射为抬头 |
+| speed_level_request | CH5 | 真机观测 L1/L2/L3 分别为 1000/1200/1400，对应低速/中速/高速 |
+
+App 每次启动和接管后都以低速作为本地与 driver 初始档位。左侧 L1、L2、L3 在当前真机上不走 CH11、CH12、CH13，而是共用 CH5 的离散值。输入层只输出速度档请求，控制层通过现有速度档接口发送 `COMMAND_CODE_SET_SPEED_LEVEL`；输入链路启动后的首个 CH5 速度请求只作为基线，不覆盖默认低速，后续速度请求变化时才切档，也不得对移动轴做二次倍率缩放。
 
 发送 `COMMAND_CODE_MOVE` 前必须按 `legged_driver` SDK 语义转换符号：`forward_back` 正数仍为前进；`left_right` 正数是左平移，所以内部 `strafe_right` 要取负；`yaw` 正数是左旋转，所以内部 `yaw_right` 要取负。
+
+原地模式下右手摇杆左右和上下不再只作为移动转向输入。右手左右按操作者直觉右推为正，发送 `COMMAND_CODE_CONTROL_HEAD` 时转换为 `left_right = -yaw_right`；右手上下发送为 `up_down = head_pitch_up`，正数表示抬头。右杆归中、输入超时、后台、断连或失去控制权时必须发送 `CONTROL_HEAD(0, 0)` 停止连续姿态输出。
 
 输入归一化建议使用可配置参数：
 

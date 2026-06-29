@@ -57,6 +57,8 @@ fun SettingsScreen(
     var strafeRightInverted by remember { mutableStateOf(currentSettings.remoteInputStrafeRightInverted) }
     var yawRightChannel by remember { mutableStateOf(currentSettings.remoteInputYawRightChannel.toString()) }
     var yawRightInverted by remember { mutableStateOf(currentSettings.remoteInputYawRightInverted) }
+    var headPitchChannel by remember { mutableStateOf(currentSettings.remoteInputHeadPitchChannel.toString()) }
+    var headPitchInverted by remember { mutableStateOf(currentSettings.remoteInputHeadPitchInverted) }
     val context = LocalContext.current
 
     Column(
@@ -273,6 +275,13 @@ fun SettingsScreen(
                         onChannelChange = { yawRightChannel = it },
                         onInvertedChange = { yawRightInverted = it }
                     )
+                    AxisMappingRow(
+                        label = "原地俯仰",
+                        channel = headPitchChannel,
+                        inverted = headPitchInverted,
+                        onChannelChange = { headPitchChannel = it },
+                        onInvertedChange = { headPitchInverted = it }
+                    )
                 }
             }
 
@@ -382,6 +391,11 @@ fun SettingsScreen(
                             currentSettings.remoteInputYawRightChannel
                         ),
                         remoteInputYawRightInverted = yawRightInverted,
+                        remoteInputHeadPitchChannel = parseChannel(
+                            headPitchChannel,
+                            currentSettings.remoteInputHeadPitchChannel
+                        ),
+                        remoteInputHeadPitchInverted = headPitchInverted,
                         keepScreenOn = keepScreenOn,
                         engineeringMockEnabled = engineeringMockEnabled
                     )
@@ -449,7 +463,7 @@ fun SettingsScreen(
                     Text("• 配置服务器的IP地址和端口，然后保存")
                     Text("• 点击连接按钮连接到机器人，等待连接成功")
                     Text("• 连接成功后由 driver 自动接管，移动、动作、速度、模式和辅助命令可直接发送")
-                    Text("• UniRC UDP 输入只负责移动轴，动作和模式由主屏按钮触发")
+                    Text("• UniRC UDP 输入负责移动轴和原地姿态轴，动作和模式由主屏按钮触发")
                     Text("• 调试通道映射时先保持低速，确认方向后再提高速度")
                     Text("• 主屏显示头尾双路视频，点击拍照按钮可保存当前主画面")
                 }

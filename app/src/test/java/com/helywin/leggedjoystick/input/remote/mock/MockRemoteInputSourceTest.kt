@@ -25,9 +25,12 @@ class MockRemoteInputSourceTest {
             assertEquals("工程 Mock", snapshot.descriptor.displayName)
             assertEquals(List(16) { 1500 }, snapshot.rawChannels)
             assertTrue(snapshot.movementIntent.isZero)
+            assertTrue(snapshot.headControlIntent.isZero)
+            assertEquals(null, snapshot.speedLevelRequest)
             assertEquals(0f, snapshot.normalizedAxes["forward"] ?: 1f, FLOAT_DELTA)
             assertEquals(0f, snapshot.normalizedAxes["strafeRight"] ?: 1f, FLOAT_DELTA)
             assertEquals(0f, snapshot.normalizedAxes["yawRight"] ?: 1f, FLOAT_DELTA)
+            assertEquals(0f, snapshot.normalizedAxes["headPitchUp"] ?: 1f, FLOAT_DELTA)
         } finally {
             source.stop()
         }

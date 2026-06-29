@@ -83,6 +83,14 @@ class SafetyContractTest {
             functionName = "markControlOwned",
             requiredTokens = listOf("sendInitialCommandsAfterTake()")
         )
+        assertBlockContains(
+            source = controller,
+            functionName = "sendInitialCommandsAfterTake",
+            requiredTokens = listOf(
+                "settingsState.setSpeedLevel(SpeedLevel.SLOW)",
+                "zmqClient.setSpeedLevel(SpeedLevel.SLOW.protocolSpeedLevel)"
+            )
+        )
     }
 
     @Test
@@ -191,6 +199,75 @@ class SafetyContractTest {
                 "currentMovementIntent = MovementIntent.ZERO",
                 "lastCommandSent = false"
             )
+        )
+    }
+
+    @Test
+    fun inPlaceRightStickControlsHeadPitchWithStopProtection() {
+        val projectRoot = locateProjectRoot()
+        val controller = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt"))
+
+        val velocityLoop = controller.substringAfter("private fun startVelocityLoop")
+            .substringBefore("private fun stopVelocityLoop")
+        assertTrue(
+            "原地模式必须从移动循环切换到连续头部姿态控制",
+            velocityLoop.contains("settingsState.robotCtrlMode == SportMode.SPORT_MODE_IN_PLACE") &&
+                velocityLoop.contains("sendInPlaceHeadControl(intent, headIntent)")
+        )
+
+        val inPlaceHeadControl = controller.substringAfter("private fun sendInPlaceHeadControl")
+            .substringBefore("private fun stopVelocityLoop")
+        assertTrue(
+            "右杆左右和上下必须映射到 CONTROL_HEAD，并保留左右符号转换",
+            inPlaceHeadControl.contains("leftRight = -intent.yawRight") &&
+                inPlaceHeadControl.contains("upDown = headIntent.pitchUp") &&
+                inPlaceHeadControl.contains("zmqClient.controlHead(leftRight, upDown)") &&
+                inPlaceHeadControl.contains("headControlActive = true")
+        )
+
+        val stopHeadControl = controller.substringAfter("private fun stopHeadControl")
+            .substringBefore("private fun handleMockHeadControl")
+        assertTrue(
+            "停止姿态输出时必须发送 CONTROL_HEAD(0, 0)",
+            stopHeadControl.contains("zmqClient.controlHead(0f, 0f)") &&
+                stopHeadControl.contains("headControlActive = false")
+        )
+    }
+
+    @Test
+    fun remoteLeftButtonsSetSpeedLevelsThroughController() {
+        val projectRoot = locateProjectRoot()
+        val models = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/input/remote/RemoteInputModels.kt"))
+        val protocol = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/input/remote/unirc/UniRcProtocol.kt"))
+        val controller = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt"))
+
+        assertTrue(
+            "L1/L2/L3 必须按真机观测到的 CH5 离散值映射为低速/中速/高速",
+            models.contains("speedSelector: RemoteInputSpeedSelectorMapping = RemoteInputSpeedSelectorMapping(channel = 5)") &&
+                models.contains("lowRaw: Int = 1000") &&
+                models.contains("mediumRaw: Int = 1200") &&
+                models.contains("highRaw: Int = 1400")
+        )
+        assertTrue(
+            "UniRC 输入层必须输出速度档请求，但不得在输入层发送协议命令",
+            protocol.contains("RemoteSpeedLevelRequest.LOW") &&
+                protocol.contains("RemoteSpeedLevelRequest.MEDIUM") &&
+                protocol.contains("RemoteSpeedLevelRequest.HIGH") &&
+                !protocol.contains("COMMAND_CODE_SET_SPEED_LEVEL")
+        )
+        assertTrue(
+            "控制层必须把遥控器速度键转换为现有 setSpeedLevel 调用",
+            controller.contains("handleRemoteSpeedLevelRequest(speedLevelRequest)") &&
+                controller.contains("RemoteSpeedLevelRequest.LOW -> SpeedLevel.SLOW") &&
+                controller.contains("RemoteSpeedLevelRequest.MEDIUM -> SpeedLevel.MEDIUM") &&
+                controller.contains("RemoteSpeedLevelRequest.HIGH -> SpeedLevel.FAST") &&
+                controller.contains("setSpeedLevel(speedLevel)")
+        )
+        assertTrue(
+            "CH5 首帧只能作为速度基线，不能覆盖启动默认低速",
+            controller.contains("remoteSpeedLevelSnapshotSeen") &&
+                controller.contains("lastRemoteSpeedLevelRequest = speedLevelRequest") &&
+                controller.contains("外部遥控速度基线")
         )
     }
 

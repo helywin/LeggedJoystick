@@ -1,8 +1,11 @@
 package com.helywin.leggedjoystick.input.remote.unirc
 
+import com.helywin.leggedjoystick.input.remote.HeadControlIntent
 import com.helywin.leggedjoystick.input.remote.MovementIntent
 import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
+import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
 import com.helywin.leggedjoystick.input.remote.normalizeRemoteChannel
+import kotlin.math.abs
 
 data class UniRcChannelFrame(
     val ctrl: Int,
@@ -33,6 +36,8 @@ data class UniRcChannelFrame(
 
 data class UniRcMovementMappingResult(
     val movementIntent: MovementIntent,
+    val headControlIntent: HeadControlIntent,
+    val speedLevelRequest: RemoteSpeedLevelRequest?,
     val normalizedAxes: Map<String, Float>
 )
 
@@ -163,6 +168,8 @@ object UniRcProtocol {
         val forward = normalizeAxis(channels, config.mapping.forward, config)
         val strafeRight = normalizeAxis(channels, config.mapping.strafeRight, config)
         val yawRight = normalizeAxis(channels, config.mapping.yawRight, config)
+        val headPitchUp = normalizeAxis(channels, config.mapping.headPitchUp, config)
+        val speedLevelRequest = mapSpeedLevelRequest(channels, config)
 
         return UniRcMovementMappingResult(
             movementIntent = MovementIntent(
@@ -170,12 +177,34 @@ object UniRcProtocol {
                 strafeRight = strafeRight,
                 yawRight = yawRight
             ).clamped(),
+            headControlIntent = HeadControlIntent(
+                pitchUp = headPitchUp
+            ).clamped(),
+            speedLevelRequest = speedLevelRequest,
             normalizedAxes = mapOf(
                 "forward" to forward,
                 "strafeRight" to strafeRight,
-                "yawRight" to yawRight
+                "yawRight" to yawRight,
+                "headPitchUp" to headPitchUp
             )
         )
+    }
+
+    private fun mapSpeedLevelRequest(
+        channels: List<Int>,
+        config: RemoteInputNormalizationConfig
+    ): RemoteSpeedLevelRequest? {
+        val mapping = config.mapping.speedSelector
+        require(mapping.channel in 1..CHANNEL_COUNT) { "通道号必须在 1 到 16 之间" }
+        val raw = channels[mapping.channel - 1]
+        val activeRequests = listOf(
+            RemoteSpeedLevelRequest.LOW to mapping.lowRaw,
+            RemoteSpeedLevelRequest.MEDIUM to mapping.mediumRaw,
+            RemoteSpeedLevelRequest.HIGH to mapping.highRaw
+        )
+        val nearest = activeRequests.minBy { (_, expectedRaw) -> abs(raw - expectedRaw) }
+        return nearest.takeIf { (_, expectedRaw) -> abs(raw - expectedRaw) <= mapping.tolerance }
+            ?.first
     }
 
     private fun normalizeAxis(

@@ -403,13 +403,6 @@ private fun TopHud(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (connectionState == ConnectionState.CONNECTED) {
-                ControlModeToggle(
-                    currentMode = appMode,
-                    isConnected = true,
-                    onModeClick = onModeClick
-                )
-            }
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -996,8 +989,8 @@ private fun ActionButton(
         modifier = Modifier
             .width(66.dp)
             .height(66.dp)
-            .background(background)
             .clip(RoundedCornerShape(15.dp))
+            .background(background)
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,

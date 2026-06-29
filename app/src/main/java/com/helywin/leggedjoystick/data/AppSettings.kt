@@ -53,6 +53,8 @@ data class AppSettings(
     val remoteInputStrafeRightInverted: Boolean = false,
     val remoteInputYawRightChannel: Int = 1,
     val remoteInputYawRightInverted: Boolean = false,
+    val remoteInputHeadPitchChannel: Int = 2,
+    val remoteInputHeadPitchInverted: Boolean = true,
     val keepScreenOn: Boolean = true,
     val engineeringMockEnabled: Boolean = false
 )

@@ -24,6 +24,7 @@ import com.helywin.leggedjoystick.data.SpeedLevel
 import com.helywin.leggedjoystick.data.toFaultTelemetry
 import com.helywin.leggedjoystick.data.toMotionTelemetry
 import com.helywin.leggedjoystick.data.toOdometryTelemetry
+import com.helywin.leggedjoystick.input.remote.HeadControlIntent
 import com.helywin.leggedjoystick.input.remote.MovementIntent
 import com.helywin.leggedjoystick.input.remote.RemoteInputAxisMapping
 import com.helywin.leggedjoystick.input.remote.RemoteInputChannelMapping
@@ -34,6 +35,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputSnapshot
 import com.helywin.leggedjoystick.input.remote.RemoteInputSource
 import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
+import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputConfig
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
@@ -312,10 +314,12 @@ class ControllerState {
             RemoteInputStatus.STOPPED -> RemoteInputSnapshot(
                 descriptor = descriptor,
                 movementIntent = MovementIntent.ZERO,
+                headControlIntent = HeadControlIntent.ZERO,
                 normalizedAxes = mapOf(
                     "forward" to 0f,
                     "strafeRight" to 0f,
-                    "yawRight" to 0f
+                    "yawRight" to 0f,
+                    "headPitchUp" to 0f
                 )
             )
             else -> remoteInputState.latestSnapshot
@@ -404,7 +408,14 @@ object RobotControllerImpl : Controller {
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
     private lateinit var siyiUdpBridgeController: SiyiUdpBridgeController
     private var remoteInputRequested = false
+    @Volatile
     private var currentMovementIntent = MovementIntent.ZERO
+    @Volatile
+    private var currentHeadControlIntent = HeadControlIntent.ZERO
+    @Volatile
+    private var lastRemoteSpeedLevelRequest: RemoteSpeedLevelRequest? = null
+    @Volatile
+    private var remoteSpeedLevelSnapshotSeen = false
     private var lastCommandSent = false  // 跟踪是否发送过速度指令
 
     // 速度发送任务
@@ -672,6 +683,7 @@ object RobotControllerImpl : Controller {
 
     private fun applyMockInitialCommands() {
         settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
+        settingsState.setSpeedLevel(SpeedLevel.SLOW)
         if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
             settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
         }
@@ -680,10 +692,12 @@ object RobotControllerImpl : Controller {
 
     private fun sendInitialCommandsAfterTake() {
         zmqClient.setMode(AppMode.APP_MODE_MANUAL)
-        zmqClient.setSpeedLevel(settingsState.settings.speedLevel.protocolSpeedLevel)
+        settingsState.setSpeedLevel(SpeedLevel.SLOW)
+        zmqClient.setSpeedLevel(SpeedLevel.SLOW.protocolSpeedLevel)
         if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
             zmqClient.setControlMode(SportMode.SPORT_MODE_GENERAL)
         }
+        Timber.i("[Controller] 接管后默认设置低速")
     }
 
     /**
@@ -703,6 +717,7 @@ object RobotControllerImpl : Controller {
                 startRemoteInput()
             } else {
                 stopVelocityLoop()
+                stopHeadControl()
                 stopRemoteInput()
                 settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
                 settingsState.updateConnectionState(state)
@@ -1252,6 +1267,7 @@ object RobotControllerImpl : Controller {
 
     override fun pauseMovementOutput() {
         currentMovementIntent = MovementIntent.ZERO
+        currentHeadControlIntent = HeadControlIntent.ZERO
         stopVelocityLoop()
         stopHeadControl()
         Timber.i("[Controller] 已暂停移动输出")
@@ -1279,45 +1295,29 @@ object RobotControllerImpl : Controller {
                     // 只有已接管且处于手动模式时才发送移动指令。
                     if (settingsState.hasControl && settingsState.robotMode == AppMode.APP_MODE_MANUAL) {
                         val intent = currentMovementIntent.clamped()
+                        val headIntent = currentHeadControlIntent.clamped()
 
-                        // 只有当外部遥控器有非零输入时才发送移动指令
-                        if (!intent.isZero) {
-                            if (!isEngineeringMock()) {
-                                zmqClient.sendOperatorMoveCommand(
-                                    strafeRight = intent.strafeRight,
-                                    forward = intent.forward,
-                                    yawRight = intent.yawRight
-                                )
+                        if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_IN_PLACE) {
+                            sendInPlaceHeadControl(intent, headIntent)
+                            sendMovementFromIntent(intent.copy(yawRight = 0f))
+                        } else {
+                            if (headControlActive) {
+                                stopHeadControl()
                             }
-                            settingsState.updateLastCommand(
-                                "移动",
-                                "前进 %.2f，平移 %.2f，转向 %.2f".format(
-                                    intent.forward,
-                                    intent.strafeRight,
-                                    intent.yawRight
-                                )
-                            )
-                            Timber.v(
-                                "[Controller] 发送移动指令: forward=${intent.forward}, strafeRight=${intent.strafeRight}, yawRight=${intent.yawRight}"
-                            )
-                            lastCommandSent = true
-                        } else if (lastCommandSent) {
-                            // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令
+                            sendMovementFromIntent(intent)
+                        }
+                    } else {
+                        if (lastCommandSent) {
                             if (!isEngineeringMock()) {
                                 zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
                             }
                             settingsState.updateLastCommand("移动", "停止")
-                            Timber.v("[Controller] 发送停止移动指令")
+                            Timber.v("[Controller] 控制权或手动模式不满足，发送停止移动指令")
                             lastCommandSent = false
                         }
-                        // 如果摇杆都在中心位置且之前没有发送过指令，则不发送任何指令
-                    } else if (lastCommandSent) {
-                        if (!isEngineeringMock()) {
-                            zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+                        if (headControlActive) {
+                            stopHeadControl()
                         }
-                        settingsState.updateLastCommand("移动", "停止")
-                        Timber.v("[Controller] 控制权或手动模式不满足，发送停止移动指令")
-                        lastCommandSent = false
                     }
 
                     delay(40) // 25Hz 发送频率
@@ -1332,6 +1332,75 @@ object RobotControllerImpl : Controller {
         }
     }
 
+    private fun sendMovementFromIntent(intent: MovementIntent) {
+        // 只有当外部遥控器有非零移动输入时才发送移动指令。
+        if (!intent.isZero) {
+            if (!isEngineeringMock()) {
+                zmqClient.sendOperatorMoveCommand(
+                    strafeRight = intent.strafeRight,
+                    forward = intent.forward,
+                    yawRight = intent.yawRight
+                )
+            }
+            settingsState.updateLastCommand(
+                "移动",
+                "前进 %.2f，平移 %.2f，转向 %.2f".format(
+                    intent.forward,
+                    intent.strafeRight,
+                    intent.yawRight
+                )
+            )
+            Timber.v(
+                "[Controller] 发送移动指令: forward=${intent.forward}, strafeRight=${intent.strafeRight}, yawRight=${intent.yawRight}"
+            )
+            lastCommandSent = true
+        } else if (lastCommandSent) {
+            // 只有之前发送过指令，且现在摇杆都在中心位置时，才发送一次停止指令。
+            if (!isEngineeringMock()) {
+                zmqClient.sendOperatorMoveCommand(0f, 0f, 0f)
+            }
+            settingsState.updateLastCommand("移动", "停止")
+            Timber.v("[Controller] 发送停止移动指令")
+            lastCommandSent = false
+        }
+    }
+
+    private fun sendInPlaceHeadControl(intent: MovementIntent, headIntent: HeadControlIntent) {
+        val leftRight = -intent.yawRight
+        val upDown = headIntent.pitchUp
+
+        if (leftRight == 0f && upDown == 0f) {
+            if (headControlActive) {
+                stopHeadControl()
+            }
+            return
+        }
+
+        headControlStopJob?.cancel()
+        headControlStopJob = null
+        if (!isEngineeringMock()) {
+            zmqClient.controlHead(leftRight, upDown)
+        }
+        headControlActive = true
+        settingsState.updateLastCommand(
+            "原地姿态",
+            "左右 %.2f，俯仰 %.2f".format(intent.yawRight, upDown)
+        )
+        Timber.v(
+            "[Controller] 发送原地姿态指令: leftRight=$leftRight, upDown=$upDown"
+        )
+    }
+
+    private fun handleRemoteSpeedLevelRequest(request: RemoteSpeedLevelRequest) {
+        val speedLevel = when (request) {
+            RemoteSpeedLevelRequest.LOW -> SpeedLevel.SLOW
+            RemoteSpeedLevelRequest.MEDIUM -> SpeedLevel.MEDIUM
+            RemoteSpeedLevelRequest.HIGH -> SpeedLevel.FAST
+        }
+        Timber.i("[Controller] 外部遥控速度键触发: %s -> %s", request, speedLevel.displayName)
+        setSpeedLevel(speedLevel)
+    }
+
     /**
      * 停止速度发送循环
      */
@@ -1343,6 +1412,7 @@ object RobotControllerImpl : Controller {
             settingsState.updateLastCommand("移动", "停止")
         }
         currentMovementIntent = MovementIntent.ZERO
+        currentHeadControlIntent = HeadControlIntent.ZERO
         velocitySendJob?.cancel()
         velocitySendJob = null
         lastCommandSent = false  // 重置命令发送标志
@@ -1355,6 +1425,7 @@ object RobotControllerImpl : Controller {
             if (!isEngineeringMock()) {
                 zmqClient.controlHead(0f, 0f)
             }
+            settingsState.updateLastCommand("头部控制", "停止")
             headControlActive = false
             Timber.v("[Controller] 发送头部停止指令")
         }
@@ -1434,6 +1505,9 @@ object RobotControllerImpl : Controller {
         remoteInputSource.stop()
         siyiUdpBridgeController.release()
         currentMovementIntent = MovementIntent.ZERO
+        currentHeadControlIntent = HeadControlIntent.ZERO
+        lastRemoteSpeedLevelRequest = null
+        remoteSpeedLevelSnapshotSeen = false
     }
 
     private fun rebuildRemoteInputSource(settings: AppSettings) {
@@ -1466,6 +1540,10 @@ object RobotControllerImpl : Controller {
                 yawRight = RemoteInputAxisMapping(
                     channel = settings.remoteInputYawRightChannel,
                     inverted = settings.remoteInputYawRightInverted
+                ),
+                headPitchUp = RemoteInputAxisMapping(
+                    channel = settings.remoteInputHeadPitchChannel,
+                    inverted = settings.remoteInputHeadPitchInverted
                 )
             )
         )
@@ -1519,6 +1597,14 @@ object RobotControllerImpl : Controller {
         ) {
             if (status == RemoteInputStatus.TIMEOUT || status == RemoteInputStatus.ERROR) {
                 currentMovementIntent = MovementIntent.ZERO
+                currentHeadControlIntent = HeadControlIntent.ZERO
+                lastRemoteSpeedLevelRequest = null
+                remoteSpeedLevelSnapshotSeen = false
+            } else if (status == RemoteInputStatus.STOPPED) {
+                currentMovementIntent = MovementIntent.ZERO
+                currentHeadControlIntent = HeadControlIntent.ZERO
+                lastRemoteSpeedLevelRequest = null
+                remoteSpeedLevelSnapshotSeen = false
             }
             Timber.d("[Controller] 外部遥控输入状态: %s %s", status, message)
 
@@ -1529,6 +1615,20 @@ object RobotControllerImpl : Controller {
 
         override fun onSnapshot(snapshot: RemoteInputSnapshot) {
             currentMovementIntent = snapshot.movementIntent.clamped()
+            currentHeadControlIntent = snapshot.headControlIntent.clamped()
+            val speedLevelRequest = snapshot.speedLevelRequest
+            if (!remoteSpeedLevelSnapshotSeen) {
+                remoteSpeedLevelSnapshotSeen = true
+                lastRemoteSpeedLevelRequest = speedLevelRequest
+                Timber.i("[Controller] 外部遥控速度基线: %s", speedLevelRequest ?: "无")
+            } else if (speedLevelRequest == null) {
+                lastRemoteSpeedLevelRequest = null
+            } else if (speedLevelRequest != lastRemoteSpeedLevelRequest) {
+                lastRemoteSpeedLevelRequest = speedLevelRequest
+                scope.launch {
+                    handleRemoteSpeedLevelRequest(speedLevelRequest)
+                }
+            }
             scope.launch {
                 settingsState.updateRemoteInputSnapshot(snapshot)
             }

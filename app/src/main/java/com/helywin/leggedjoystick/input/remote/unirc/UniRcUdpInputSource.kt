@@ -88,6 +88,7 @@ class UniRcUdpInputSource(
         var firstFrameLogged = false
         var ignoredNonChannelFrameCount = 0
         var invalidFrameCount = 0
+        var lastSpeedSelectorRaw: Int? = null
         val frameAssembler = UniRcFrameAssembler()
 
         try {
@@ -133,10 +134,22 @@ class UniRcUdpInputSource(
 
                             try {
                                 val frame = UniRcProtocol.parseChannelFrame(rawFrame)
+                                val speedSelectorChannel = config.normalization.mapping.speedSelector.channel
+                                val speedSelectorRaw = frame.channels.getOrNull(speedSelectorChannel - 1)
+                                if (speedSelectorRaw != null && speedSelectorRaw != lastSpeedSelectorRaw) {
+                                    lastSpeedSelectorRaw = speedSelectorRaw
+                                    Timber.i(
+                                        "[UniRC] 速度选择通道变化: CH%d=%d",
+                                        speedSelectorChannel,
+                                        speedSelectorRaw
+                                    )
+                                }
                                 val mapping = UniRcProtocol.mapMovement(frame.channels, config.normalization)
                                 val snapshot = RemoteInputSnapshot(
                                     descriptor = descriptor,
                                     movementIntent = mapping.movementIntent,
+                                    headControlIntent = mapping.headControlIntent,
+                                    speedLevelRequest = mapping.speedLevelRequest,
                                     rawChannels = frame.channels,
                                     normalizedAxes = mapping.normalizedAxes,
                                     sequence = frame.sequence,

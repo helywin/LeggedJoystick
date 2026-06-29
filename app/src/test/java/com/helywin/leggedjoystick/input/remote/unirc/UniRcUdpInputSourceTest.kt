@@ -53,9 +53,11 @@ class UniRcUdpInputSourceTest {
                     data = createChannelFrame(
                         sequence = 7,
                         channels = MutableList(16) { 1500 }.also {
+                            it[1] = 1050
                             it[2] = 1950
                             it[3] = 1050
                             it[0] = 1050
+                            it[4] = 1000
                         }
                     ),
                     target = subscribePacket.sender
@@ -66,6 +68,8 @@ class UniRcUdpInputSourceTest {
                 assertEquals(1f, snapshot.movementIntent.forward, FLOAT_DELTA)
                 assertEquals(-1f, snapshot.movementIntent.strafeRight, FLOAT_DELTA)
                 assertEquals(-1f, snapshot.movementIntent.yawRight, FLOAT_DELTA)
+                assertEquals(1f, snapshot.headControlIntent.pitchUp, FLOAT_DELTA)
+                assertEquals(com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest.LOW, snapshot.speedLevelRequest)
 
                 val timeoutStatus = listener.awaitStatus(RemoteInputStatus.TIMEOUT, timeoutMs = 1200L)
                 assertEquals("UniRC 输入超时", timeoutStatus.message)

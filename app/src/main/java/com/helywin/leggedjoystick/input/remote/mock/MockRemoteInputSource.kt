@@ -1,5 +1,6 @@
 package com.helywin.leggedjoystick.input.remote.mock
 
+import com.helywin.leggedjoystick.input.remote.HeadControlIntent
 import com.helywin.leggedjoystick.input.remote.RemoteInputListener
 import com.helywin.leggedjoystick.input.remote.MovementIntent
 import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
@@ -72,6 +73,7 @@ class MockRemoteInputSource(
                     RemoteInputSnapshot(
                         descriptor = descriptor,
                         movementIntent = MovementIntent.ZERO,
+                        headControlIntent = HeadControlIntent.ZERO,
                         rawChannels = channels,
                         normalizedAxes = normalizedAxes(channels),
                         sequence = sequence++,
@@ -103,6 +105,11 @@ class MockRemoteInputSource(
             "yawRight" to normalizeRemoteChannel(
                 raw = channels[config.normalization.mapping.yawRight.channel - 1],
                 axisMapping = config.normalization.mapping.yawRight,
+                config = config.normalization
+            ),
+            "headPitchUp" to normalizeRemoteChannel(
+                raw = channels[config.normalization.mapping.headPitchUp.channel - 1],
+                axisMapping = config.normalization.mapping.headPitchUp,
                 config = config.normalization
             )
         )

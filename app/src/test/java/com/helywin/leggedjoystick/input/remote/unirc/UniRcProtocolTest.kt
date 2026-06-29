@@ -1,6 +1,7 @@
 package com.helywin.leggedjoystick.input.remote.unirc
 
 import com.helywin.leggedjoystick.input.remote.RemoteInputNormalizationConfig
+import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -85,6 +86,7 @@ class UniRcProtocolTest {
     fun mapMovement_usesDefaultUniRcStickChannels() {
         val channels = MutableList(16) { 1500 }
         channels[0] = 1050
+        channels[1] = 1050
         channels[2] = 1950
         channels[3] = 1950
 
@@ -96,6 +98,27 @@ class UniRcProtocolTest {
         assertEquals(1f, result.movementIntent.forward, FLOAT_DELTA)
         assertEquals(1f, result.movementIntent.strafeRight, FLOAT_DELTA)
         assertEquals(-1f, result.movementIntent.yawRight, FLOAT_DELTA)
+        assertEquals(1f, result.headControlIntent.pitchUp, FLOAT_DELTA)
+        assertEquals(1f, result.normalizedAxes["headPitchUp"] ?: 0f, FLOAT_DELTA)
+    }
+
+    @Test
+    fun mapMovement_mapsLeftButtonsFromObservedSpeedSelectorValues() {
+        assertEquals(RemoteSpeedLevelRequest.LOW, mapSpeedSelector(raw = 1000))
+        assertEquals(RemoteSpeedLevelRequest.MEDIUM, mapSpeedSelector(raw = 1200))
+        assertEquals(RemoteSpeedLevelRequest.HIGH, mapSpeedSelector(raw = 1400))
+    }
+
+    @Test
+    fun mapMovement_ignoresSpeedSelectorOutsideObservedValues() {
+        val channels = MutableList(16) { 1500 }
+
+        val result = UniRcProtocol.mapMovement(
+            channels = channels,
+            config = RemoteInputNormalizationConfig(deadZone = 0f)
+        )
+
+        assertEquals(null, result.speedLevelRequest)
     }
 
     @Test
@@ -135,6 +158,15 @@ class UniRcProtocolTest {
             (crc and 0xFF).toByte(),
             ((crc ushr 8) and 0xFF).toByte()
         )
+    }
+
+    private fun mapSpeedSelector(raw: Int): RemoteSpeedLevelRequest? {
+        val channels = MutableList(16) { 1500 }
+        channels[4] = raw
+        return UniRcProtocol.mapMovement(
+            channels = channels,
+            config = RemoteInputNormalizationConfig(deadZone = 0f)
+        ).speedLevelRequest
     }
 
     private companion object {
