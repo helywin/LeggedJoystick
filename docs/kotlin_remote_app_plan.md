@@ -4,7 +4,7 @@
 
 重写一个新的 Android 遥控 App，使用 Kotlin 实现，主页面布局参考 GenisDog 当前主控页，通信协议套用 `/home/jiang/code/legged_driver`。现有 `LeggedJoystick` 只作为依赖选型和历史参考，不作为 UI 与业务结构的主依据。
 
-新方案不接入 Skydroid/G20/AR8030 这类厂商遥控 SDK。当前正式移动输入来自 UniRC UDP 外部摇杆；屏幕只负责模式、速度、动作、状态和调试入口，不做触屏虚拟摇杆。
+新方案的正式移动输入支持思翼 UniRC UDP 外部摇杆和云卓 G20 RCSDK 摇杆，并按设备标志自动选择；不接入 G20 摇杆读取以外的 Skydroid 图传、载荷、配网或 AR8030 能力。屏幕负责模式、速度、动作、状态和调试入口，不做触屏虚拟摇杆。
 
 ## 已整理素材
 
@@ -42,14 +42,14 @@
 | 网络 | JeroMQ，Android 端作为 ZMQ DEALER 客户端 |
 | 服务端 | `legged_driver` 的 ROUTER 服务，默认监听 `tcp://0.0.0.0:33445`；RK3588 部署记录见 `docs/rk3588_legged_driver_deployment.md` |
 | App 端设备类型 | `DEVICE_TYPE_REMOTE_CONTROLLER` |
-| 控制输入 | UniRC UDP 外部摇杆、屏幕按钮、开关 |
+| 控制输入 | 思翼 UniRC UDP、云卓 G20 RCSDK 外部摇杆、屏幕按钮、开关 |
 | 视频 | 不属于 `legged_driver` 协议，单独作为可插拔视频源处理 |
 
 当前仓库里的 `proto/message.proto` 是旧版协议，字段包括 `MODE_SET`、`VELOCITY_COMMAND` 等；`legged_driver` 当前协议已经变为 `COMMAND_REQUEST`、`SUBSCRIPTION_REQUEST`、`ROBOT_STATE` 等结构。新 App 不应沿用当前仓库旧 proto，应从 `legged_driver/proto/message.proto` 同步或引用生成。
 
 ### 工程和依赖升级策略
 
-新 App 继续使用当前仓库的单 `app` 模块工程壳，不新建独立 Android 工程。旧 UI、旧协议、旧虚拟摇杆和厂商相关入口不作为新实现依赖；后续实现时先把旧主流程从新主流程隔离，再按 `protocol`、`transport`、`domain`、`input`、`ui`、`media`、`settings` 分层重建。
+新 App 继续使用当前仓库的单 `app` 模块工程壳，不新建独立 Android 工程。旧 UI、旧协议、旧虚拟摇杆和旧厂商入口不作为新实现依赖；云卓 G20 只通过独立 RCSDK provider 接入统一输入层。后续实现时先把旧主流程从新主流程隔离，再按 `protocol`、`transport`、`domain`、`input`、`ui`、`media`、`settings` 分层重建。
 
 构建栈先升级到当前稳定线：Gradle 9.6.0、Android Gradle Plugin 9.2.1、Kotlin 2.4.0、Compose BOM 2026.06.00、Wire 6.4.0，并把 `compileSdk` 升到 37 以满足最新 AndroidX 元数据要求。`targetSdk` 暂不随本次升级改变，避免引入和依赖升级无关的运行时行为变化。
 
@@ -117,14 +117,16 @@ Android 端连接 `legged_driver` 服务时，需要做四件事：
 
 | 层 | 职责 |
 | --- | --- |
-| 原始输入源 | 第一版只接收 UniRC UDP 通道帧，`Standard-10inch_A2` 默认入口为本机 `127.0.0.1:19856` |
+| 原始输入源 | 思翼 `Standard-10inch_A2` 使用本机 `127.0.0.1:19856` 的 UniRC UDP；云卓 G20 使用 RCSDK 1.9.2 的 `KeyChannels` |
 | 输入解析 | 校验帧、提取 16 路通道、记录时间戳和序列号 |
 | 输入归一化 | 把 1050 到 1950 的通道值转换为 -1.0 到 1.0，并处理死区、反向、限幅 |
 | 输入状态 | 处理外部摇杆输入超时、链路自恢复和调试状态 |
 | 控制意图 | 输出 `forward_back`、`strafe_right` 和 `yaw_right`，方向按操作者直觉表达 |
 | 协议发送 | 按 `legged_driver` SDK 符号转换为 `MoveCommandParams`，并发送 `COMMAND_CODE_MOVE`、动作命令和零速度保护 |
 
-这样即使后面决定把摇杆数据做成 Android 广播，广播也只能作为未来“单采集者分发”的原始输入来源，不进入第一版正式实现，不影响 UI、控制权、ZMQ 协议和安全策略。
+输入源由 provider/factory 按设备标志自动选择。RCSDK 在 `Build.MODEL=Bengal for arm64` 且 `ro.boot.ZBBoard=0` 时返回 `DeviceType.G20`；该标志只在设备识别层解释，控制层始终只消费 `RemoteInputSource`。这样后续增加新遥控器只需注册新的 provider，不影响 UI、控制权、ZMQ 协议和安全策略。
+
+G20 的通道值按真机实测的 `900/1500/2100` 归一化，并按 RCSDK 要求以 100ms 周期主动读取。RCSDK 实测通过 `/dev/ttyHS2:115200` 取得通道；`firefighting_dog` 中另一台遥控器使用的 `282/1002/1722` 不适用于当前 G20。G20 没有低/中/高速实体切换键，因此 G20 快照不输出速度档请求，速度档只能使用屏幕左侧选择器切换。
 
 ### 多 App 分发未来方案
 
@@ -237,7 +239,7 @@ App 每次启动和接管后都以低速作为本地与 driver 初始档位。�
 2. 重写协议工具：按 C++ `MessageUtils` 实现设备 ID、时间戳、CRC32、heartbeat、subscription、command request。
 3. 重写 ZMQ 客户端：保留 JeroMQ，使用 DEALER、独立收发循环、心跳、重连和状态回调。
 4. 做主控页静态骨架：横屏强制、全屏背景、顶部栏、左侧速度三段选择器、底部动作组展开/收缩、右侧工具区。
-5. 接入输入层：接入 UniRC UDP 外部摇杆通道数据，实现死区、归一化、协议符号转换、输入超时、自恢复、连续发送和释放归零。
+5. 接入输入层：接入 UniRC UDP 与 G20 RCSDK 外部摇杆通道数据，通过 provider/factory 自动选择，实现死区、归一化、协议符号转换、输入超时、自恢复、连续发送和释放归零。
 6. 接入动作按钮：先完成站立、卧倒、匍匐、锁定、速度等级、运动模式、灯光。
 7. 接入状态订阅：显示连接、AppMode、RobotState、Fault、MotionData。
 8. 接入设置页：支持 IP、端口、视频地址保存，变更后重连；工程调试参数仅在用户明确保存为默认时持久化。
@@ -257,4 +259,4 @@ App 每次启动和接管后都以低速作为本地与 driver 初始档位。�
 
 ## 推荐结论
 
-新 App 不要从 GenisDog 反编译源码继续改，也不要复用厂商遥控器 SDK。更稳的路线是：用 GenisDog 主页面做视觉和交互参考，用整理出的图标素材快速搭建第一版 UI，用 `legged_driver` 当前 proto 和 ZMQ 协议实现完整控制闭环。这样后续协议变化只影响 `protocol/transport/domain`，不会把 UI 绑死在厂商 App 或旧项目结构上。
+新 App 不要从 GenisDog 反编译源码继续改，也不要把厂商 SDK 直接耦合进 UI 或控制层。主页面只作为视觉和交互参考；G20 RCSDK 封装在独立 provider/input 适配器内，机器人控制仍以 `legged_driver` 当前 proto 和 ZMQ 协议形成闭环。这样后续协议或遥控器型号变化只影响对应分层，不会把 UI 绑死在厂商 App 或旧项目结构上。

@@ -17,13 +17,13 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 继续使用当前仓库单 `app` 模块工程壳，并升级到当前稳定构建栈。
 - 用 GenisDog 主屏作为布局参考，实现可操作的遥控主界面。
 - 接入 `legged_driver` ZMQ 协议，完成控制权、心跳、订阅、移动命令和动作命令。
-- 建立统一输入层，第一版只支持 UniRC UDP 外部摇杆；当前不做触屏虚拟摇杆，也不实现 Android 广播输入。
+- 建立统一输入层，支持思翼 UniRC UDP 与云卓 G20 RCSDK 外部摇杆，并按设备标志自动选择输入源；当前不做触屏虚拟摇杆，也不实现 Android 广播输入。
 - 保证零速度、安全断连、输入超时、后台暂停等保护。
 
 **Non-Goals:**
 
 - 不复用 GenisDog Flutter/Dart 代码。
-- 不接入 Skydroid、G20、AR8030 等厂商遥控 SDK。
+- 不接入 G20 摇杆读取以外的 Skydroid 图传、载荷、配网、AR8030 等厂商能力。
 - 不实现充电桩、厂商配网、建图巡航等非手动遥控闭环功能。
 - 不把 `reverse/` 目录内容提交到仓库。
 
@@ -38,7 +38,11 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 
 ### 输入层
 
-- 第一版只有 UniRC UDP 通道帧进入 `input` 层。Android 广播不作为原始摇杆分发主链路：它不是端口模型，跨 App 后台接收受系统限制，高频二进制帧还会受 Binder 事务大小影响；需要给其他 App 或工具共享原始帧时，由本 App 独占原 UniRC UDP 输入，再把收到的每个原始 UDP datagram 原样转发到本机可配置 UDP 端口。
+- 思翼设备使用 UniRC UDP 通道帧进入 `input` 层。Android 广播不作为原始摇杆分发主链路：它不是端口模型，跨 App 后台接收受系统限制，高频二进制帧还会受 Binder 事务大小影响；需要给其他 App 或工具共享原始帧时，由本 App 独占原 UniRC UDP 输入，再把收到的每个原始 UDP datagram 原样转发到本机可配置 UDP 端口。
+- 云卓 G20 使用 RCSDK 1.9.2 的 `RemoteControllerKey.KeyChannels` 主动读取通道，读取周期为 100ms。G20 真机的 `Build.MODEL` 为 `Bengal for arm64`，`ro.boot.ZBBoard=0`；RCSDK 会把这组标志识别为 `DeviceType.G20`。App 以 RCSDK 返回的设备类型作为主要判据，不在控制层直接读取系统属性。
+- 主 App 在自身 `app/libs` 中持有 RCSDK 运行依赖，不依赖仅供审计参考的 `rcsdk-demo` 目录，确保共性输入代码可以独立合并到其他产品分支。
+- 输入源选择使用 provider/factory：工程 Mock 优先；设备类型为 G20 时选择 RCSDK provider；其他设备回退到 UniRC UDP provider。设备识别、SDK 生命周期和通道读取属于 provider/input 层，控制层只持有 `RemoteInputSource`。
+- G20 真机通过 `/dev/ttyHS2:115200` 返回通道，实测基准为最小值 `900`、中位值 `1500`、最大值 `2100`；摇杆轴仍统一转换为 `MovementIntent` 与 `HeadControlIntent`。G20 没有低/中/高速实体切换键，G20 输入源始终输出空的 `speedLevelRequest`，速度档只允许从屏幕选择器切换。`firefighting_dog` 中另一台遥控器使用的 `282/1002/1722` 不得套用到本机。
 - 输入层负责帧校验、通道解析、归一化、死区、反向、限幅、输入超时和链路自恢复。
 - 内部移动意图按操作者直觉表达：前进、右平移、右转为正；协议发送层必须按 `legged_driver` SDK 语义转换为 `MoveCommandParams`，其中 `left_right` 正数是左平移，`yaw` 正数是左旋转。
 - 原地模式下右杆不再只作为移动转向输入：右杆左右映射为 `COMMAND_CODE_CONTROL_HEAD.left_right` 的姿态左右控制，右杆上下默认从 CH2 输出姿态俯仰意图并映射为 `COMMAND_CODE_CONTROL_HEAD.up_down`，向上为正、表示抬头。退出原地模式或输入归零时必须发送 `CONTROL_HEAD(0, 0)` 停止连续姿态输出。
@@ -74,12 +78,12 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - RTSP 视频按实时遥控预览处理，IJKPlayer 使用 RTSP TCP、软件解码、低缓存和丢帧策略；网络或输出抖动时优先恢复首帧渲染，避免解码堆积造成日志风暴、卡顿或 ANR。
 - 主屏两个 RTSP 槽位在重连期间保留 `TextureView` 上的历史画面，并用 Compose 仅叠加转圈提示；拍照只截取 `TextureView` 当前帧，避免把重连提示层合成进截图。
 - 旧游戏手柄输入、旧触屏虚拟摇杆和相关调试组件保留源码，作为后续适配其他遥控器或调试输入的备选组件；第一版主流程不得引用这些组件，也不得把它们接入移动命令输出。
-- 旧协议和厂商相关入口不作为新主流程依赖。
+- 旧协议和非 G20 摇杆所需的厂商入口不作为新主流程依赖。
 
 ### 设置层
 
 - 普通设置页保留机器狗地址、ZMQ 端口和视频地址；工程调试页保留摇杆死区、通道映射、轴反向、UDP 状态、串口探测和调试信息。
-- 不保留厂商配置项和充电桩相关项。
+- 不保留厂商配网、载荷和充电桩相关项；自动识别到的遥控器输入源只在调试状态中展示。
 
 ## Risks / Trade-offs
 
@@ -89,3 +93,4 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - `freq = 0` 当前串口直测未发现会停止通道输出，但仍不把它作为第一版默认退出动作。
 - `legged_driver` proto 与仓库旧 proto 差异较大，必须先完成协议真源同步，否则后续实现会返工。
 - 最新稳定依赖可能带来 AGP/Gradle 迁移成本；已知迁移点包括移除 `org.jetbrains.kotlin.android`、迁移 `kotlinOptions` 和迁移旧 `applicationVariants` API。
+- RCSDK 是仓库内本地 AAR，升级前必须在 G20 真机重新验证设备类型、连接回调和通道范围；不得仅按版本号替换。

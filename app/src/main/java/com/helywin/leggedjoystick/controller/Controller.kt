@@ -34,8 +34,11 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputSnapshot
 import com.helywin.leggedjoystick.input.remote.RemoteInputSource
 import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
+import com.helywin.leggedjoystick.input.remote.RemoteInputSourceFactory
+import com.helywin.leggedjoystick.input.remote.RemoteInputSourceRequest
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
+import com.helywin.leggedjoystick.input.remote.AndroidRemoteControllerIdentityReader
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputConfig
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcRawUdpForwardConfig
@@ -407,6 +410,7 @@ object RobotControllerImpl : Controller {
     private var mockStateJob: Job? = null
 
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
+    private var applicationContext: Context? = null
     private lateinit var siyiUdpBridgeController: SiyiUdpBridgeController
     private var remoteInputRequested = false
     @Volatile
@@ -436,6 +440,7 @@ object RobotControllerImpl : Controller {
             }
 
             val appContext = context.applicationContext
+            applicationContext = appContext
             settingsManager = SettingsManager(appContext)
             siyiUdpBridgeController = SiyiUdpBridgeController(appContext)
             zmqClient.setMessageCallback { message ->
@@ -1493,6 +1498,7 @@ object RobotControllerImpl : Controller {
         remoteInputRequested = true
         if (
             !isEngineeringMock() &&
+            remoteInputSource.descriptor.id == "unirc_udp" &&
             SiyiUdpBridgeController.shouldUseForHost(settingsState.settings.remoteInputHost)
         ) {
             siyiUdpBridgeController.ensureBridgeOpen()
@@ -1555,18 +1561,48 @@ object RobotControllerImpl : Controller {
             )
         }
 
-        return UniRcUdpInputSource(
-            UniRcUdpInputConfig(
-                remoteHost = settings.remoteInputHost,
-                remotePort = settings.remoteInputPort,
-                localPort = settings.remoteInputLocalPort,
-                rawForward = UniRcRawUdpForwardConfig(
-                    enabled = settings.remoteInputRawForwardEnabled,
-                    targetPort = settings.remoteInputRawForwardPort
-                ),
-                normalization = normalization
+        val appContext = applicationContext
+        if (appContext == null) {
+            return UniRcUdpInputSource(
+                UniRcUdpInputConfig(
+                    remoteHost = settings.remoteInputHost,
+                    remotePort = settings.remoteInputPort,
+                    localPort = settings.remoteInputLocalPort,
+                    rawForward = UniRcRawUdpForwardConfig(
+                        enabled = settings.remoteInputRawForwardEnabled,
+                        targetPort = settings.remoteInputRawForwardPort
+                    ),
+                    normalization = normalization
+                )
+            )
+        }
+
+        val identity = AndroidRemoteControllerIdentityReader.read()
+        val selection = RemoteInputSourceFactory().create(
+            identity = identity,
+            request = RemoteInputSourceRequest(
+                applicationContext = appContext,
+                normalization = normalization,
+                uniRcConfig = UniRcUdpInputConfig(
+                    remoteHost = settings.remoteInputHost,
+                    remotePort = settings.remoteInputPort,
+                    localPort = settings.remoteInputLocalPort,
+                    rawForward = UniRcRawUdpForwardConfig(
+                        enabled = settings.remoteInputRawForwardEnabled,
+                        targetPort = settings.remoteInputRawForwardPort
+                    ),
+                    normalization = normalization
+                )
             )
         )
+        Timber.i(
+            "[Controller] 自动选择遥控输入源: provider=%s, rcSdkDevice=%s, model=%s, boardVariant=%s",
+            selection.providerId,
+            selection.identity.rcSdkDeviceType,
+            selection.identity.model,
+            selection.identity.boardVariant
+        )
+        return selection.source
     }
 
     private fun isEngineeringMock(): Boolean {

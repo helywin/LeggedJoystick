@@ -124,6 +124,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.ijkplayer.java)
     implementation(libs.ijkplayer.arm64)
+    implementation(files("libs/rcsdk-v1.9.2.aar"))
+    implementation(files("libs/h16_airlink.aar"))
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

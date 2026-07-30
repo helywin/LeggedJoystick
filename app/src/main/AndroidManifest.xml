@@ -12,6 +12,8 @@
 
     <queries>
         <package android:name="com.siyi.udpservice" />
+        <package android:name="com.skydroid.rcservice" />
+        <package android:name="com.skydroid.rc_daemon" />
     </queries>
 
     <application

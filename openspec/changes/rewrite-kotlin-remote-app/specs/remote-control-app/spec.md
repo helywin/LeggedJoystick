@@ -152,13 +152,27 @@
 - **WHEN** 用户发送前灯、后灯或自动补光命令
 - **THEN** 真实链路下 App 不得仅因命令入队成功就长期覆盖 UI 状态，最终显示必须以 driver 可订阅状态或命令完成确认后的状态为准
 
-### Requirement: 输入层必须处理 UniRC UDP 外部摇杆
+### Requirement: 输入层必须处理多厂商外部摇杆
 
-App MUST 将 UniRC UDP 通道帧进入输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆或 Android 广播作为正式移动输入。
+App MUST 将思翼 UniRC UDP 或云卓 G20 RCSDK 通道数据送入统一输入层，再输出标准控制意图；当前版本不得把触屏虚拟摇杆或 Android 广播作为正式移动输入。
 
 #### Scenario: 输入源抽象
 - **WHEN** 新增 UniRC、串口、其他 UDP 遥控器或后续单采集者分发输入
 - **THEN** 新输入实现必须适配统一 `RemoteInputSource` 抽象，并输出 `RemoteInputSnapshot` 和操作者视角的 `MovementIntent`
+
+#### Scenario: 按设备自动选择输入源
+- **WHEN** App 启动在 RCSDK 识别为 `DeviceType.G20` 的云卓 G20 上
+- **THEN** 输入源 factory 必须选择 G20 RCSDK provider，不得启动思翼 UniRC UDP 桥
+- **AND** 当设备不匹配已注册的厂商 provider 时，必须回退到思翼 UniRC UDP provider
+
+#### Scenario: G20 主动读取通道
+- **WHEN** G20 RCSDK 连接成功
+- **THEN** 输入层必须通过 `RemoteControllerKey.KeyChannels` 以不快于 100ms 的周期主动读取通道，不得并发堆积未完成的读取请求
+- **AND** 通道值必须按 G20 真机实测的最小值 `900`、中位值 `1500`、最大值 `2100` 做归一化、死区和限幅
+
+#### Scenario: G20 不提供硬件速度档
+- **WHEN** G20 输入源输出摇杆快照
+- **THEN** `speedLevelRequest` 必须为空，低速、中速、高速只能由屏幕速度选择器通过 `COMMAND_CODE_SET_SPEED_LEVEL` 切换
 
 #### Scenario: 外部摇杆移动
 - **WHEN** App 收到有效 UniRC `CMD_ID = 0x42` 通道帧
@@ -231,6 +245,10 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 - **WHEN** 外部摇杆超过超时时间没有新帧
 - **THEN** App 必须将运动轴置零并停止沿用旧通道值
 
+#### Scenario: G20 RCSDK 断连
+- **WHEN** RCSDK 报告 G20 断连、读取持续失败或 App 停止输入消费
+- **THEN** 输入层必须停止通道轮询、清空旧摇杆意图并进入非运行状态，让控制层执行零速度保护
+
 #### Scenario: 页面进入后台
 - **WHEN** App 进入后台或主控页失去焦点
 - **THEN** App 必须发送零速度并暂停连续移动命令循环
@@ -265,7 +283,7 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 
 ### Requirement: 第一版功能提交必须通过验证门槛
 
-第一版 App 功能提交前 MUST 通过 OpenSpec 校验、Gradle 构建、核心单元测试和必要的 UI 截图检查；协议或输入层变更 MUST 追加协议封包、CRC 和 UniRC 帧解析测试。
+第一版 App 功能提交前 MUST 通过 OpenSpec 校验、Gradle 构建、核心单元测试和必要的 UI 截图检查；协议或输入层变更 MUST 追加协议封包、CRC、UniRC 帧解析或 G20 通道映射测试。
 
 #### Scenario: 普通功能提交
 - **WHEN** 提交第一版普通功能改动
@@ -277,4 +295,4 @@ App MUST 在输入释放、输入超时、断连、后台和失去控制权时�
 
 #### Scenario: 协议或输入层提交
 - **WHEN** 提交协议封包、CRC、UniRC 输入解析或轴映射改动
-- **THEN** 必须额外通过协议封包/CRC 测试和 UniRC 帧解析测试
+- **THEN** 必须额外通过协议封包/CRC 测试、UniRC 帧解析测试和本次涉及的厂商输入源测试

@@ -227,3 +227,56 @@ mNavigationBarPosition=2
 ```
 
 结论：App 内容区域应停在 `1812px` 宽度内，右侧约 `108px` 由系统导航栏保留，不做完全沉浸式全屏。
+
+## 云卓 G20 RCSDK 输入验证
+
+验证日期：2026-07-30。
+
+设备参数详见 `docs/skydroid_g20_device_parameters.md`。本轮只验证遥控输入，不连接机器狗控制链路，不发送移动命令。
+
+验证版本：
+
+```text
+LeggedJoystick_1.0.2_debug_202607301655.apk
+rcsdk-v1.9.2.aar
+```
+
+验证方法：
+
+1. 在主 `app` 启动时读取 RCSDK 设备类型，确认输入源 factory 的自动选择结果。
+2. 使用主工程 `SkydroidG20DeviceTest` 直接启动 G20 输入源，不启动 Activity，也不依赖 ZMQ。
+3. 等待 RCSDK 连接 `/dev/ttyHS2:115200`，再通过 `RemoteControllerKey.KeyChannels` 主动读取一帧通道。
+4. 断开输入源，确认测试期间没有创建机器狗控制命令。
+
+自动选择日志：
+
+```text
+[Controller] 自动选择遥控输入源: provider=skydroid_g20_rcsdk,
+rcSdkDevice=G20, model=Bengal for arm64, boardVariant=0
+```
+
+RCSDK 连接与首帧：
+
+```text
+[G20] RCSDK 已连接，开始读取摇杆通道
+[G20真机测试] 通道=[1500, 1500, 1500, 1500, 2100, 900, 900, 900, 900, 900, 900, 900, 900, 1500, 900, 900]
+[G20真机测试] 输入状态=RUNNING, 信息=G20 摇杆通道已连接
+```
+
+真机测试结果：
+
+```text
+OK (1 test)
+Time: 0.129
+```
+
+结论：
+
+| 验证项 | 结论 |
+| --- | --- |
+| 自动设备识别 | `Bengal for arm64` 且 `ro.boot.ZBBoard=0` 被 RCSDK 1.9.2 识别为 `DeviceType.G20` |
+| 输入源选择 | 主 App 自动选择 `skydroid_g20_rcsdk`，不启动思翼 UDP 桥 |
+| RCSDK 通道 | `/dev/ttyHS2:115200` 已连接，`KeyChannels` 可主动读取 |
+| G20 通道基准 | 真机使用 `900/1500/2100`，不能套用参考项目的 `282/1002/1722` |
+| 速度档 | G20 不输出硬件速度档请求，只保留屏幕低/中/高速切换 |
+| 安全边界 | 本轮没有连接 ZMQ，也没有发送机器狗移动命令 |
