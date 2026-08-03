@@ -123,6 +123,33 @@ class SafetyContractTest {
     }
 
     @Test
+    fun mainScreenPlacesAutoManualToggleBeforeConnectionButton() {
+        val projectRoot = locateProjectRoot()
+        val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
+        val topHud = mainScreen.substringAfter("private fun TopHud")
+            .substringBefore("private fun MotionModeEntry")
+
+        val modeToggleIndex = topHud.indexOf("ControlModeToggle(")
+        val connectionButtonIndex = topHud.indexOf("ConnectionButton(")
+        assertTrue(
+            "主控页必须把自动/手动切换按钮放在连接按钮左侧",
+            modeToggleIndex >= 0 && connectionButtonIndex > modeToggleIndex
+        )
+        assertTrue(
+            "自动/手动切换必须同时受连接状态和模式请求状态保护",
+            mainScreen.contains("isEnabled && !isChanging") &&
+                mainScreen.contains("modeEnabled = commandEnabled")
+        )
+        val modeToggle = mainScreen.substringAfter("private fun ControlModeToggle")
+            .substringBefore("private fun ConnectionButton")
+        assertTrue(
+            "自动/手动切换按钮必须直接显示当前模式文字，而不是仅使用机器人图标",
+            modeToggle.contains("text = currentMode.displayName") &&
+                !modeToggle.contains("genisdog_icon_robot")
+        )
+    }
+
+    @Test
     fun rtspVideoReattachesAfterResume() {
         val projectRoot = locateProjectRoot()
         val video = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/video/RtspVideoSurface.kt"))

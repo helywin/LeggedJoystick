@@ -199,6 +199,8 @@ fun MainControlScreen(
                     appMode = appMode,
                     connectionState = connectionState,
                     batteryLevel = batteryLevel,
+                    modeEnabled = commandEnabled,
+                    isModeChanging = settingsState.isRobotModeChanging,
                     onModeClick = controller::setMode,
                     onConnectClick = {
                         when (connectionState) {
@@ -387,6 +389,8 @@ private fun TopHud(
     appMode: AppMode,
     connectionState: ConnectionState,
     batteryLevel: Int,
+    modeEnabled: Boolean,
+    isModeChanging: Boolean,
     onModeClick: (AppMode) -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
@@ -403,6 +407,12 @@ private fun TopHud(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            ControlModeToggle(
+                currentMode = appMode,
+                isEnabled = modeEnabled,
+                isChanging = isModeChanging,
+                onModeClick = onModeClick
+            )
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -1214,7 +1224,8 @@ private fun StatusRow(label: String, value: String, valueColor: Color) {
 @Composable
 private fun ControlModeToggle(
     currentMode: AppMode,
-    isConnected: Boolean,
+    isEnabled: Boolean,
+    isChanging: Boolean,
     onModeClick: (AppMode) -> Unit
 ) {
     val nextMode = if (currentMode == AppMode.APP_MODE_MANUAL) {
@@ -1225,7 +1236,8 @@ private fun ControlModeToggle(
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .width(88.dp)
+            .height(46.dp)
             .clip(shape)
             .background(
                 if (currentMode == AppMode.APP_MODE_MANUAL) {
@@ -1234,14 +1246,18 @@ private fun ControlModeToggle(
                     PanelBackground
                 }
             )
-            .noIndicationClickable(enabled = isConnected) { onModeClick(nextMode) },
+            .graphicsLayer {
+                alpha = if (isEnabled && !isChanging) 1f else 0.5f
+            }
+            .noIndicationClickable(enabled = isEnabled && !isChanging) { onModeClick(nextMode) },
         contentAlignment = Alignment.Center
     ) {
-        Image(
-            painter = painterResource(R.drawable.genisdog_icon_robot),
-            contentDescription = currentMode.displayName,
-            modifier = Modifier.size(28.dp),
-            contentScale = ContentScale.Fit
+        Text(
+            text = currentMode.displayName,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
     }
 }
