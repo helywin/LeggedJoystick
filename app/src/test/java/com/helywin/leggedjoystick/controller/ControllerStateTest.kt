@@ -2,6 +2,7 @@ package com.helywin.leggedjoystick.controller
 
 import com.helywin.leggedjoystick.data.ControlOwnershipState
 import com.helywin.leggedjoystick.data.ConnectionState
+import legged_driver.BatteryDataMessage
 import legged_driver.CtrlSource
 import legged_driver.FillLightStatus
 import legged_driver.HeadDirection
@@ -79,6 +80,45 @@ class ControllerStateTest {
         assertEquals(false, state.driverConnectionTelemetry.robotConnected)
         assertEquals(0, state.batteryLevel)
         assertEquals(0.0, state.currentSpeedValue, 0.0)
+    }
+
+    @Test
+    fun robotStateUpdatesBothBatteryLevelsAndAverage() {
+        val state = ControllerState()
+
+        state.updateBatteryLevels(
+            RobotStateMessage(
+                battery = BatteryDataMessage(
+                    power1 = 82f,
+                    power2 = 64f,
+                    present1 = true,
+                    present2 = true
+                )
+            )
+        )
+
+        assertEquals(82, state.battery1Level)
+        assertEquals(64, state.battery2Level)
+        assertEquals(73, state.batteryLevel)
+    }
+
+    @Test
+    fun missingBatteryIsRepresentedAsUnavailable() {
+        val state = ControllerState()
+
+        state.updateBatteryLevels(
+            RobotStateMessage(
+                battery = BatteryDataMessage(
+                    power1 = 82f,
+                    present1 = true,
+                    present2 = false
+                )
+            )
+        )
+
+        assertEquals(82, state.battery1Level)
+        assertEquals(null, state.battery2Level)
+        assertEquals(82, state.batteryLevel)
     }
 
     @Test

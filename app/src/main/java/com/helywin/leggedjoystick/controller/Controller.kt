@@ -84,6 +84,12 @@ class ControllerState {
     var batteryLevel by mutableStateOf(0)
         private set
 
+    var battery1Level by mutableStateOf<Int?>(null)
+        private set
+
+    var battery2Level by mutableStateOf<Int?>(null)
+        private set
+
     // 当前线速度值，单位由 driver 状态消息保持一致。
     var currentSpeedValue by mutableStateOf(0.0)
         private set
@@ -189,6 +195,23 @@ class ControllerState {
         batteryLevel = level.coerceIn(0, 100)
     }
 
+    fun updateBatteryLevels(robotState: RobotStateMessage) {
+        val batteryData = robotState.battery
+        battery1Level = batteryData
+            ?.takeIf { it.present1 }
+            ?.power1
+            ?.roundToInt()
+            ?.coerceIn(0, 100)
+        battery2Level = batteryData
+            ?.takeIf { it.present2 }
+            ?.power2
+            ?.roundToInt()
+            ?.coerceIn(0, 100)
+
+        val levels = listOfNotNull(battery1Level, battery2Level)
+        updateBatteryLevel(if (levels.isEmpty()) 0 else levels.average().roundToInt())
+    }
+
     fun updateCurrentSpeedValue(value: Double) {
         currentSpeedValue = value.coerceAtLeast(0.0)
     }
@@ -210,6 +233,8 @@ class ControllerState {
         faultTelemetry = FaultTelemetry()
         odometryTelemetry = OdometryTelemetry()
         batteryLevel = 0
+        battery1Level = null
+        battery2Level = null
         currentSpeedValue = 0.0
         frontLightOn = false
         backLightOn = false
@@ -505,7 +530,7 @@ object RobotControllerImpl : Controller {
                 message.robot_state?.let { robotState ->
                     val wasReleasing = settingsState.controlOwnershipState == ControlOwnershipState.RELEASING
                     settingsState.updateRobotCtrlMode(robotState.sport_mode)
-                    settingsState.updateBatteryLevel(robotState.toBatteryPercent())
+                    settingsState.updateBatteryLevels(robotState)
                     settingsState.updateCurrentSpeedValue(robotState.toLinearSpeedValue())
                     settingsState.updateRobotAuxiliaryState(robotState)
                     settingsState.updateControlOwnershipFromSource(robotState.control_source)
@@ -1674,17 +1699,6 @@ object RobotControllerImpl : Controller {
                 settingsState.updateRemoteInputSnapshot(snapshot)
             }
         }
-    }
-
-    private fun RobotStateMessage.toBatteryPercent(): Int {
-        val batteryData = battery ?: return 0
-        val values = buildList {
-            if (batteryData.present1) add(batteryData.power1)
-            if (batteryData.present2) add(batteryData.power2)
-        }
-
-        if (values.isEmpty()) return 0
-        return values.average().roundToInt().coerceIn(0, 100)
     }
 
     private fun RobotStateMessage.toLinearSpeedValue(): Double {

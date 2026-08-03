@@ -150,6 +150,34 @@ class SafetyContractTest {
     }
 
     @Test
+    fun batteryButtonOnlyShowsIconAndOverlayShowsBothBatteries() {
+        val projectRoot = locateProjectRoot()
+        val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
+        val batteryButton = mainScreen.substringAfter("private fun BatteryIconButton")
+            .substringBefore("private fun supportedSportModes")
+        val batteryOverlay = mainScreen.substringAfter("private fun BatteryStatusOverlay")
+            .substringBefore("private fun StatusRow")
+
+        assertTrue(
+            "顶部电量按钮不得显示单路电量数字",
+            !batteryButton.contains("batteryLevel") &&
+                !batteryButton.contains("Text(")
+        )
+        assertTrue(
+            "顶部电量按钮尺寸必须与设置按钮一致",
+            batteryButton.contains(".size(46.dp)") &&
+                batteryButton.contains("modifier = Modifier.size(30.dp)")
+        )
+        assertTrue(
+            "电量浮层必须分别显示电池1和电池2",
+            batteryOverlay.contains("电池 1") &&
+                batteryOverlay.contains("battery1Level") &&
+                batteryOverlay.contains("电池 2") &&
+                batteryOverlay.contains("battery2Level")
+        )
+    }
+
+    @Test
     fun rtspVideoReattachesAfterResume() {
         val projectRoot = locateProjectRoot()
         val video = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/video/RtspVideoSurface.kt"))

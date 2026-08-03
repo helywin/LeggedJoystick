@@ -63,7 +63,7 @@ GenisDog APK 是 Flutter 自绘界面，不能反编译为可直接复用的 Kot
 - 底部第一个按钮只控制动作组展开/收缩，不发送机器人命令。
 - 底部动作按钮使用 `RobotState.motion_status` 显示实际选中态，选中图标使用去除半透明圆形底后的蓝色透明资源。
 - 右侧工具列保留灯光入口，并新增头尾方向切换按钮；旧头部控制和高低站姿面板从主屏入口移除。头尾方向切换只发送 `COMMAND_CODE_REVERSE_HEAD_TAIL` 并显示方向状态，不再驱动主背景和左上小视频互换。
-- 电量和机器状态面板映射到 `RobotStateMessage`。
+- 顶部电量按钮只显示电池图标，不显示单路数字；按钮外框和内部图案尺寸与设置按钮一致。点击后打开状态浮层，分别显示 `BatteryDataMessage.power1` 和 `power2`，未上报的电池显示 `--`。电量和机器状态面板映射到 `RobotStateMessage`。
 - 真实链路下灯光 UI 不再把“ZMQ 入队成功”当作最终状态；App 侧等待订阅状态或命令完成结果，`legged_driver` 真实后端需要把 SDK 灯光 ACK 同步到 `RobotState` 缓存并发布。
 
 ### 工程层

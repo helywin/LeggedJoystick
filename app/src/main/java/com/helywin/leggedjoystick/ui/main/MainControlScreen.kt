@@ -122,7 +122,8 @@ fun MainControlScreen(
     val motionStatus = settingsState.motionStatus
     val appMode = settingsState.robotMode
     val connectionState = settingsState.connectionState
-    val batteryLevel = settingsState.batteryLevel
+    val battery1Level = settingsState.battery1Level
+    val battery2Level = settingsState.battery2Level
     val speedLevel = settingsState.settings.speedLevel
     val currentSpeedValue = settingsState.currentSpeedValue
     val frontLightOn = settingsState.frontLightOn
@@ -198,7 +199,6 @@ fun MainControlScreen(
                 TopHud(
                     appMode = appMode,
                     connectionState = connectionState,
-                    batteryLevel = batteryLevel,
                     modeEnabled = commandEnabled,
                     isModeChanging = settingsState.isRobotModeChanging,
                     onModeClick = controller::setMode,
@@ -316,7 +316,8 @@ fun MainControlScreen(
 
                 if (batteryOverlayVisible) {
                     BatteryStatusOverlay(
-                        batteryLevel = batteryLevel,
+                        battery1Level = battery1Level,
+                        battery2Level = battery2Level,
                         connectionState = connectionState,
                         appMode = appMode,
                         sportMode = currentSportMode,
@@ -388,7 +389,6 @@ private fun ControlScreenBackground(
 private fun TopHud(
     appMode: AppMode,
     connectionState: ConnectionState,
-    batteryLevel: Int,
     modeEnabled: Boolean,
     isModeChanging: Boolean,
     onModeClick: (AppMode) -> Unit,
@@ -418,7 +418,6 @@ private fun TopHud(
                 onClick = onConnectClick
             )
             BatteryIconButton(
-                batteryLevel = batteryLevel,
                 onClick = onBatteryClick
             )
             HudIconButton(
@@ -1171,7 +1170,8 @@ private fun MotionModeCard(
 
 @Composable
 private fun BatteryStatusOverlay(
-    batteryLevel: Int,
+    battery1Level: Int?,
+    battery2Level: Int?,
     connectionState: ConnectionState,
     appMode: AppMode,
     sportMode: SportMode,
@@ -1189,7 +1189,8 @@ private fun BatteryStatusOverlay(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            StatusRow("电量", "$batteryLevel%", batteryLevelColor(batteryLevel))
+            StatusRow("电池 1", formatBatteryLevel(battery1Level), batteryLevelColor(battery1Level))
+            StatusRow("电池 2", formatBatteryLevel(battery2Level), batteryLevelColor(battery2Level))
             StatusRow("连接", connectionState.displayName, connectionState.color())
             StatusRow("模式", appMode.displayName, Color.White.copy(alpha = 0.88f))
             StatusRow("运动", sportMode.displayName, Color.White.copy(alpha = 0.88f))
@@ -1327,32 +1328,22 @@ private fun HudIconButton(
 
 @Composable
 private fun BatteryIconButton(
-    batteryLevel: Int,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(14.dp)
-    Row(
+    Box(
         modifier = Modifier
-            .width(64.dp)
-            .height(46.dp)
+            .size(46.dp)
             .clip(shape)
             .background(PanelBackground)
             .noIndicationClickable(onClick = onClick),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.Center
     ) {
         Image(
             painter = painterResource(R.drawable.genisdog_icon_battery),
-            contentDescription = "电量",
-            modifier = Modifier.size(24.dp),
+            contentDescription = "查看双电池电量",
+            modifier = Modifier.size(30.dp),
             contentScale = ContentScale.Fit
-        )
-        Spacer(modifier = Modifier.width(3.dp))
-        Text(
-            text = "$batteryLevel",
-            color = batteryLevelColor(batteryLevel),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
         )
     }
 }
@@ -1457,12 +1448,18 @@ private fun SpeedLevel.color(): Color {
     }
 }
 
-private fun batteryLevelColor(batteryLevel: Int): Color {
-    return when {
-        batteryLevel > 50 -> Color(0xFF5ED17A)
-        batteryLevel > 20 -> Color(0xFFE2A72E)
-        else -> Color(0xFFE45D3D)
-    }
+private fun formatBatteryLevel(batteryLevel: Int?): String {
+    return batteryLevel?.let { "$it%" } ?: "--"
+}
+
+private fun batteryLevelColor(batteryLevel: Int?): Color {
+    return batteryLevel?.let {
+        when {
+            it > 50 -> Color(0xFF5ED17A)
+            it > 20 -> Color(0xFFE2A72E)
+            else -> Color(0xFFE45D3D)
+        }
+    } ?: Color.White.copy(alpha = 0.72f)
 }
 
 private fun ConnectionState.color(): Color {
