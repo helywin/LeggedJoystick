@@ -42,14 +42,17 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +92,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
+import com.helywin.leggedjoystick.ui.mapping.MappingWorkspace
 import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
 import com.helywin.leggedjoystick.ui.video.RtspVideoSlot
 import com.helywin.leggedjoystick.ui.video.RtspVideoSurface
@@ -99,6 +103,7 @@ import legged_driver.FaultLevel
 import legged_driver.HeadDirection
 import legged_driver.MotionStatus
 import legged_driver.SportMode
+import sar.robot_controller.v1.OperationMode
 
 private enum class RightToolPanel {
     LIGHT
@@ -140,7 +145,9 @@ fun MainControlScreen(
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
     val isConnected = connectionState == ConnectionState.CONNECTED
     val hasControl = settingsState.hasControl
-    val commandEnabled = isConnected && hasControl
+    val takeoverEnabled = isConnected && hasControl
+    val commandEnabled = takeoverEnabled && appMode == AppMode.APP_MODE_MANUAL
+    val controllerOperationMode = settingsState.controllerSnapshot?.operation_mode
 
     var modeOverlayVisible by remember { mutableStateOf(false) }
     var speedSelectorVisible by remember { mutableStateOf(false) }
@@ -151,6 +158,12 @@ fun MainControlScreen(
     var secondaryVideoTexture by remember { mutableStateOf<TextureView?>(null) }
     var isTakingSnapshot by remember { mutableStateOf(false) }
     var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
+    var mappingWorkspaceVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(controllerOperationMode) {
+        if (controllerOperationMode.isMappingMode()) {
+            mappingWorkspaceVisible = true
+        }
+    }
     val primaryVideoUrl = when (primaryVideoSource) {
         PrimaryVideoSource.HEAD -> settingsState.settings.headRtspUrl
         PrimaryVideoSource.TAIL -> settingsState.settings.tailRtspUrl
@@ -199,7 +212,7 @@ fun MainControlScreen(
                 TopHud(
                     appMode = appMode,
                     connectionState = connectionState,
-                    modeEnabled = commandEnabled,
+                    modeEnabled = takeoverEnabled,
                     isModeChanging = settingsState.isRobotModeChanging,
                     onModeClick = controller::setMode,
                     onConnectClick = {
@@ -210,6 +223,7 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
+                    onMappingClick = { mappingWorkspaceVisible = true },
                     onSettingsClick = onSettingsClick
                 )
 
@@ -344,6 +358,15 @@ fun MainControlScreen(
                     }
                 )
             }
+
+            if (mappingWorkspaceVisible) {
+                MappingWorkspace(
+                    state = settingsState,
+                    controller = controller,
+                    onClose = { mappingWorkspaceVisible = false },
+                    modifier = Modifier.matchParentSize().zIndex(30f)
+                )
+            }
         }
     }
 }
@@ -394,6 +417,7 @@ private fun TopHud(
     onModeClick: (AppMode) -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
+    onMappingClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -420,6 +444,13 @@ private fun TopHud(
             BatteryIconButton(
                 onClick = onBatteryClick
             )
+            IconButton(onClick = onMappingClick) {
+                Icon(
+                    imageVector = Icons.Default.Map,
+                    contentDescription = "实时建图",
+                    tint = Color.White
+                )
+            }
             HudIconButton(
                 iconResId = R.drawable.genisdog_icon_setting,
                 contentDescription = "设置",
@@ -427,6 +458,13 @@ private fun TopHud(
             )
         }
     }
+}
+
+private fun OperationMode?.isMappingMode(): Boolean {
+    return this == OperationMode.OPERATION_MODE_MAPPING_PREPARING ||
+        this == OperationMode.OPERATION_MODE_MAPPING_RUNNING ||
+        this == OperationMode.OPERATION_MODE_MAPPING_REVIEW ||
+        this == OperationMode.OPERATION_MODE_MAPPING_SAVING
 }
 
 @Composable
@@ -1229,11 +1267,8 @@ private fun ControlModeToggle(
     isChanging: Boolean,
     onModeClick: (AppMode) -> Unit
 ) {
-    val nextMode = if (currentMode == AppMode.APP_MODE_MANUAL) {
-        AppMode.APP_MODE_AUTO
-    } else {
-        AppMode.APP_MODE_MANUAL
-    }
+    // AUTO 只能由导航任务进入；该入口在自动导航时仅用于人工接管。
+    val canTakeOver = isEnabled && currentMode == AppMode.APP_MODE_AUTO && !isChanging
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier = Modifier
@@ -1248,13 +1283,15 @@ private fun ControlModeToggle(
                 }
             )
             .graphicsLayer {
-                alpha = if (isEnabled && !isChanging) 1f else 0.5f
+                alpha = if (canTakeOver || currentMode == AppMode.APP_MODE_MANUAL) 1f else 0.5f
             }
-            .noIndicationClickable(enabled = isEnabled && !isChanging) { onModeClick(nextMode) },
+            .noIndicationClickable(enabled = canTakeOver) {
+                onModeClick(AppMode.APP_MODE_MANUAL)
+            },
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = currentMode.displayName,
+            text = if (currentMode == AppMode.APP_MODE_AUTO) "自动·接管" else "人工模式",
             color = Color.White,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
@@ -1513,6 +1550,11 @@ fun MainControlScreenPreview() {
             override fun takeControl() {}
             override fun releaseControl() {}
             override fun setMode(mode: AppMode) {}
+            override fun startMapping(draftName: String) {}
+            override fun finishMapping() {}
+            override fun saveMap(displayName: String) {}
+            override fun discardMap() {}
+            override fun requestLatestMappingMap() {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: RobotAction) {}

@@ -22,6 +22,8 @@ class SettingsManager(context: Context) {
         private const val PREFS_NAME = "legged_joystick_settings"
         private const val KEY_ZMQ_IP = "zmq_ip"
         private const val KEY_ZMQ_PORT = "zmq_port"
+        private const val KEY_CONTROLLER_PORT = "controller_port"
+        private const val KEY_CONTROLLER_TOKEN = "controller_token"
         private const val KEY_SPEED_LEVEL = "speed_level"
         private const val KEY_HEAD_RTSP_URL = "head_rtsp_url"
         private const val KEY_TAIL_RTSP_URL = "tail_rtsp_url"
@@ -45,9 +47,11 @@ class SettingsManager(context: Context) {
         private const val KEY_SETTINGS_VERSION = "settings_version"
 
         // 默认配置
-        private const val CURRENT_SETTINGS_VERSION = 2
+        private const val CURRENT_SETTINGS_VERSION = 3
         private const val DEFAULT_ZMQ_IP = "192.168.234.1"
         private const val DEFAULT_ZMQ_PORT = 33445
+        private const val DEFAULT_CONTROLLER_PORT = 33446
+        private const val DEFAULT_CONTROLLER_TOKEN = "change-me-before-deploy"
         private const val DEFAULT_HEAD_RTSP_URL = "rtsp://192.168.234.1:8554/front"
         private const val DEFAULT_TAIL_RTSP_URL = "rtsp://192.168.234.1:8554/back"
         private const val OLD_DEFAULT_HEAD_RTSP_URL = "rtsp://192.168.234.1:8554/head"
@@ -78,6 +82,8 @@ class SettingsManager(context: Context) {
             sharedPreferences.edit {
                 putString(KEY_ZMQ_IP, settings.zmqIp)
                 putInt(KEY_ZMQ_PORT, settings.zmqPort)
+                putInt(KEY_CONTROLLER_PORT, settings.controllerPort)
+                putString(KEY_CONTROLLER_TOKEN, settings.controllerToken)
                 putString(KEY_SPEED_LEVEL, settings.speedLevel.name)
                 putString(KEY_HEAD_RTSP_URL, settings.headRtspUrl)
                 putString(KEY_TAIL_RTSP_URL, settings.tailRtspUrl)
@@ -101,7 +107,12 @@ class SettingsManager(context: Context) {
                 putInt(KEY_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
                 apply()
             }
-            Timber.d("设置已保存: $settings")
+            Timber.d(
+                "设置已保存: IP=%s, driverPort=%d, controllerPort=%d",
+                settings.zmqIp,
+                settings.zmqPort,
+                settings.controllerPort
+            )
         } catch (e: Exception) {
             Timber.e(e, "保存设置失败")
         }
@@ -116,6 +127,14 @@ class SettingsManager(context: Context) {
             AppSettings(
                 zmqIp = sharedPreferences.getString(KEY_ZMQ_IP, DEFAULT_ZMQ_IP) ?: DEFAULT_ZMQ_IP,
                 zmqPort = sharedPreferences.getInt(KEY_ZMQ_PORT, DEFAULT_ZMQ_PORT),
+                controllerPort = sharedPreferences.getInt(
+                    KEY_CONTROLLER_PORT,
+                    DEFAULT_CONTROLLER_PORT
+                ).coerceIn(1, 65535),
+                controllerToken = sharedPreferences.getString(
+                    KEY_CONTROLLER_TOKEN,
+                    DEFAULT_CONTROLLER_TOKEN
+                ) ?: DEFAULT_CONTROLLER_TOKEN,
                 speedLevel = SpeedLevel.SLOW,
                 headRtspUrl = normalizeDefaultRtspUrl(
                     sharedPreferences.getString(KEY_HEAD_RTSP_URL, DEFAULT_HEAD_RTSP_URL),
@@ -187,7 +206,12 @@ class SettingsManager(context: Context) {
                 if (storedSettingsVersion < CURRENT_SETTINGS_VERSION) {
                     migrateSettingsVersion(it)
                 }
-                Timber.d("设置已加载: $it")
+                Timber.d(
+                    "设置已加载: IP=%s, driverPort=%d, controllerPort=%d",
+                    it.zmqIp,
+                    it.zmqPort,
+                    it.controllerPort
+                )
             }
         } catch (e: Exception) {
             Timber.e(e, "加载设置失败，使用默认设置")

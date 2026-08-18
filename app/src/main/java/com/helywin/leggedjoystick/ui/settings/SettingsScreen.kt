@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.BuildConfig
@@ -42,6 +43,8 @@ fun SettingsScreen(
 ) {
     var zmqIp by remember { mutableStateOf(currentSettings.zmqIp) }
     var zmqPort by remember { mutableStateOf(currentSettings.zmqPort.toString()) }
+    var controllerPort by remember { mutableStateOf(currentSettings.controllerPort.toString()) }
+    var controllerToken by remember { mutableStateOf(currentSettings.controllerToken) }
     var headRtspUrl by remember { mutableStateOf(currentSettings.headRtspUrl) }
     var tailRtspUrl by remember { mutableStateOf(currentSettings.tailRtspUrl) }
     var keepScreenOn by remember { mutableStateOf(currentSettings.keepScreenOn) }
@@ -134,6 +137,31 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true
+                    )
+
+                    NumberSettingField(
+                        value = controllerPort,
+                        onValueChange = { controllerPort = it },
+                        label = "机器人主控端口",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = controllerToken,
+                        onValueChange = { controllerToken = it },
+                        label = { Text("机器人主控部署令牌") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Key, contentDescription = "主控令牌")
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+
+                    Text(
+                        text = "33445 用于低延迟遥控，33446 用于模式、建图、地图和位置。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -390,9 +418,15 @@ fun SettingsScreen(
             Button(
                 onClick = {
                     val port = zmqPort.toIntOrNull() ?: currentSettings.zmqPort
+                    val parsedControllerPort = parsePort(
+                        controllerPort,
+                        currentSettings.controllerPort
+                    )
                     val newSettings = currentSettings.copy(
                         zmqIp = zmqIp.trim(),
                         zmqPort = port,
+                        controllerPort = parsedControllerPort,
+                        controllerToken = controllerToken,
                         headRtspUrl = headRtspUrl.trim(),
                         tailRtspUrl = tailRtspUrl.trim(),
                         remoteInputHost = remoteInputHost.trim(),
@@ -439,9 +473,10 @@ fun SettingsScreen(
                     )
                     onSettingsChange(newSettings)
                     Timber.i(
-                        "设置已保存: IP=%s, Port=%s, HeadRTSP=%s, TailRTSP=%s, KeepScreenOn=%s",
+                        "设置已保存: IP=%s, DriverPort=%s, ControllerPort=%s, HeadRTSP=%s, TailRTSP=%s, KeepScreenOn=%s",
                         zmqIp,
                         port,
+                        parsedControllerPort,
                         headRtspUrl,
                         tailRtspUrl,
                         keepScreenOn
@@ -498,9 +533,9 @@ fun SettingsScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    Text("• 配置服务器的IP地址和端口，然后保存")
+                    Text("• 配置机器人 IP、驱动端口、主控端口和部署令牌，然后保存")
                     Text("• 点击连接按钮连接到机器人，等待连接成功")
-                    Text("• 连接成功后由 driver 自动接管，移动、动作、速度、模式和辅助命令可直接发送")
+                    Text("• 连接成功后手动遥控走 driver；模式、建图、地图和位置走机器人主控")
                     Text("• UniRC UDP 输入负责移动轴和原地姿态轴，动作和模式由主屏按钮触发")
                     Text("• 原始 UDP 转发默认开启，其他 App 可监听 127.0.0.1:19857 自行解析")
                     Text("• 调试通道映射时先保持低速，确认方向后再提高速度")

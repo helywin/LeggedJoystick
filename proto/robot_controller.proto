@@ -1,0 +1,413 @@
+syntax = "proto3";
+
+package sar.robot_controller.v1;
+
+// 真源：sar_legged_robot/src/sar_robot_controller/proto/robot_controller.proto。
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+enum MessageKind {
+  MESSAGE_KIND_UNSPECIFIED = 0;
+  MESSAGE_KIND_REQUEST = 1;
+  MESSAGE_KIND_RESPONSE = 2;
+  MESSAGE_KIND_EVENT = 3;
+}
+
+enum CommandStage {
+  COMMAND_STAGE_UNSPECIFIED = 0;
+  COMMAND_STAGE_ACCEPTED = 1;
+  COMMAND_STAGE_REJECTED = 2;
+}
+
+enum OperationMode {
+  OPERATION_MODE_UNSPECIFIED = 0;
+  OPERATION_MODE_BOOTING = 1;
+  OPERATION_MODE_RECONCILING = 2;
+  OPERATION_MODE_STANDBY = 3;
+  OPERATION_MODE_MAPPING_PREPARING = 4;
+  OPERATION_MODE_MAPPING_RUNNING = 5;
+  OPERATION_MODE_MAPPING_REVIEW = 6;
+  OPERATION_MODE_MAPPING_SAVING = 7;
+  OPERATION_MODE_LOCALIZATION_LOADING = 8;
+  OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE = 9;
+  OPERATION_MODE_LOCALIZATION_TRACKING = 10;
+  OPERATION_MODE_LOCALIZATION_LOST = 11;
+  OPERATION_MODE_MAINTENANCE = 12;
+  OPERATION_MODE_FAULT = 13;
+}
+
+enum ControlOwner {
+  CONTROL_OWNER_UNSPECIFIED = 0;
+  CONTROL_OWNER_DISABLED = 1;
+  CONTROL_OWNER_REMOTE_MANUAL = 2;
+  CONTROL_OWNER_NAVIGATION_AUTO = 3;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_READY = 1;
+  HEALTH_STATE_HOLD = 2;
+  HEALTH_STATE_LATCHED_FAULT = 3;
+}
+
+enum LocalizationState {
+  LOCALIZATION_STATE_UNSPECIFIED = 0;
+  LOCALIZATION_STATE_UNKNOWN = 1;
+  LOCALIZATION_STATE_INITIALIZING = 2;
+  LOCALIZATION_STATE_TRACKING = 3;
+  LOCALIZATION_STATE_LOST = 4;
+}
+
+enum TaskType {
+  TASK_TYPE_UNSPECIFIED = 0;
+  TASK_TYPE_START_MAPPING = 1;
+  TASK_TYPE_SAVE_MAP = 2;
+  TASK_TYPE_LOAD_MAP = 3;
+  TASK_TYPE_PLAN_PREVIEW = 4;
+  TASK_TYPE_NAVIGATE_TO_POSE = 5;
+  TASK_TYPE_MANUAL_TAKEOVER = 6;
+}
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_ACCEPTED = 1;
+  TASK_STATE_RUNNING = 2;
+  TASK_STATE_PAUSED = 3;
+  TASK_STATE_SUCCEEDED = 4;
+  TASK_STATE_FAILED = 5;
+  TASK_STATE_CANCELED = 6;
+}
+
+enum ErrorCode {
+  ERROR_CODE_OK = 0;
+  ERROR_CODE_INVALID_MESSAGE = 1;
+  ERROR_CODE_PROTOCOL_VERSION_UNSUPPORTED = 2;
+  ERROR_CODE_AUTHENTICATION_FAILED = 3;
+  ERROR_CODE_SESSION_MISMATCH = 4;
+  ERROR_CODE_REQUEST_REPLAY_MISMATCH = 5;
+  ERROR_CODE_STATE_CONFLICT = 6;
+  ERROR_CODE_OPERATION_NOT_ALLOWED = 7;
+  ERROR_CODE_RUNTIME_BUSY = 8;
+  ERROR_CODE_MAP_NOT_FOUND = 9;
+  ERROR_CODE_MAP_VERSION_MISMATCH = 10;
+  ERROR_CODE_MAP_PACKAGE_INVALID = 11;
+  ERROR_CODE_LOCALIZATION_NOT_READY = 12;
+  ERROR_CODE_DRIVER_NOT_READY = 13;
+  ERROR_CODE_HEALTH_NOT_READY = 14;
+  ERROR_CODE_TASK_NOT_FOUND = 15;
+  ERROR_CODE_TIME_SYNC_REPLAY = 16;
+  ERROR_CODE_REMOTE_TIME_OUT_OF_RANGE = 17;
+  ERROR_CODE_TIME_SYNC_RTT_TOO_HIGH = 18;
+  ERROR_CODE_TIME_SYNC_DEFERRED = 19;
+  ERROR_CODE_TIME_SET_FAILED = 20;
+  ERROR_CODE_PTP_RECOVERY_FAILED = 21;
+  ERROR_CODE_INTERNAL = 22;
+}
+
+enum ActionCode {
+  ACTION_CODE_UNSPECIFIED = 0;
+  ACTION_CODE_START_MAPPING = 1;
+  ACTION_CODE_FINISH_MAPPING = 2;
+  ACTION_CODE_SAVE_MAP = 3;
+  ACTION_CODE_DISCARD_MAP = 4;
+  ACTION_CODE_SWITCH_MAP = 5;
+  ACTION_CODE_SET_INITIAL_POSE = 6;
+  ACTION_CODE_PREVIEW_GOAL = 7;
+  ACTION_CODE_START_NAVIGATION = 8;
+  ACTION_CODE_CANCEL_NAVIGATION = 9;
+  ACTION_CODE_MANUAL_TAKEOVER = 10;
+  ACTION_CODE_ACKNOWLEDGE_FAULT = 11;
+  ACTION_CODE_ENTER_MAINTENANCE = 12;
+  ACTION_CODE_EXIT_MAINTENANCE = 13;
+  ACTION_CODE_STOP_RUNTIME = 14;
+}
+
+enum TimeSyncState {
+  TIME_SYNC_STATE_UNSPECIFIED = 0;
+  TIME_SYNC_STATE_REQUIRED = 1;
+  TIME_SYNC_STATE_CHALLENGE_SENT = 2;
+  TIME_SYNC_STATE_DEFERRED = 3;
+  TIME_SYNC_STATE_APPLIED = 4;
+  TIME_SYNC_STATE_FAILED = 5;
+}
+
+enum PoseSource {
+  POSE_SOURCE_UNSPECIFIED = 0;
+  POSE_SOURCE_MAPPING_ODOMETRY = 1;
+  POSE_SOURCE_LOCALIZATION = 2;
+}
+
+enum MappingGridEncoding {
+  MAPPING_GRID_ENCODING_UNSPECIFIED = 0;
+  MAPPING_GRID_ENCODING_ZLIB_INT8 = 1;
+}
+
+message Pose2D {
+  double x = 1;
+  double y = 2;
+  double yaw = 3;
+}
+
+message MapIdentity {
+  string map_id = 1;
+  uint64 revision = 2;
+}
+
+message MapInfo {
+  MapIdentity identity = 1;
+  string display_name = 2;
+  string content_hash = 3;
+  string preview_hash = 4;
+  double resolution_m = 5;
+  double origin_x_m = 6;
+  double origin_y_m = 7;
+  uint32 width_cells = 8;
+  uint32 height_cells = 9;
+  int64 created_utc_ns = 10;
+  bool current = 11;
+}
+
+message TaskInfo {
+  string task_id = 1;
+  uint64 request_id = 2;
+  TaskType type = 3;
+  TaskState state = 4;
+  double progress = 5;
+  MapIdentity map = 6;
+  ErrorCode error_code = 7;
+  string error_message = 8;
+  bool robot_stopped = 9;
+  bool retryable = 10;
+  string suggested_action = 11;
+}
+
+message HealthItem {
+  string name = 1;
+  HealthState state = 2;
+  string reason = 3;
+  double age_seconds = 4;
+}
+
+message AllowedAction {
+  ActionCode action = 1;
+  bool allowed = 2;
+  repeated string blocking_reasons = 3;
+}
+
+message TimeSyncStatus {
+  TimeSyncState state = 1;
+  ErrorCode error_code = 2;
+  string message = 3;
+  int64 applied_offset_ns = 4;
+  int64 measured_rtt_ns = 5;
+  int64 completed_server_utc_ns = 6;
+  bool system_clock_applied = 7;
+  bool ptp_recovery_requested = 8;
+  bool ptp_recovery_succeeded = 9;
+}
+
+message StateSnapshot {
+  uint64 state_revision = 1;
+  OperationMode operation_mode = 2;
+  ControlOwner control_owner = 3;
+  HealthState health_state = 4;
+  LocalizationState localization_state = 5;
+  MapInfo current_map = 6;
+  TaskInfo active_task = 7;
+  Pose2D robot_pose = 8;
+  repeated HealthItem health = 9;
+  repeated AllowedAction allowed_actions = 10;
+  TimeSyncStatus time_sync = 11;
+  uint64 event_queue_depth = 12;
+  uint64 dropped_continuous_events = 13;
+  string recent_transition = 14;
+  string runtime_owner = 15;
+  string robot_pose_frame_id = 16;
+  int64 robot_pose_source_time_ns = 17;
+  PoseSource robot_pose_source = 18;
+  MappingStreamStatus mapping_stream = 19;
+}
+
+message HelloRequest {
+  ProtocolVersion requested_version = 1;
+  string device_id = 2;
+  string pre_shared_token = 3;
+  int64 client_send_utc_ns = 4;
+  bool subscribe_state = 5;
+}
+
+message HelloResponse {
+  ProtocolVersion selected_version = 1;
+  string session_id = 2;
+  StateSnapshot snapshot = 3;
+}
+
+message Heartbeat { int64 client_utc_ns = 1; }
+message GetSnapshotRequest {}
+message ListMapsRequest {}
+message MapListResponse { repeated MapInfo maps = 1; }
+
+message GetMapPreviewRequest {
+  MapIdentity map = 1;
+  uint32 preferred_chunk_bytes = 2;
+}
+
+message MapPreviewChunk {
+  MapIdentity map = 1;
+  uint32 chunk_index = 2;
+  uint32 chunk_count = 3;
+  uint64 total_size_bytes = 4;
+  string sha256 = 5;
+  bytes data = 6;
+}
+
+message MappingGridMetadata {
+  uint64 frame_sequence = 1;
+  string frame_id = 2;
+  int64 source_time_ns = 3;
+  double resolution_m = 4;
+  uint32 width_cells = 5;
+  uint32 height_cells = 6;
+  Pose2D origin = 7;
+  MappingGridEncoding encoding = 8;
+  uint64 uncompressed_size_bytes = 9;
+  uint64 compressed_size_bytes = 10;
+  string sha256 = 11;
+}
+
+message MappingStreamStatus {
+  bool available = 1;
+  uint64 latest_frame_sequence = 2;
+  int64 latest_source_time_ns = 3;
+  uint64 rejected_frames = 4;
+  uint64 dropped_frames = 5;
+  string last_error = 6;
+}
+
+message GetMappingMapRequest {
+  uint64 last_complete_frame_sequence = 1;
+  uint32 preferred_chunk_bytes = 2;
+}
+
+message MappingMapChunk {
+  MappingGridMetadata metadata = 1;
+  uint32 chunk_index = 2;
+  uint32 chunk_count = 3;
+  bytes data = 4;
+}
+
+message StartMappingRequest { string draft_name = 1; }
+message FinishMappingRequest {}
+message SaveMapRequest { string display_name = 1; }
+message DiscardMapRequest {}
+message SwitchMapRequest { MapIdentity map = 1; }
+
+message SetInitialPoseRequest {
+  MapIdentity map = 1;
+  Pose2D pose = 2;
+}
+
+message GoalPose {
+  MapIdentity map = 1;
+  Pose2D pose = 2;
+}
+
+message PathPreview {
+  string task_id = 1;
+  MapIdentity map = 2;
+  repeated Pose2D points = 3;
+  double length_m = 4;
+}
+
+message PreviewGoalRequest { GoalPose goal = 1; }
+message StartNavigationRequest { GoalPose goal = 1; }
+message CancelNavigationRequest { string task_id = 1; }
+message ManualTakeoverRequest {}
+message AcknowledgeFaultRequest {}
+message EnterMaintenanceRequest {}
+message ExitMaintenanceRequest {}
+message StopRuntimeRequest {}
+
+message CommandRequest {
+  uint64 expected_state_revision = 1;
+  oneof command {
+    StartMappingRequest start_mapping = 10;
+    FinishMappingRequest finish_mapping = 11;
+    SaveMapRequest save_map = 12;
+    DiscardMapRequest discard_map = 13;
+    SwitchMapRequest switch_map = 14;
+    SetInitialPoseRequest set_initial_pose = 15;
+    PreviewGoalRequest preview_goal = 16;
+    StartNavigationRequest start_navigation = 17;
+    CancelNavigationRequest cancel_navigation = 18;
+    ManualTakeoverRequest manual_takeover = 19;
+    AcknowledgeFaultRequest acknowledge_fault = 20;
+    EnterMaintenanceRequest enter_maintenance = 21;
+    ExitMaintenanceRequest exit_maintenance = 22;
+    StopRuntimeRequest stop_runtime = 23;
+  }
+}
+
+message CommandResponse {
+  CommandStage stage = 1;
+  string task_id = 2;
+  ErrorCode error_code = 3;
+  string error_message = 4;
+  bool robot_stopped = 5;
+  bool retryable = 6;
+  string suggested_action = 7;
+  uint64 current_state_revision = 8;
+}
+
+message TaskEvent { TaskInfo task = 1; }
+message StateEvent { StateSnapshot snapshot = 1; }
+
+message TimeSyncChallenge {
+  string challenge = 1;
+  int64 client_send_utc_ns = 2;
+  int64 server_receive_utc_ns = 3;
+  int64 server_send_utc_ns = 4;
+}
+
+message TimeSyncCommit {
+  string challenge = 1;
+  int64 client_send_utc_ns = 2;
+  int64 server_receive_utc_ns = 3;
+  int64 server_send_utc_ns = 4;
+  int64 client_receive_utc_ns = 5;
+}
+
+message ControllerMessage {
+  ProtocolVersion version = 1;
+  MessageKind kind = 2;
+  string session_id = 3;
+  string device_id = 4;
+  uint64 request_id = 5;
+  uint64 sequence = 6;
+  uint64 state_revision = 7;
+  int64 sender_utc_ns = 8;
+
+  oneof payload {
+    HelloRequest hello_request = 20;
+    HelloResponse hello_response = 21;
+    Heartbeat heartbeat = 22;
+    GetSnapshotRequest get_snapshot_request = 23;
+    StateSnapshot state_snapshot = 24;
+    StateEvent state_event = 25;
+    ListMapsRequest list_maps_request = 26;
+    MapListResponse map_list_response = 27;
+    GetMapPreviewRequest get_map_preview_request = 28;
+    MapPreviewChunk map_preview_chunk = 29;
+    CommandRequest command_request = 30;
+    CommandResponse command_response = 31;
+    TaskEvent task_event = 32;
+    TimeSyncChallenge time_sync_challenge = 33;
+    TimeSyncCommit time_sync_commit = 34;
+    TimeSyncStatus time_sync_status = 35;
+    PathPreview path_preview = 36;
+    GetMappingMapRequest get_mapping_map_request = 37;
+    MappingMapChunk mapping_map_chunk = 38;
+  }
+}

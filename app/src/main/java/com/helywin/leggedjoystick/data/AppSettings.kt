@@ -39,6 +39,8 @@ enum class HighLowStance(
 data class AppSettings(
     val zmqIp: String = "192.168.234.1",
     val zmqPort: Int = 33445,
+    val controllerPort: Int = 33446,
+    val controllerToken: String = "change-me-before-deploy",
     val speedLevel: SpeedLevel = SpeedLevel.SLOW,
     val headRtspUrl: String = "rtsp://192.168.234.1:8554/front",
     val tailRtspUrl: String = "rtsp://192.168.234.1:8554/back",

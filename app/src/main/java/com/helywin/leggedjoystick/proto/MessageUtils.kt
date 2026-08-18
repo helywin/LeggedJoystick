@@ -84,6 +84,7 @@ object MessageUtils {
             DeviceType.DEVICE_TYPE_SERVER -> "server"
             DeviceType.DEVICE_TYPE_NAVIGATION -> "nav"
             DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER -> "remote"
+            DeviceType.DEVICE_TYPE_ROBOT_CONTROLLER -> "controller"
             else -> "unknown"
         }
         return "${prefix}_${UUID.randomUUID().toString().substring(0, 8)}"

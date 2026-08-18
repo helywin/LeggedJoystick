@@ -46,6 +46,13 @@ import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputConfig
 import com.helywin.leggedjoystick.input.remote.unirc.UniRcUdpInputSource
 import com.helywin.leggedjoystick.input.remote.unirc.SiyiUdpBridgeController
 import com.helywin.leggedjoystick.zmq.NewZmqClient
+import com.helywin.leggedjoystick.zmq.RobotControllerClient
+import com.helywin.leggedjoystick.zmq.RobotControllerClientListener
+import com.helywin.leggedjoystick.zmq.RobotControllerConnectionState
+import com.helywin.leggedjoystick.mapping.MappingGridFrame
+import com.helywin.leggedjoystick.mapping.MappingGridMetadataModel
+import com.helywin.leggedjoystick.mapping.MappingPose
+import com.helywin.leggedjoystick.mapping.MappingClock
 import legged_driver.AppMode
 import legged_driver.CommandCode
 import legged_driver.CommandResultStage
@@ -58,6 +65,20 @@ import legged_driver.MotionStatus
 import legged_driver.RobotStateMessage
 import legged_driver.SportMode
 import legged_driver.ConnectionState as DriverConnectionState
+import sar.robot_controller.v1.ActionCode
+import sar.robot_controller.v1.AllowedAction
+import sar.robot_controller.v1.CommandResponse
+import sar.robot_controller.v1.CommandStage
+import sar.robot_controller.v1.ControlOwner
+import sar.robot_controller.v1.HealthState
+import sar.robot_controller.v1.MappingStreamStatus
+import sar.robot_controller.v1.OperationMode
+import sar.robot_controller.v1.Pose2D
+import sar.robot_controller.v1.PoseSource
+import sar.robot_controller.v1.StateSnapshot
+import sar.robot_controller.v1.TaskInfo
+import sar.robot_controller.v1.TimeSyncStatus
+import sar.robot_controller.v1.TimeSyncState
 import kotlinx.coroutines.*
 import kotlin.math.hypot
 import timber.log.Timber
@@ -160,6 +181,38 @@ class ControllerState {
     var isRobotCtrlModeChanging by mutableStateOf(false)
         private set
 
+    // 机器人业务主控状态与实时建图数据。
+    var controllerConnectionState by mutableStateOf(RobotControllerConnectionState.DISCONNECTED)
+        private set
+
+    var controllerConnectionMessage by mutableStateOf("")
+        private set
+
+    var controllerSnapshot by mutableStateOf<StateSnapshot?>(null)
+        private set
+
+    var controllerTask by mutableStateOf<TaskInfo?>(null)
+        private set
+
+    var controllerTimeSync by mutableStateOf<TimeSyncStatus?>(null)
+        private set
+
+    var mappingFrame by mutableStateOf<MappingGridFrame?>(null)
+        private set
+
+    var mappingError by mutableStateOf("")
+        private set
+
+    var pendingControllerRequestId by mutableStateOf(0L)
+        private set
+
+    var controllerCommandMessage by mutableStateOf("")
+        private set
+
+    private var pendingManualRequestId = 0L
+    private var pendingManualResponseAccepted = false
+    private var pendingManualStateObserved = false
+
     // 衍生状态
     val isConnected: Boolean
         get() = connectionState == ConnectionState.CONNECTED
@@ -177,10 +230,11 @@ class ControllerState {
 
     fun updateRobotMode(newMode: AppMode) {
         robotMode = newMode
-        // 模式更新时清除切换状态
-        if (isRobotModeChanging) {
-            isRobotModeChanging = false
-        }
+    }
+
+    fun confirmRobotMode(newMode: AppMode) {
+        robotMode = newMode
+        isRobotModeChanging = false
     }
 
     fun updateRobotCtrlMode(newMode: SportMode) {
@@ -328,6 +382,123 @@ class ControllerState {
         isRobotCtrlModeChanging = changing
     }
 
+    fun updateControllerConnection(
+        state: RobotControllerConnectionState,
+        message: String
+    ) {
+        controllerConnectionState = state
+        controllerConnectionMessage = message
+        if (state != RobotControllerConnectionState.CONNECTED) {
+            controllerSnapshot = null
+            controllerTask = null
+            controllerTimeSync = null
+            pendingControllerRequestId = 0L
+            pendingManualRequestId = 0L
+            pendingManualResponseAccepted = false
+            pendingManualStateObserved = false
+            isRobotModeChanging = false
+        }
+    }
+
+    fun updateControllerSnapshot(snapshot: StateSnapshot) {
+        controllerSnapshot = snapshot
+        controllerTask = snapshot.active_task
+        controllerTimeSync = snapshot.time_sync
+        if ((snapshot.operation_mode == OperationMode.OPERATION_MODE_MAPPING_PREPARING ||
+                snapshot.operation_mode == OperationMode.OPERATION_MODE_MAPPING_RUNNING) &&
+            snapshot.mapping_stream?.available != true
+        ) {
+            // 新一轮建图在首帧到达前必须清空上一轮画面，避免旧地图被误认为当前进度。
+            mappingFrame = null
+            mappingError = "等待本轮实时地图首帧"
+        }
+        when (snapshot.control_owner) {
+            ControlOwner.CONTROL_OWNER_REMOTE_MANUAL -> {
+                if (pendingManualRequestId != 0L) {
+                    pendingManualStateObserved = true
+                    completeManualTransitionIfReady()
+                } else {
+                    confirmRobotMode(AppMode.APP_MODE_MANUAL)
+                }
+            }
+            ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO -> {
+                if (pendingManualRequestId == 0L) {
+                    confirmRobotMode(AppMode.APP_MODE_AUTO)
+                } else {
+                    updateRobotMode(AppMode.APP_MODE_AUTO)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    fun updateControllerTask(task: TaskInfo) {
+        controllerTask = task
+    }
+
+    fun updateControllerTimeSync(status: TimeSyncStatus) {
+        controllerTimeSync = status
+    }
+
+    fun updateMappingFrame(frame: MappingGridFrame) {
+        mappingFrame = frame
+        mappingError = ""
+    }
+
+    fun updateMappingError(reason: String) {
+        mappingError = reason
+    }
+
+    fun markControllerRequest(requestId: Long, description: String) {
+        pendingControllerRequestId = requestId
+        controllerCommandMessage = description
+    }
+
+    fun markManualControllerRequest(requestId: Long, description: String) {
+        markControllerRequest(requestId, description)
+        pendingManualRequestId = requestId
+        pendingManualResponseAccepted = false
+        pendingManualStateObserved = false
+        isRobotModeChanging = true
+    }
+
+    fun completeControllerRequest(requestId: Long, response: CommandResponse) {
+        if (pendingControllerRequestId == requestId) {
+            pendingControllerRequestId = 0L
+        }
+        controllerCommandMessage = if (response.stage == CommandStage.COMMAND_STAGE_ACCEPTED) {
+            if (response.task_id.isEmpty()) "命令已接受" else "命令已接受：${response.task_id}"
+        } else {
+            response.error_message.ifEmpty { "命令被主控拒绝：${response.error_code}" }
+        }
+        if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
+            isRobotModeChanging = false
+        }
+        if (requestId == pendingManualRequestId) {
+            if (response.stage == CommandStage.COMMAND_STAGE_ACCEPTED) {
+                pendingManualResponseAccepted = true
+                completeManualTransitionIfReady()
+            } else if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
+                pendingManualRequestId = 0L
+                pendingManualResponseAccepted = false
+                pendingManualStateObserved = false
+            }
+        }
+    }
+
+    fun isActionAllowed(action: ActionCode): Boolean {
+        return controllerSnapshot?.allowed_actions?.firstOrNull { it.action == action }?.allowed == true
+    }
+
+    private fun completeManualTransitionIfReady() {
+        if (!pendingManualResponseAccepted || !pendingManualStateObserved) return
+        pendingManualRequestId = 0L
+        pendingManualResponseAccepted = false
+        pendingManualStateObserved = false
+        pendingControllerRequestId = 0L
+        confirmRobotMode(AppMode.APP_MODE_MANUAL)
+    }
+
     fun setSpeedLevel(level: SpeedLevel) {
         settings = settings.copy(speedLevel = level)
     }
@@ -399,6 +570,11 @@ interface Controller {
     fun takeControl()
     fun releaseControl()
     fun setMode(mode: AppMode)
+    fun startMapping(draftName: String)
+    fun finishMapping()
+    fun saveMap(displayName: String)
+    fun discardMap()
+    fun requestLatestMappingMap()
     fun setControlMode(controlMode: SportMode)
     fun setSpeedLevel(level: SpeedLevel)
     fun performAction(action: RobotAction)
@@ -424,6 +600,7 @@ interface Controller {
  */
 object RobotControllerImpl : Controller {
     private val zmqClient = NewZmqClient()
+    private val controllerClient = RobotControllerClient()
     private lateinit var settingsManager: SettingsManager
 
     // 协程相关
@@ -474,6 +651,61 @@ object RobotControllerImpl : Controller {
             zmqClient.setConnectionStateCallback {
                 handleConnectionState(it)
             }
+            controllerClient.setListener(object : RobotControllerClientListener {
+                override fun onConnectionState(
+                    state: RobotControllerConnectionState,
+                    message: String
+                ) {
+                    scope.launch {
+                        settingsState.updateControllerConnection(state, message)
+                        if (state == RobotControllerConnectionState.CONNECTED &&
+                            settingsState.connectionState == ConnectionState.CONNECTED
+                        ) {
+                            requestManualTakeoverFromController("连接后请求人工控制")
+                        } else if (
+                            (state == RobotControllerConnectionState.AUTHENTICATION_FAILED ||
+                                state == RobotControllerConnectionState.CONNECTION_FAILED) &&
+                            settingsState.connectionState == ConnectionState.CONNECTED
+                        ) {
+                            requestDriverManualFallback("主控不可用，进入 MANUAL 安全降级")
+                        }
+                    }
+                }
+
+                override fun onSnapshot(snapshot: StateSnapshot) {
+                    scope.launch { settingsState.updateControllerSnapshot(snapshot) }
+                }
+
+                override fun onTask(task: TaskInfo) {
+                    scope.launch { settingsState.updateControllerTask(task) }
+                }
+
+                override fun onCommandResponse(requestId: Long, response: CommandResponse) {
+                    scope.launch {
+                        settingsState.completeControllerRequest(requestId, response)
+                        if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
+                            Timber.w(
+                                "[Controller] 主控命令被拒绝: request=%d, code=%s, reason=%s",
+                                requestId,
+                                response.error_code,
+                                response.error_message
+                            )
+                        }
+                    }
+                }
+
+                override fun onTimeSyncStatus(status: TimeSyncStatus) {
+                    scope.launch { settingsState.updateControllerTimeSync(status) }
+                }
+
+                override fun onMappingFrame(frame: MappingGridFrame) {
+                    scope.launch { settingsState.updateMappingFrame(frame) }
+                }
+
+                override fun onMappingError(reason: String) {
+                    scope.launch { settingsState.updateMappingError(reason) }
+                }
+            })
             initialized = true
             loadSettings()
             Timber.i("[Controller] 进程级控制器已初始化")
@@ -499,7 +731,9 @@ object RobotControllerImpl : Controller {
         when (message.message_type) {
             MessageType.MESSAGE_TYPE_HEARTBEAT -> {
                 message.heartbeat?.let { heartbeat ->
-                    settingsState.updateRobotMode(heartbeat.app_mode)
+                    if (settingsState.controllerConnectionState != RobotControllerConnectionState.CONNECTED) {
+                        settingsState.confirmRobotMode(heartbeat.app_mode)
+                    }
                     settingsState.updateDriverConnectionTelemetry(
                         connectionState = heartbeat.connection_state,
                         robotConnected = heartbeat.robot_connected
@@ -522,7 +756,9 @@ object RobotControllerImpl : Controller {
             }
             MessageType.MESSAGE_TYPE_APP_MODE_STATE -> {
                 message.app_mode_state?.let { appModeState ->
-                    settingsState.updateRobotMode(appModeState.app_mode)
+                    if (settingsState.controllerConnectionState != RobotControllerConnectionState.CONNECTED) {
+                        settingsState.confirmRobotMode(appModeState.app_mode)
+                    }
                     Timber.d("[Controller] 收到当前 AppMode: ${appModeState.app_mode}")
                 }
             }
@@ -535,7 +771,7 @@ object RobotControllerImpl : Controller {
                     settingsState.updateRobotAuxiliaryState(robotState)
                     settingsState.updateControlOwnershipFromSource(robotState.control_source)
                     if (wasReleasing && settingsState.controlOwnershipState == ControlOwnershipState.AVAILABLE) {
-                        requestAutoModeAfterRelease()
+                        settingsState.updateLastCommand("控制权", "已释放，保持 MANUAL")
                     }
                     Timber.d(
                         "[Controller] 收到机器人状态，运动模式: %s，控制来源: %s",
@@ -698,22 +934,11 @@ object RobotControllerImpl : Controller {
 
     private fun markControlReleased(message: String) {
         settingsState.updateControlOwnership(ControlOwnershipState.AVAILABLE, message)
-        requestAutoModeAfterRelease()
-    }
-
-    private fun requestAutoModeAfterRelease() {
-        if (isEngineeringMock()) {
-            settingsState.updateRobotMode(AppMode.APP_MODE_AUTO)
-            return
-        }
-        if (settingsState.isConnected) {
-            zmqClient.setMode(AppMode.APP_MODE_AUTO)
-            Timber.i("[Controller] 释放控制权后请求切回 Auto AppMode")
-        }
+        settingsState.updateLastCommand("控制权", "已释放，底盘保持 MANUAL")
     }
 
     private fun applyMockInitialCommands() {
-        settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
+        settingsState.confirmRobotMode(AppMode.APP_MODE_MANUAL)
         settingsState.setSpeedLevel(SpeedLevel.SLOW)
         if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
             settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
@@ -722,13 +947,51 @@ object RobotControllerImpl : Controller {
     }
 
     private fun sendInitialCommandsAfterTake() {
-        zmqClient.setMode(AppMode.APP_MODE_MANUAL)
         settingsState.setSpeedLevel(SpeedLevel.SLOW)
         zmqClient.setSpeedLevel(SpeedLevel.SLOW.protocolSpeedLevel)
         if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
             zmqClient.setControlMode(SportMode.SPORT_MODE_GENERAL)
         }
-        Timber.i("[Controller] 接管后默认设置低速")
+        when (settingsState.controllerConnectionState) {
+            RobotControllerConnectionState.CONNECTED -> {
+                requestManualTakeoverFromController("driver 接管后请求人工控制")
+            }
+            RobotControllerConnectionState.CONNECTING -> {
+                Timber.i("[Controller] 等待主控握手后再请求人工控制，避免遗留导航目标")
+            }
+            else -> requestDriverManualFallback("主控离线，driver 接管后进入 MANUAL 安全降级")
+        }
+        Timber.i("[Controller] 接管后默认设置低速，模式切换由主控闭环确认")
+    }
+
+    private fun requestManualTakeoverFromController(description: String) {
+        if (settingsState.controllerSnapshot?.control_owner ==
+            ControlOwner.CONTROL_OWNER_REMOTE_MANUAL
+        ) {
+            settingsState.confirmRobotMode(AppMode.APP_MODE_MANUAL)
+            Timber.i("[Controller] 主控已确认人工控制，无需重复接管")
+            return
+        }
+        val requestId = controllerClient.manualTakeover()
+        if (requestId == 0L) {
+            settingsState.updateRobotModeChangingState(false)
+            Timber.w("[Controller] 无法向主控发送人工接管请求")
+            return
+        }
+        settingsState.markManualControllerRequest(requestId, description)
+        Timber.i("[Controller] 已发送人工接管请求: request=%d", requestId)
+    }
+
+    private fun requestDriverManualFallback(description: String) {
+        if (zmqClient.setMode(AppMode.APP_MODE_MANUAL)) {
+            settingsState.updateRobotModeChangingState(true)
+            settingsState.updateLastCommand("AppMode 安全降级", "MANUAL")
+            settingsState.updateControllerConnection(
+                settingsState.controllerConnectionState,
+                description
+            )
+            Timber.w("[Controller] %s，仅允许 MANUAL，不允许直接 AUTO", description)
+        }
     }
 
     /**
@@ -793,8 +1056,13 @@ object RobotControllerImpl : Controller {
 
                 // 设置连接地址
                 zmqClient.setEndpoint(endpoint)
+                controllerClient.configure(
+                    endpoint = "tcp://${settingsState.settings.zmqIp}:${settingsState.settings.controllerPort}",
+                    token = settingsState.settings.controllerToken
+                )
 
                 // 进行连接
+                controllerClient.connect()
                 zmqClient.connect()
 
 
@@ -820,7 +1088,7 @@ object RobotControllerImpl : Controller {
                 return@launch
             }
 
-            settingsState.updateRobotMode(AppMode.APP_MODE_MANUAL)
+            settingsState.confirmRobotMode(AppMode.APP_MODE_MANUAL)
             settingsState.updateRobotCtrlMode(SportMode.SPORT_MODE_GENERAL)
             settingsState.updateHeadDirection(HeadDirection.HEAD_DIRECTION_HEAD)
             settingsState.updateMotionStatus(MotionStatus.MOTION_STATUS_STAND_UP)
@@ -831,6 +1099,11 @@ object RobotControllerImpl : Controller {
                 robotConnected = true
             )
             settingsState.updateConnectionState(ConnectionState.CONNECTED)
+            settingsState.updateControllerConnection(
+                RobotControllerConnectionState.CONNECTED,
+                "工程 Mock 主控已连接"
+            )
+            applyMockControllerState()
             settingsState.updateLastCommand("Mock", "连接")
             startMockStateLoop()
             startRemoteInput()
@@ -849,6 +1122,7 @@ object RobotControllerImpl : Controller {
         stopHeadControl()
         stopRemoteInput()
         stopMockStateLoop()
+        controllerClient.disconnect()
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
@@ -862,6 +1136,7 @@ object RobotControllerImpl : Controller {
         connectJob?.cancel()
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
+            controllerClient.disconnect()
             zmqClient.disconnect()
             stopRemoteInput()
             stopMockStateLoop()
@@ -955,41 +1230,94 @@ object RobotControllerImpl : Controller {
             return
         }
 
-        if (!settingsState.hasControl) {
-            Timber.w("[Controller] 未接管控制权，无法设置模式")
-            return
-        }
-
         if (settingsState.isRobotModeChanging) {
             Timber.w("[Controller] 正在切换模式中，请等待")
             return
         }
 
-        settingsState.updateRobotModeChangingState(true)
-
-        if (isEngineeringMock()) {
-            settingsState.updateRobotMode(mode)
-            settingsState.updateLastCommand("AppMode", mode.name)
-            Timber.i("[Controller] 工程 Mock 更新 AppMode: %s", mode)
+        if (mode == AppMode.APP_MODE_AUTO) {
+            settingsState.updateLastCommand("自动控制", "由导航任务接管，禁止空切 AUTO")
+            Timber.w("[Controller] 拒绝脱离导航任务直接切换 AUTO")
             return
         }
 
-        scope.launch {
-            try {
-                val success = zmqClient.setMode(mode)
-                if (success) {
-                    settingsState.updateLastCommand("AppMode", mode.name)
-                    Timber.i("[Controller] 模式设置请求已发送: $mode")
-                    // 实际模式更新由消息回调处理
-                } else {
-                    settingsState.updateRobotModeChangingState(false)
-                    Timber.e("[Controller] 模式设置失败: $mode")
-                }
-            } catch (e: Exception) {
-                settingsState.updateRobotModeChangingState(false)
-                Timber.e(e, "[Controller] 设置模式异常: $mode")
-            }
+        if (isEngineeringMock()) {
+            applyMockManualTakeover()
+            return
         }
+
+        if (settingsState.controllerConnectionState == RobotControllerConnectionState.CONNECTED) {
+            requestManualTakeoverFromController("操作者请求人工接管")
+        } else {
+            requestDriverManualFallback("主控离线，操作者请求 MANUAL 安全降级")
+        }
+    }
+
+    override fun startMapping(draftName: String) {
+        submitMappingCommand(
+            action = ActionCode.ACTION_CODE_START_MAPPING,
+            description = "开始建图"
+        ) { controllerClient.startMapping(draftName) }
+    }
+
+    override fun finishMapping() {
+        submitMappingCommand(
+            action = ActionCode.ACTION_CODE_FINISH_MAPPING,
+            description = "结束建图"
+        ) { controllerClient.finishMapping() }
+    }
+
+    override fun saveMap(displayName: String) {
+        submitMappingCommand(
+            action = ActionCode.ACTION_CODE_SAVE_MAP,
+            description = "保存地图"
+        ) { controllerClient.saveMap(displayName) }
+    }
+
+    override fun discardMap() {
+        submitMappingCommand(
+            action = ActionCode.ACTION_CODE_DISCARD_MAP,
+            description = "放弃地图"
+        ) { controllerClient.discardMap() }
+    }
+
+    override fun requestLatestMappingMap() {
+        if (!isEngineeringMock() && !controllerClient.requestLatestMap()) {
+            Timber.w("[Controller] 当前无法请求最新实时地图")
+        }
+    }
+
+    private fun submitMappingCommand(
+        action: ActionCode,
+        description: String,
+        send: () -> Long
+    ) {
+        ensureInitialized()
+        if (isEngineeringMock()) {
+            applyMockMappingCommand(action)
+            return
+        }
+        if (settingsState.controllerConnectionState != RobotControllerConnectionState.CONNECTED) {
+            settingsState.updateMappingError("机器人主控未连接，无法$description")
+            return
+        }
+        if (!settingsState.isActionAllowed(action)) {
+            val reasons = settingsState.controllerSnapshot?.allowed_actions
+                ?.firstOrNull { it.action == action }
+                ?.blocking_reasons
+                ?.joinToString("、")
+                .orEmpty()
+            settingsState.updateMappingError(
+                if (reasons.isEmpty()) "主控当前不允许$description" else "$description 被阻止：$reasons"
+            )
+            return
+        }
+        val requestId = send()
+        if (requestId == 0L) {
+            settingsState.updateMappingError("$description 请求未进入主控发送队列")
+            return
+        }
+        settingsState.markControllerRequest(requestId, description)
     }
 
     /**
@@ -1270,7 +1598,12 @@ object RobotControllerImpl : Controller {
             val settings = settingsManager.loadSettings()
             settingsState.updateSettings(settings)
             rebuildRemoteInputSource(settings)
-            Timber.i("[Controller] 设置已从存储中加载: $settings")
+            Timber.i(
+                "[Controller] 设置已从存储中加载: IP=%s, driverPort=%d, controllerPort=%d",
+                settings.zmqIp,
+                settings.zmqPort,
+                settings.controllerPort
+            )
         } catch (e: Exception) {
             Timber.e(e, "[Controller] 加载设置失败，使用默认设置")
         }
@@ -1482,6 +1815,130 @@ object RobotControllerImpl : Controller {
         }
     }
 
+    private fun applyMockManualTakeover() {
+        val current = settingsState.controllerSnapshot ?: mockSnapshot(OperationMode.OPERATION_MODE_STANDBY)
+        settingsState.updateRobotModeChangingState(true)
+        settingsState.updateControllerSnapshot(
+            current.copy(
+                state_revision = current.state_revision + 1L,
+                control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
+                recent_transition = "mock_manual_takeover"
+            )
+        )
+        settingsState.updateLastCommand("人工接管", "工程 Mock 已确认")
+    }
+
+    private fun applyMockControllerState() {
+        settingsState.updateControllerSnapshot(mockSnapshot(OperationMode.OPERATION_MODE_STANDBY))
+        settingsState.updateControllerTimeSync(
+            TimeSyncStatus(
+                state = TimeSyncState.TIME_SYNC_STATE_APPLIED,
+                message = "工程 Mock 对时完成",
+                system_clock_applied = true,
+                ptp_recovery_requested = true,
+                ptp_recovery_succeeded = true
+            )
+        )
+    }
+
+    private fun applyMockMappingCommand(action: ActionCode) {
+        val current = settingsState.controllerSnapshot ?: mockSnapshot(OperationMode.OPERATION_MODE_STANDBY)
+        val nextMode = when (action) {
+            ActionCode.ACTION_CODE_START_MAPPING -> OperationMode.OPERATION_MODE_MAPPING_RUNNING
+            ActionCode.ACTION_CODE_FINISH_MAPPING -> OperationMode.OPERATION_MODE_MAPPING_REVIEW
+            ActionCode.ACTION_CODE_SAVE_MAP,
+            ActionCode.ACTION_CODE_DISCARD_MAP -> OperationMode.OPERATION_MODE_STANDBY
+            else -> current.operation_mode
+        }
+        settingsState.updateControllerSnapshot(mockSnapshot(nextMode, current.state_revision + 1L))
+        settingsState.updateLastCommand("建图", action.name)
+        if (nextMode == OperationMode.OPERATION_MODE_MAPPING_RUNNING) {
+            settingsState.updateMappingFrame(mockMappingFrame())
+        }
+    }
+
+    private fun mockSnapshot(
+        mode: OperationMode,
+        revision: Long = 1L
+    ): StateSnapshot {
+        val mappingVisible = mode == OperationMode.OPERATION_MODE_MAPPING_RUNNING ||
+            mode == OperationMode.OPERATION_MODE_MAPPING_REVIEW ||
+            mode == OperationMode.OPERATION_MODE_MAPPING_SAVING
+        val allowed = when (mode) {
+            OperationMode.OPERATION_MODE_STANDBY -> setOf(ActionCode.ACTION_CODE_START_MAPPING)
+            OperationMode.OPERATION_MODE_MAPPING_RUNNING -> setOf(ActionCode.ACTION_CODE_FINISH_MAPPING)
+            OperationMode.OPERATION_MODE_MAPPING_REVIEW -> setOf(
+                ActionCode.ACTION_CODE_SAVE_MAP,
+                ActionCode.ACTION_CODE_DISCARD_MAP
+            )
+            else -> emptySet()
+        }
+        return StateSnapshot(
+            state_revision = revision,
+            operation_mode = mode,
+            control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
+            health_state = HealthState.HEALTH_STATE_READY,
+            robot_pose = if (mappingVisible) Pose2D(x = 1.8, y = 1.4, yaw = 0.45) else null,
+            robot_pose_frame_id = if (mappingVisible) "map" else "",
+            robot_pose_source_time_ns = if (mappingVisible) {
+                System.currentTimeMillis() * 1_000_000L
+            } else {
+                0L
+            },
+            robot_pose_source = if (mappingVisible) {
+                PoseSource.POSE_SOURCE_MAPPING_ODOMETRY
+            } else {
+                PoseSource.POSE_SOURCE_UNSPECIFIED
+            },
+            mapping_stream = MappingStreamStatus(
+                available = mappingVisible,
+                latest_frame_sequence = if (mode == OperationMode.OPERATION_MODE_STANDBY) 0L else 1L,
+                latest_source_time_ns = System.currentTimeMillis() * 1_000_000L
+            ),
+            allowed_actions = ActionCode.entries
+                .filter { it != ActionCode.ACTION_CODE_UNSPECIFIED }
+                .map { action -> AllowedAction(action = action, allowed = action in allowed) },
+            time_sync = TimeSyncStatus(
+                state = TimeSyncState.TIME_SYNC_STATE_APPLIED,
+                message = "工程 Mock 对时完成",
+                system_clock_applied = true,
+                ptp_recovery_requested = true,
+                ptp_recovery_succeeded = true
+            ),
+            recent_transition = "mock_${mode.name.lowercase()}"
+        )
+    }
+
+    private fun mockMappingFrame(sequence: Long = 1L): MappingGridFrame {
+        val width = 160
+        val height = 100
+        val cells = ByteArray(width * height) { -1 }
+        for (y in 8 until height - 8) {
+            for (x in 8 until width - 8) {
+                val wall = x == 8 || y == 8 || x == width - 9 || y == height - 9 ||
+                    (x in 72..75 && y in 25..82)
+                cells[y * width + x] = if (wall) 100 else 0
+            }
+        }
+        return MappingGridFrame(
+            metadata = MappingGridMetadataModel(
+                frameSequence = sequence,
+                frameId = "map",
+                sourceTimeNs = System.currentTimeMillis() * 1_000_000L,
+                resolutionM = 0.05,
+                widthCells = width,
+                heightCells = height,
+                origin = MappingPose(-1.0, -1.0, 0.0),
+                encodingValue = 1,
+                uncompressedSizeBytes = cells.size.toLong(),
+                compressedSizeBytes = 1L,
+                sha256 = "0".repeat(64)
+            ),
+            cells = cells,
+            receivedAtMs = MappingClock.elapsedRealtimeMs()
+        )
+    }
+
     private fun startMockStateLoop() {
         stopMockStateLoop()
         mockStateJob = scope.launch {
@@ -1498,6 +1955,28 @@ object RobotControllerImpl : Controller {
                         hypot(currentMovementIntent.forward.toDouble(), currentMovementIntent.strafeRight.toDouble())
                     }
                 )
+                val snapshot = settingsState.controllerSnapshot
+                if (snapshot?.operation_mode == OperationMode.OPERATION_MODE_MAPPING_RUNNING) {
+                    val nextSequence = (settingsState.mappingFrame?.metadata?.frameSequence ?: 0L) + 1L
+                    val phase = (nextSequence % 40L) / 40.0 * Math.PI * 2.0
+                    val nowNs = System.currentTimeMillis() * 1_000_000L
+                    settingsState.updateMappingFrame(mockMappingFrame(nextSequence))
+                    settingsState.updateControllerSnapshot(
+                        snapshot.copy(
+                            state_revision = snapshot.state_revision + 1L,
+                            robot_pose = Pose2D(
+                                x = 1.8 + kotlin.math.cos(phase) * 0.7,
+                                y = 1.4 + kotlin.math.sin(phase) * 0.5,
+                                yaw = phase + Math.PI / 2.0
+                            ),
+                            robot_pose_source_time_ns = nowNs,
+                            mapping_stream = snapshot.mapping_stream?.copy(
+                                latest_frame_sequence = nextSequence,
+                                latest_source_time_ns = nowNs
+                            )
+                        )
+                    )
+                }
                 delay(1000L)
             }
         }
@@ -1642,6 +2121,11 @@ object RobotControllerImpl : Controller {
 
         if (!settingsState.hasControl) {
             Timber.w("[Controller] 未接管控制权，无法发送%s", commandName)
+            return false
+        }
+
+        if (settingsState.robotMode != AppMode.APP_MODE_MANUAL) {
+            Timber.w("[Controller] 当前由自动导航控制，需先人工接管才能发送%s", commandName)
             return false
         }
 

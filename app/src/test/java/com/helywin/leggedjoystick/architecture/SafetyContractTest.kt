@@ -123,7 +123,7 @@ class SafetyContractTest {
     }
 
     @Test
-    fun mainScreenPlacesAutoManualToggleBeforeConnectionButton() {
+    fun mainScreenPlacesAuthoritativeModeAndManualTakeoverBeforeConnectionButton() {
         val projectRoot = locateProjectRoot()
         val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
         val topHud = mainScreen.substringAfter("private fun TopHud")
@@ -132,20 +132,30 @@ class SafetyContractTest {
         val modeToggleIndex = topHud.indexOf("ControlModeToggle(")
         val connectionButtonIndex = topHud.indexOf("ConnectionButton(")
         assertTrue(
-            "主控页必须把自动/手动切换按钮放在连接按钮左侧",
+            "主控页必须把权威模式和人工接管入口放在连接按钮左侧",
             modeToggleIndex >= 0 && connectionButtonIndex > modeToggleIndex
         )
         assertTrue(
-            "自动/手动切换必须同时受连接状态和模式请求状态保护",
-            mainScreen.contains("isEnabled && !isChanging") &&
-                mainScreen.contains("modeEnabled = commandEnabled")
+            "人工接管必须同时受连接状态、AUTO 权威状态和模式请求状态保护",
+            mainScreen.contains("isEnabled && currentMode == AppMode.APP_MODE_AUTO && !isChanging") &&
+                mainScreen.contains("modeEnabled = takeoverEnabled") &&
+                mainScreen.contains("commandEnabled = takeoverEnabled && appMode == AppMode.APP_MODE_MANUAL")
         )
         val modeToggle = mainScreen.substringAfter("private fun ControlModeToggle")
             .substringBefore("private fun ConnectionButton")
         assertTrue(
-            "自动/手动切换按钮必须直接显示当前模式文字，而不是仅使用机器人图标",
-            modeToggle.contains("text = currentMode.displayName") &&
+            "模式按钮必须直接显示权威状态，且只能发送 MANUAL 人工接管",
+            modeToggle.contains("onModeClick(AppMode.APP_MODE_MANUAL)") &&
+                modeToggle.contains("自动·接管") &&
+                modeToggle.contains("人工模式") &&
                 !modeToggle.contains("genisdog_icon_robot")
+        )
+        val controller = Files.readString(
+            projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt")
+        )
+        assertTrue(
+            "App 不得绕过导航任务直接向 driver 发送 AUTO",
+            !controller.contains("zmqClient.setMode(AppMode.APP_MODE_AUTO)")
         )
     }
 

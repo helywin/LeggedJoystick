@@ -8,6 +8,7 @@ enum DeviceType {
     DEVICE_TYPE_SERVER = 1;        // 服务端
     DEVICE_TYPE_NAVIGATION = 2;    // 导航端
     DEVICE_TYPE_REMOTE_CONTROLLER = 3;  // 遥控器端
+    DEVICE_TYPE_ROBOT_CONTROLLER = 4;  // 机器人主控端
 }
 
 // 消息类型枚举

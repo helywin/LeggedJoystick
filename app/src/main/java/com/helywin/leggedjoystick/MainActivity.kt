@@ -269,6 +269,11 @@ fun LeggedJoystickAppPreview() {
             override fun takeControl() {}
             override fun releaseControl() {}
             override fun setMode(mode: AppMode) {}
+            override fun startMapping(draftName: String) {}
+            override fun finishMapping() {}
+            override fun saveMap(displayName: String) {}
+            override fun discardMap() {}
+            override fun requestLatestMappingMap() {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: com.helywin.leggedjoystick.controller.RobotAction) {}
