@@ -10,6 +10,11 @@
 package com.helywin.leggedjoystick.controller
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import androidx.compose.runtime.*
 import com.helywin.leggedjoystick.data.AppSettings
 import com.helywin.leggedjoystick.data.ConnectionState
@@ -53,6 +58,17 @@ import com.helywin.leggedjoystick.mapping.MappingGridFrame
 import com.helywin.leggedjoystick.mapping.MappingGridMetadataModel
 import com.helywin.leggedjoystick.mapping.MappingPose
 import com.helywin.leggedjoystick.mapping.MappingClock
+import com.helywin.leggedjoystick.mapping.MapControlOwner
+import com.helywin.leggedjoystick.mapping.MapIdentityModel
+import com.helywin.leggedjoystick.mapping.MapLocalizationStatus
+import com.helywin.leggedjoystick.mapping.MapNavigationEvent
+import com.helywin.leggedjoystick.mapping.MapNavigationReducer
+import com.helywin.leggedjoystick.mapping.MapNavigationState
+import com.helywin.leggedjoystick.mapping.MapPreviewCache
+import com.helywin.leggedjoystick.mapping.MapPreviewData
+import com.helywin.leggedjoystick.mapping.MapPreviewRequestKey
+import com.helywin.leggedjoystick.mapping.SavedMapCoordinates
+import com.helywin.leggedjoystick.mapping.SavedMapDescriptor
 import legged_driver.AppMode
 import legged_driver.CommandCode
 import legged_driver.CommandResultStage
@@ -71,15 +87,22 @@ import sar.robot_controller.v1.CommandResponse
 import sar.robot_controller.v1.CommandStage
 import sar.robot_controller.v1.ControlOwner
 import sar.robot_controller.v1.HealthState
+import sar.robot_controller.v1.LocalizationState
+import sar.robot_controller.v1.MapIdentity
+import sar.robot_controller.v1.MapInfo
 import sar.robot_controller.v1.MappingStreamStatus
 import sar.robot_controller.v1.OperationMode
+import sar.robot_controller.v1.PathPreview
 import sar.robot_controller.v1.Pose2D
 import sar.robot_controller.v1.PoseSource
 import sar.robot_controller.v1.StateSnapshot
 import sar.robot_controller.v1.TaskInfo
+import sar.robot_controller.v1.TaskType
 import sar.robot_controller.v1.TimeSyncStatus
 import sar.robot_controller.v1.TimeSyncState
 import kotlinx.coroutines.*
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import kotlin.math.hypot
 import timber.log.Timber
 import kotlin.math.roundToInt
@@ -203,6 +226,15 @@ class ControllerState {
     var mappingError by mutableStateOf("")
         private set
 
+    var mapNavigationState by mutableStateOf(MapNavigationState())
+        private set
+
+    var savedMapPreview by mutableStateOf<MapPreviewData?>(null)
+        private set
+
+    var mapNavigationError by mutableStateOf("")
+        private set
+
     var pendingControllerRequestId by mutableStateOf(0L)
         private set
 
@@ -212,6 +244,7 @@ class ControllerState {
     private var pendingManualRequestId = 0L
     private var pendingManualResponseAccepted = false
     private var pendingManualStateObserved = false
+    private var pendingPlanRequestId = 0L
 
     // 衍生状态
     val isConnected: Boolean
@@ -404,6 +437,22 @@ class ControllerState {
         controllerSnapshot = snapshot
         controllerTask = snapshot.active_task
         controllerTimeSync = snapshot.time_sync
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.AuthorityUpdated(
+                generation = mapNavigationState.sessionGeneration,
+                currentMap = snapshot.current_map?.identity?.toIdentityModel(),
+                loadingMap = snapshot.active_task
+                    ?.takeIf { it.type == TaskType.TASK_TYPE_LOAD_MAP }
+                    ?.map
+                    ?.toIdentityModel(),
+                localizationRuntimeActive = snapshot.operation_mode.isLocalizationRuntimeActive(),
+                localizationStatus = snapshot.localization_state.toMapLocalizationStatus(),
+                controlOwner = snapshot.control_owner.toMapControlOwner(),
+                activeTaskId = snapshot.active_task?.task_id?.ifEmpty { null },
+                robotPose = snapshot.robot_pose?.let { MappingPose(it.x, it.y, it.yaw) }
+            )
+        )
         if ((snapshot.operation_mode == OperationMode.OPERATION_MODE_MAPPING_PREPARING ||
                 snapshot.operation_mode == OperationMode.OPERATION_MODE_MAPPING_RUNNING) &&
             snapshot.mapping_stream?.available != true
@@ -449,9 +498,88 @@ class ControllerState {
         mappingError = reason
     }
 
+    fun updateMapSession(generation: Long) {
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.SessionChanged(generation)
+        )
+        savedMapPreview = null
+        mapNavigationError = ""
+        pendingPlanRequestId = 0L
+    }
+
+    fun updateMapList(maps: List<MapInfo>) {
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.MapsReceived(
+                generation = mapNavigationState.sessionGeneration,
+                maps = maps.mapNotNull { it.toSavedMapDescriptor() }
+            )
+        )
+        mapNavigationError = ""
+        if (savedMapPreview?.key?.map != mapNavigationState.selectedMap) {
+            savedMapPreview = null
+        }
+    }
+
+    fun updateSavedMapPreview(preview: MapPreviewData) {
+        if (preview.key.map == mapNavigationState.selectedMap) {
+            savedMapPreview = preview
+            mapNavigationError = ""
+        }
+    }
+
+    fun updatePathPreview(preview: PathPreview) {
+        val pending = mapNavigationState.pendingPlan ?: return
+        val identity = preview.map?.toIdentityModel() ?: return
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.PathReceived(
+                generation = mapNavigationState.sessionGeneration,
+                taskId = preview.task_id,
+                map = identity,
+                selectionGeneration = pending.selectionGeneration,
+                points = preview.points.map { MappingPose(it.x, it.y, it.yaw) },
+                lengthM = preview.length_m
+            )
+        )
+    }
+
+    fun updateMapNavigationError(reason: String) {
+        mapNavigationError = reason
+    }
+
+    fun selectSavedMap(map: MapIdentityModel) {
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.SelectMap(map)
+        )
+        savedMapPreview = null
+        mapNavigationError = ""
+    }
+
+    fun editInitialPose(pose: MappingPose?) {
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.EditInitialPose(pose)
+        )
+    }
+
+    fun editNavigationTarget(pose: MappingPose?) {
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.EditTarget(pose)
+        )
+    }
+
     fun markControllerRequest(requestId: Long, description: String) {
         pendingControllerRequestId = requestId
         controllerCommandMessage = description
+    }
+
+    fun markPlanControllerRequest(requestId: Long, description: String) {
+        markControllerRequest(requestId, description)
+        pendingPlanRequestId = requestId
     }
 
     fun markManualControllerRequest(requestId: Long, description: String) {
@@ -474,6 +602,17 @@ class ControllerState {
         if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
             isRobotModeChanging = false
         }
+        if (requestId == pendingPlanRequestId) {
+            if (response.stage == CommandStage.COMMAND_STAGE_ACCEPTED &&
+                response.task_id.isNotBlank()
+            ) {
+                mapNavigationState = MapNavigationReducer.reduce(
+                    mapNavigationState,
+                    MapNavigationEvent.PlanRequested(response.task_id)
+                )
+            }
+            pendingPlanRequestId = 0L
+        }
         if (requestId == pendingManualRequestId) {
             if (response.stage == CommandStage.COMMAND_STAGE_ACCEPTED) {
                 pendingManualResponseAccepted = true
@@ -488,6 +627,52 @@ class ControllerState {
 
     fun isActionAllowed(action: ActionCode): Boolean {
         return controllerSnapshot?.allowed_actions?.firstOrNull { it.action == action }?.allowed == true
+    }
+
+    private fun MapInfo.toSavedMapDescriptor(): SavedMapDescriptor? {
+        val mapIdentity = identity?.toIdentityModel() ?: return null
+        if (display_name.isBlank() || preview_hash.isBlank() ||
+            !resolution_m.isFinite() || resolution_m <= 0.0 ||
+            width_cells <= 0 || height_cells <= 0 ||
+            !origin_x_m.isFinite() || !origin_y_m.isFinite() ||
+            !origin_yaw_rad.isFinite()
+        ) {
+            return null
+        }
+        return SavedMapDescriptor(
+            identity = mapIdentity,
+            displayName = display_name,
+            previewHash = preview_hash,
+            coordinates = SavedMapCoordinates(
+                resolutionM = resolution_m,
+                widthCells = width_cells,
+                heightCells = height_cells,
+                origin = MappingPose(origin_x_m, origin_y_m, origin_yaw_rad)
+            ),
+            contentHash = content_hash,
+            createdUtcNs = created_utc_ns
+        )
+    }
+
+    private fun sar.robot_controller.v1.MapIdentity.toIdentityModel(): MapIdentityModel? {
+        return if (map_id.isBlank() || revision <= 0L) null else MapIdentityModel(map_id, revision)
+    }
+
+    private fun LocalizationState.toMapLocalizationStatus(): MapLocalizationStatus {
+        return when (this) {
+            LocalizationState.LOCALIZATION_STATE_INITIALIZING -> MapLocalizationStatus.INITIALIZING
+            LocalizationState.LOCALIZATION_STATE_TRACKING -> MapLocalizationStatus.TRACKING
+            LocalizationState.LOCALIZATION_STATE_LOST -> MapLocalizationStatus.LOST
+            else -> MapLocalizationStatus.UNKNOWN
+        }
+    }
+
+    private fun ControlOwner.toMapControlOwner(): MapControlOwner {
+        return when (this) {
+            ControlOwner.CONTROL_OWNER_REMOTE_MANUAL -> MapControlOwner.REMOTE_MANUAL
+            ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO -> MapControlOwner.NAVIGATION_AUTO
+            else -> MapControlOwner.DISABLED
+        }
     }
 
     private fun completeManualTransitionIfReady() {
@@ -550,6 +735,13 @@ class ControllerState {
     }
 }
 
+private fun OperationMode.isLocalizationRuntimeActive(): Boolean {
+    return this == OperationMode.OPERATION_MODE_LOCALIZATION_LOADING ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_LOST
+}
+
 /**
  * 全局状态实例
  */
@@ -575,6 +767,17 @@ interface Controller {
     fun saveMap(displayName: String)
     fun discardMap()
     fun requestLatestMappingMap()
+    fun refreshSavedMaps()
+    fun selectSavedMap(mapId: String, revision: Long)
+    fun requestSavedMapPreview(mapId: String, revision: Long)
+    fun switchSavedMap(mapId: String, revision: Long)
+    fun stopLocalizationRuntime()
+    fun editInitialPose(pose: MappingPose?)
+    fun submitInitialPose()
+    fun editNavigationTarget(pose: MappingPose?)
+    fun requestNavigationPreview()
+    fun startNavigation()
+    fun cancelNavigation()
     fun setControlMode(controlMode: SportMode)
     fun setSpeedLevel(level: SpeedLevel)
     fun performAction(action: RobotAction)
@@ -599,9 +802,15 @@ interface Controller {
  * Activity 只负责呈现 UI 和转发生命周期事件，ZMQ、输入源和状态缓存都归属于本对象。
  */
 object RobotControllerImpl : Controller {
+    private data class MockSavedMap(
+        val info: MapInfo,
+        val preview: MapPreviewData
+    )
+
     private val zmqClient = NewZmqClient()
     private val controllerClient = RobotControllerClient()
     private lateinit var settingsManager: SettingsManager
+    private var mapPreviewCache: MapPreviewCache? = null
 
     // 协程相关
     private var supervisorJob = SupervisorJob()
@@ -610,6 +819,8 @@ object RobotControllerImpl : Controller {
     // 连接任务
     private var connectJob: Job? = null
     private var mockStateJob: Job? = null
+    private var mockSavedMap: MockSavedMap? = null
+    private var mockRequestSequence = 0L
 
     private var remoteInputSource: RemoteInputSource = buildRemoteInputSource(settingsState.settings)
     private var applicationContext: Context? = null
@@ -644,6 +855,7 @@ object RobotControllerImpl : Controller {
             val appContext = context.applicationContext
             applicationContext = appContext
             settingsManager = SettingsManager(appContext)
+            mapPreviewCache = MapPreviewCache(appContext.cacheDir.resolve("map-previews"))
             siyiUdpBridgeController = SiyiUdpBridgeController(appContext)
             zmqClient.setMessageCallback { message ->
                 handleIncomingMessage(message)
@@ -652,16 +864,21 @@ object RobotControllerImpl : Controller {
                 handleConnectionState(it)
             }
             controllerClient.setListener(object : RobotControllerClientListener {
+                override fun onSessionChanged(generation: Long) {
+                    scope.launch { settingsState.updateMapSession(generation) }
+                }
+
                 override fun onConnectionState(
                     state: RobotControllerConnectionState,
                     message: String
                 ) {
                     scope.launch {
                         settingsState.updateControllerConnection(state, message)
-                        if (state == RobotControllerConnectionState.CONNECTED &&
-                            settingsState.connectionState == ConnectionState.CONNECTED
-                        ) {
-                            requestManualTakeoverFromController("连接后请求人工控制")
+                        if (state == RobotControllerConnectionState.CONNECTED) {
+                            controllerClient.requestMapList()
+                            if (settingsState.connectionState == ConnectionState.CONNECTED) {
+                                requestManualTakeoverFromController("连接后请求人工控制")
+                            }
                         } else if (
                             (state == RobotControllerConnectionState.AUTHENTICATION_FAILED ||
                                 state == RobotControllerConnectionState.CONNECTION_FAILED) &&
@@ -704,6 +921,35 @@ object RobotControllerImpl : Controller {
 
                 override fun onMappingError(reason: String) {
                     scope.launch { settingsState.updateMappingError(reason) }
+                }
+
+                override fun onMapList(requestId: Long, maps: List<MapInfo>) {
+                    scope.launch { settingsState.updateMapList(maps) }
+                }
+
+                override fun onMapPreview(preview: MapPreviewData) {
+                    val cache = mapPreviewCache
+                    val cached = cache?.put(preview.sha256, preview.bytes) { bytes ->
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            ?: return@put false
+                        bitmap.recycle()
+                        true
+                    } ?: false
+                    scope.launch {
+                        if (cached) {
+                            settingsState.updateSavedMapPreview(preview)
+                        } else {
+                            settingsState.updateMapNavigationError("地图预览图片解码或缓存失败")
+                        }
+                    }
+                }
+
+                override fun onPathPreview(preview: PathPreview) {
+                    scope.launch { settingsState.updatePathPreview(preview) }
+                }
+
+                override fun onMapNavigationError(reason: String) {
+                    scope.launch { settingsState.updateMapNavigationError(reason) }
                 }
             })
             initialized = true
@@ -1287,6 +1533,245 @@ object RobotControllerImpl : Controller {
         }
     }
 
+    override fun refreshSavedMaps() {
+        ensureInitialized()
+        if (isEngineeringMock()) {
+            settingsState.updateMapList(listOf(ensureMockSavedMap().info))
+            return
+        }
+        if (controllerClient.requestMapList() == 0L) {
+            settingsState.updateMapNavigationError("当前无法获取已保存地图列表")
+        }
+    }
+
+    override fun selectSavedMap(mapId: String, revision: Long) {
+        val identity = MapIdentityModel(mapId, revision)
+        settingsState.selectSavedMap(identity)
+        requestSavedMapPreview(mapId, revision)
+    }
+
+    override fun requestSavedMapPreview(mapId: String, revision: Long) {
+        ensureInitialized()
+        val identity = MapIdentityModel(mapId, revision)
+        val descriptor = settingsState.mapNavigationState.maps
+            .firstOrNull { it.identity == identity }
+        if (descriptor == null) {
+            settingsState.updateMapNavigationError("地图不存在或版本已变化，请刷新列表")
+            return
+        }
+        if (isEngineeringMock()) {
+            val preview = ensureMockSavedMap().preview
+            if (preview.key.map == identity) {
+                settingsState.updateSavedMapPreview(preview)
+            } else {
+                settingsState.updateMapNavigationError("工程 Mock 地图版本已变化，请刷新列表")
+            }
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val cached = mapPreviewCache?.read(descriptor.previewHash)
+            if (cached != null) {
+                val preview = MapPreviewData(
+                    key = MapPreviewRequestKey(0L, identity),
+                    sha256 = descriptor.previewHash.removePrefix("sha256:"),
+                    bytes = cached,
+                    receivedAtMs = MappingClock.elapsedRealtimeMs()
+                )
+                withContext(Dispatchers.Main) {
+                    settingsState.updateSavedMapPreview(preview)
+                }
+            } else if (!isEngineeringMock() &&
+                controllerClient.requestMapPreview(mapId, revision) == 0L
+            ) {
+                withContext(Dispatchers.Main) {
+                    settingsState.updateMapNavigationError("当前无法获取地图预览")
+                }
+            }
+        }
+    }
+
+    override fun switchSavedMap(mapId: String, revision: Long) {
+        if (isEngineeringMock()) {
+            applyMockSwitchMap(MapIdentityModel(mapId, revision))
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_SWITCH_MAP,
+            description = "切换地图"
+        ) { controllerClient.switchMap(mapId, revision) }
+    }
+
+    override fun stopLocalizationRuntime() {
+        if (isEngineeringMock()) {
+            val current = settingsState.controllerSnapshot
+            settingsState.updateControllerSnapshot(
+                mockSnapshot(
+                    OperationMode.OPERATION_MODE_STANDBY,
+                    (current?.state_revision ?: 0L) + 1L
+                )
+            )
+            settingsState.updateLastCommand("定位", "工程 Mock 已停止运行时")
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_STOP_RUNTIME,
+            description = "停止定位运行时"
+        ) { controllerClient.stopRuntime() }
+    }
+
+    override fun editInitialPose(pose: MappingPose?) {
+        settingsState.editInitialPose(pose)
+    }
+
+    override fun submitInitialPose() {
+        val state = settingsState.mapNavigationState
+        val map = state.initialPoseMap
+            ?: return settingsState.updateMapNavigationError("当前没有待初始化地图")
+        val pose = state.initialPoseDraft
+            ?: return settingsState.updateMapNavigationError("请先在地图上选择初始位姿")
+        if (isEngineeringMock()) {
+            settingsState.updateControllerSnapshot(
+                mockLocalizationSnapshot(
+                    identity = map,
+                    mode = OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING,
+                    localization = LocalizationState.LOCALIZATION_STATE_TRACKING,
+                    robotPose = pose
+                )
+            )
+            settingsState.updateLastCommand("初始位姿", "工程 Mock 已确认")
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_SET_INITIAL_POSE,
+            description = "设置初始位姿"
+        ) {
+            controllerClient.setInitialPose(map.mapId, map.revision, pose.x, pose.y, pose.yaw)
+        }
+    }
+
+    override fun editNavigationTarget(pose: MappingPose?) {
+        settingsState.editNavigationTarget(pose)
+    }
+
+    override fun requestNavigationPreview() {
+        val state = settingsState.mapNavigationState
+        val map = state.currentMap ?: return settingsState.updateMapNavigationError("当前没有已加载地图")
+        val target = state.targetDraft
+            ?: return settingsState.updateMapNavigationError("请先在地图上选择导航目标")
+        if (isEngineeringMock()) {
+            applyMockPlan(map, target)
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_PREVIEW_GOAL,
+            description = "规划路径",
+            markPlanRequest = true
+        ) {
+            controllerClient.previewGoal(
+                map.mapId, map.revision, target.x, target.y, target.yaw
+            )
+        }
+    }
+
+    override fun startNavigation() {
+        val state = settingsState.mapNavigationState
+        val map = state.currentMap ?: return settingsState.updateMapNavigationError("当前没有已加载地图")
+        val target = state.targetDraft
+            ?: return settingsState.updateMapNavigationError("请先选择导航目标")
+        val preview = state.pathPreview
+        if (preview == null || preview.token.map != map || preview.token.goal != target ||
+            preview.token.selectionGeneration != state.selectionGeneration
+        ) {
+            settingsState.updateMapNavigationError("目标尚无当前版本的有效规划预览")
+            return
+        }
+        if (isEngineeringMock()) {
+            val taskId = "mock-navigation-${nextMockRequestId()}"
+            settingsState.updateControllerSnapshot(
+                mockLocalizationSnapshot(
+                    identity = map,
+                    mode = OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING,
+                    localization = LocalizationState.LOCALIZATION_STATE_TRACKING,
+                    robotPose = state.robotPose,
+                    controlOwner = ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO,
+                    activeTaskId = taskId
+                )
+            )
+            settingsState.updateLastCommand("导航", "工程 Mock 已开始：$taskId")
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_START_NAVIGATION,
+            description = "开始导航"
+        ) {
+            controllerClient.startNavigation(
+                map.mapId, map.revision, target.x, target.y, target.yaw
+            )
+        }
+    }
+
+    override fun cancelNavigation() {
+        val taskId = settingsState.mapNavigationState.activeTaskId
+            ?: return settingsState.updateMapNavigationError("当前没有可取消的导航任务")
+        if (isEngineeringMock()) {
+            val state = settingsState.mapNavigationState
+            val map = state.currentMap
+                ?: return settingsState.updateMapNavigationError("当前没有已加载地图")
+            settingsState.updateControllerSnapshot(
+                mockLocalizationSnapshot(
+                    identity = map,
+                    mode = OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING,
+                    localization = LocalizationState.LOCALIZATION_STATE_TRACKING,
+                    robotPose = state.robotPose
+                )
+            )
+            settingsState.updateLastCommand("取消导航", "工程 Mock 已取消：$taskId")
+            return
+        }
+        submitNavigationCommand(
+            action = ActionCode.ACTION_CODE_CANCEL_NAVIGATION,
+            description = "取消导航"
+        ) { controllerClient.cancelNavigation(taskId) }
+    }
+
+    private fun submitNavigationCommand(
+        action: ActionCode,
+        description: String,
+        markPlanRequest: Boolean = false,
+        send: () -> Long
+    ) {
+        ensureInitialized()
+        if (isEngineeringMock()) {
+            settingsState.updateMapNavigationError("工程 Mock 暂不执行$description")
+            return
+        }
+        if (settingsState.controllerConnectionState != RobotControllerConnectionState.CONNECTED) {
+            settingsState.updateMapNavigationError("机器人主控未连接，无法$description")
+            return
+        }
+        if (!settingsState.isActionAllowed(action)) {
+            val reasons = settingsState.controllerSnapshot?.allowed_actions
+                ?.firstOrNull { it.action == action }
+                ?.blocking_reasons
+                ?.joinToString("、")
+                .orEmpty()
+            settingsState.updateMapNavigationError(
+                if (reasons.isEmpty()) "主控当前不允许$description" else "$description 被阻止：$reasons"
+            )
+            return
+        }
+        val requestId = send()
+        if (requestId == 0L) {
+            settingsState.updateMapNavigationError("$description 请求未进入主控发送队列")
+            return
+        }
+        if (markPlanRequest) {
+            settingsState.markPlanControllerRequest(requestId, description)
+        } else {
+            settingsState.markControllerRequest(requestId, description)
+        }
+    }
+
     private fun submitMappingCommand(
         action: ActionCode,
         description: String,
@@ -1818,13 +2303,26 @@ object RobotControllerImpl : Controller {
     private fun applyMockManualTakeover() {
         val current = settingsState.controllerSnapshot ?: mockSnapshot(OperationMode.OPERATION_MODE_STANDBY)
         settingsState.updateRobotModeChangingState(true)
-        settingsState.updateControllerSnapshot(
-            current.copy(
-                state_revision = current.state_revision + 1L,
-                control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
-                recent_transition = "mock_manual_takeover"
+        val currentMap = settingsState.mapNavigationState.currentMap
+        if (currentMap == null) {
+            settingsState.updateControllerSnapshot(
+                current.copy(
+                    state_revision = current.state_revision + 1L,
+                    control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
+                    active_task = null,
+                    recent_transition = "mock_manual_takeover"
+                )
             )
-        )
+        } else {
+            settingsState.updateControllerSnapshot(
+                mockLocalizationSnapshot(
+                    identity = currentMap,
+                    mode = OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING,
+                    localization = LocalizationState.LOCALIZATION_STATE_TRACKING,
+                    robotPose = settingsState.mapNavigationState.robotPose
+                )
+            )
+        }
         settingsState.updateLastCommand("人工接管", "工程 Mock 已确认")
     }
 
@@ -1857,6 +2355,194 @@ object RobotControllerImpl : Controller {
         }
     }
 
+    private fun applyMockSwitchMap(identity: MapIdentityModel) {
+        if (!requireMockActionAllowed(ActionCode.ACTION_CODE_SWITCH_MAP, "加载地图")) return
+        val mock = ensureMockSavedMap()
+        if (mock.preview.key.map != identity) {
+            settingsState.updateMapNavigationError("工程 Mock 地图版本已变化，请刷新列表")
+            return
+        }
+        settingsState.updateControllerSnapshot(
+            mockLocalizationSnapshot(
+                identity = identity,
+                mode = OperationMode.OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE,
+                localization = LocalizationState.LOCALIZATION_STATE_INITIALIZING,
+                robotPose = MappingPose(2.2, 1.1, 0.35)
+            )
+        )
+        settingsState.updateLastCommand("加载地图", "工程 Mock 已加载 ${mock.info.display_name}")
+    }
+
+    private fun applyMockPlan(identity: MapIdentityModel, target: MappingPose) {
+        if (!requireMockActionAllowed(ActionCode.ACTION_CODE_PREVIEW_GOAL, "规划路径")) return
+        val requestId = nextMockRequestId()
+        val taskId = "mock-plan-$requestId"
+        val start = settingsState.mapNavigationState.robotPose ?: MappingPose(2.2, 1.1, 0.35)
+        settingsState.markPlanControllerRequest(requestId, "工程 Mock 规划路径")
+        settingsState.completeControllerRequest(
+            requestId,
+            CommandResponse(
+                stage = CommandStage.COMMAND_STAGE_ACCEPTED,
+                task_id = taskId
+            )
+        )
+        val points = (0..8).map { index ->
+            val ratio = index / 8.0
+            Pose2D(
+                x = start.x + (target.x - start.x) * ratio,
+                y = start.y + (target.y - start.y) * ratio,
+                yaw = start.yaw + (target.yaw - start.yaw) * ratio
+            )
+        }
+        settingsState.updatePathPreview(
+            PathPreview(
+                task_id = taskId,
+                map = MapIdentity(map_id = identity.mapId, revision = identity.revision),
+                points = points,
+                length_m = hypot(target.x - start.x, target.y - start.y)
+            )
+        )
+        settingsState.updateLastCommand("规划路径", "工程 Mock 已生成 ${points.size} 个路径点")
+    }
+
+    private fun mockLocalizationSnapshot(
+        identity: MapIdentityModel,
+        mode: OperationMode,
+        localization: LocalizationState,
+        robotPose: MappingPose?,
+        controlOwner: ControlOwner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
+        activeTaskId: String? = null
+    ): StateSnapshot {
+        val current = settingsState.controllerSnapshot
+        val map = ensureMockSavedMap().info
+        val allowed = if (controlOwner == ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO) {
+            setOf(
+                ActionCode.ACTION_CODE_CANCEL_NAVIGATION,
+                ActionCode.ACTION_CODE_MANUAL_TAKEOVER
+            )
+        } else {
+            when (localization) {
+                LocalizationState.LOCALIZATION_STATE_INITIALIZING -> setOf(
+                    ActionCode.ACTION_CODE_SWITCH_MAP,
+                    ActionCode.ACTION_CODE_SET_INITIAL_POSE,
+                    ActionCode.ACTION_CODE_STOP_RUNTIME
+                )
+                LocalizationState.LOCALIZATION_STATE_TRACKING -> setOf(
+                    ActionCode.ACTION_CODE_SWITCH_MAP,
+                    ActionCode.ACTION_CODE_SET_INITIAL_POSE,
+                    ActionCode.ACTION_CODE_PREVIEW_GOAL,
+                    ActionCode.ACTION_CODE_START_NAVIGATION,
+                    ActionCode.ACTION_CODE_STOP_RUNTIME
+                )
+                else -> setOf(
+                    ActionCode.ACTION_CODE_SWITCH_MAP,
+                    ActionCode.ACTION_CODE_STOP_RUNTIME
+                )
+            }
+        }
+        return StateSnapshot(
+            state_revision = (current?.state_revision ?: 0L) + 1L,
+            operation_mode = mode,
+            control_owner = controlOwner,
+            health_state = HealthState.HEALTH_STATE_READY,
+            localization_state = localization,
+            current_map = map.copy(
+                identity = MapIdentity(map_id = identity.mapId, revision = identity.revision),
+                current = true
+            ),
+            active_task = activeTaskId?.let { TaskInfo(task_id = it) },
+            robot_pose = robotPose?.let { Pose2D(x = it.x, y = it.y, yaw = it.yaw) },
+            robot_pose_frame_id = if (robotPose == null) "" else "map",
+            robot_pose_source_time_ns = if (robotPose == null) {
+                0L
+            } else {
+                System.currentTimeMillis() * 1_000_000L
+            },
+            robot_pose_source = if (robotPose == null) {
+                PoseSource.POSE_SOURCE_UNSPECIFIED
+            } else {
+                PoseSource.POSE_SOURCE_LOCALIZATION
+            },
+            allowed_actions = ActionCode.entries
+                .filter { it != ActionCode.ACTION_CODE_UNSPECIFIED }
+                .map { action -> AllowedAction(action = action, allowed = action in allowed) },
+            time_sync = TimeSyncStatus(
+                state = TimeSyncState.TIME_SYNC_STATE_APPLIED,
+                message = "工程 Mock 对时完成",
+                system_clock_applied = true,
+                ptp_recovery_requested = true,
+                ptp_recovery_succeeded = true
+            ),
+            recent_transition = "mock_${mode.name.lowercase()}"
+        )
+    }
+
+    private fun requireMockActionAllowed(action: ActionCode, description: String): Boolean {
+        if (settingsState.isActionAllowed(action)) return true
+        settingsState.updateMapNavigationError("工程 Mock 当前不允许$description")
+        return false
+    }
+
+    private fun nextMockRequestId(): Long {
+        mockRequestSequence += 1L
+        return mockRequestSequence
+    }
+
+    private fun ensureMockSavedMap(): MockSavedMap {
+        mockSavedMap?.let { return it }
+        val width = 320
+        val height = 200
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint().apply { style = Paint.Style.FILL }
+        canvas.drawColor(Color.rgb(205, 205, 205))
+        paint.color = Color.rgb(248, 248, 248)
+        canvas.drawRect(18f, 15f, 302f, 185f, paint)
+        paint.color = Color.rgb(24, 28, 29)
+        canvas.drawRect(18f, 15f, 302f, 20f, paint)
+        canvas.drawRect(18f, 180f, 302f, 185f, paint)
+        canvas.drawRect(18f, 15f, 23f, 185f, paint)
+        canvas.drawRect(297f, 15f, 302f, 185f, paint)
+        canvas.drawRect(132f, 20f, 138f, 122f, paint)
+        canvas.drawRect(132f, 142f, 138f, 180f, paint)
+        canvas.drawRect(208f, 76f, 297f, 82f, paint)
+        canvas.drawRect(58f, 120f, 102f, 126f, paint)
+        val bytes = ByteArrayOutputStream().use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                "工程 Mock 地图预览编码失败"
+            }
+            output.toByteArray()
+        }
+        bitmap.recycle()
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte ->
+                (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+            }
+        val identity = MapIdentityModel("mock-warehouse-a", 3L)
+        return MockSavedMap(
+            info = MapInfo(
+                identity = MapIdentity(map_id = identity.mapId, revision = identity.revision),
+                display_name = "工程 Mock 仓库地图",
+                content_hash = "sha256:$hash",
+                preview_hash = "sha256:$hash",
+                resolution_m = 0.05,
+                origin_x_m = -2.0,
+                origin_y_m = -1.5,
+                width_cells = width,
+                height_cells = height,
+                created_utc_ns = System.currentTimeMillis() * 1_000_000L,
+                origin_yaw_rad = 0.18
+            ),
+            preview = MapPreviewData(
+                key = MapPreviewRequestKey(1L, identity),
+                sha256 = hash,
+                bytes = bytes,
+                receivedAtMs = MappingClock.elapsedRealtimeMs()
+            )
+        ).also { mockSavedMap = it }
+    }
+
     private fun mockSnapshot(
         mode: OperationMode,
         revision: Long = 1L
@@ -1865,7 +2551,10 @@ object RobotControllerImpl : Controller {
             mode == OperationMode.OPERATION_MODE_MAPPING_REVIEW ||
             mode == OperationMode.OPERATION_MODE_MAPPING_SAVING
         val allowed = when (mode) {
-            OperationMode.OPERATION_MODE_STANDBY -> setOf(ActionCode.ACTION_CODE_START_MAPPING)
+            OperationMode.OPERATION_MODE_STANDBY -> setOf(
+                ActionCode.ACTION_CODE_START_MAPPING,
+                ActionCode.ACTION_CODE_SWITCH_MAP
+            )
             OperationMode.OPERATION_MODE_MAPPING_RUNNING -> setOf(ActionCode.ACTION_CODE_FINISH_MAPPING)
             OperationMode.OPERATION_MODE_MAPPING_REVIEW -> setOf(
                 ActionCode.ACTION_CODE_SAVE_MAP,

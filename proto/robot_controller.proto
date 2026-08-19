@@ -167,6 +167,7 @@ message MapInfo {
   uint32 height_cells = 9;
   int64 created_utc_ns = 10;
   bool current = 11;
+  double origin_yaw_rad = 12;
 }
 
 message TaskInfo {

@@ -109,12 +109,12 @@ fun MappingWorkspace(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
                 MappingHeader(state, onClose)
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     MappingCanvas(
                         frame = frame,
@@ -127,10 +127,10 @@ fun MappingWorkspace(
                     MappingStatusPanel(
                         state = state,
                         nowMs = nowMs,
-                        modifier = Modifier.width(270.dp).fillMaxHeight()
+                        modifier = Modifier.width(210.dp).fillMaxHeight()
                     )
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(6.dp))
                 MappingActions(
                     state = state,
                     onStart = { nameDialogAction = NameDialogAction.START },
@@ -162,7 +162,7 @@ fun MappingWorkspace(
 @Composable
 private fun MappingHeader(state: ControllerState, onClose: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp),
+        modifier = Modifier.fillMaxWidth().height(40.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onClose) {
@@ -172,7 +172,7 @@ private fun MappingHeader(state: ControllerState, onClose: () -> Unit) {
                 tint = Color.White
             )
         }
-        Text("实时建图", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        Text("实时建图", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(14.dp))
         StatusPill(
             text = state.controllerConnectionState.displayName,
@@ -336,47 +336,62 @@ private fun MappingStatusPanel(state: ControllerState, nowMs: Long, modifier: Mo
         ?.takeIf { poseUsable }
         ?.takeIf { it > 0L }
         ?.let { (System.currentTimeMillis() * 1_000_000L - it) / 1_000_000L }
+    var detailsExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
             .background(Color(0xFF151B1C), RoundedCornerShape(12.dp))
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text("建图状态", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("建图状态", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (detailsExpanded) "收起" else "详情",
+                color = Color(0xFF79E2D4),
+                fontSize = 10.sp,
+                modifier = Modifier
+                    .clickable { detailsExpanded = !detailsExpanded }
+                    .padding(horizontal = 5.dp, vertical = 3.dp)
+            )
+        }
         InfoRow(
             "运行 / 健康",
             "${snapshot?.operation_mode?.displayName() ?: "未知"} / " +
                 (snapshot?.health_state?.displayName() ?: "未知")
         )
-        InfoRow(
-            "控制 / 对时",
-            "${snapshot?.control_owner?.displayName() ?: "未知"} / " +
-                (state.controllerTimeSync?.state?.displayName() ?: "未知")
-        )
-        InfoRow("地图年龄", mapAge?.formatAge() ?: "--", warning = mapAge != null && mapAge > 3_000L)
-        InfoRow(
-            "地图",
-            frame?.let {
-                "#${it.metadata.frameSequence} · ${it.metadata.widthCells}×${it.metadata.heightCells}"
-            } ?: "--"
-        )
+        InfoRow("控制权", snapshot?.control_owner?.displayName() ?: "未知")
         InfoRow(
             "位置 x / y",
             pose?.let { "%.2f / %.2f m".format(it.x, it.y) } ?: "--"
         )
         InfoRow(
-            "朝向 / 年龄",
+            "朝向",
             pose?.let {
-                "%.1f° / %s".format(Math.toDegrees(it.yaw), poseAge?.formatAge() ?: "--")
+                "%.1f°".format(Math.toDegrees(it.yaw))
             } ?: "--",
             warning = poseAge != null && poseAge > 1_000L
         )
-        val stream = snapshot?.mapping_stream
         InfoRow(
-            "任务 / 地图流",
-            "${state.controllerTask?.state?.name ?: "无"} / " +
-                "拒${stream?.rejected_frames ?: 0} 丢${stream?.dropped_frames ?: 0}"
+            "地图 / 位姿年龄",
+            "${mapAge?.formatAge() ?: "--"} / ${poseAge?.formatAge() ?: "--"}",
+            warning = mapAge != null && mapAge > 3_000L || poseAge != null && poseAge > 1_000L
         )
+        val stream = snapshot?.mapping_stream
+        if (detailsExpanded) {
+            InfoRow("对时", state.controllerTimeSync?.state?.displayName() ?: "未知")
+            InfoRow(
+                "地图",
+                frame?.let {
+                    "#${it.metadata.frameSequence} · ${it.metadata.widthCells}×${it.metadata.heightCells}"
+                } ?: "--"
+            )
+            InfoRow(
+                "任务 / 地图流",
+                "${state.controllerTask?.state?.name ?: "无"} / " +
+                    "拒${stream?.rejected_frames ?: 0} 丢${stream?.dropped_frames ?: 0}"
+            )
+        }
         val warning = state.mappingError.ifEmpty {
             stream?.last_error.orEmpty().ifEmpty { state.controllerCommandMessage }
         }
@@ -395,11 +410,11 @@ private fun MappingStatusPanel(state: ControllerState, nowMs: Long, modifier: Mo
 @Composable
 private fun InfoRow(label: String, value: String, warning: Boolean = false) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        Text(label, color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
         Text(
             value,
             color = if (warning) Color(0xFFFFB29E) else Color.White.copy(alpha = 0.88f),
-            fontSize = 12.sp,
+            fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

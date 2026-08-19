@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Sync
@@ -93,6 +94,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.mapping.MappingWorkspace
+import com.helywin.leggedjoystick.ui.mapping.MapNavigationWorkspace
 import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
 import com.helywin.leggedjoystick.ui.video.RtspVideoSlot
 import com.helywin.leggedjoystick.ui.video.RtspVideoSurface
@@ -159,9 +161,14 @@ fun MainControlScreen(
     var isTakingSnapshot by remember { mutableStateOf(false) }
     var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
     var mappingWorkspaceVisible by remember { mutableStateOf(false) }
+    var navigationWorkspaceVisible by remember { mutableStateOf(false) }
     LaunchedEffect(controllerOperationMode) {
         if (controllerOperationMode.isMappingMode()) {
             mappingWorkspaceVisible = true
+            navigationWorkspaceVisible = false
+        } else if (controllerOperationMode.isLocalizationMode()) {
+            navigationWorkspaceVisible = true
+            mappingWorkspaceVisible = false
         }
     }
     val primaryVideoUrl = when (primaryVideoSource) {
@@ -223,7 +230,14 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
-                    onMappingClick = { mappingWorkspaceVisible = true },
+                    onMappingClick = {
+                        mappingWorkspaceVisible = true
+                        navigationWorkspaceVisible = false
+                    },
+                    onNavigationClick = {
+                        navigationWorkspaceVisible = true
+                        mappingWorkspaceVisible = false
+                    },
                     onSettingsClick = onSettingsClick
                 )
 
@@ -367,6 +381,14 @@ fun MainControlScreen(
                     modifier = Modifier.matchParentSize().zIndex(30f)
                 )
             }
+            if (navigationWorkspaceVisible) {
+                MapNavigationWorkspace(
+                    state = settingsState,
+                    controller = controller,
+                    onClose = { navigationWorkspaceVisible = false },
+                    modifier = Modifier.matchParentSize().zIndex(30f)
+                )
+            }
         }
     }
 }
@@ -418,6 +440,7 @@ private fun TopHud(
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
     onMappingClick: () -> Unit,
+    onNavigationClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -451,6 +474,13 @@ private fun TopHud(
                     tint = Color.White
                 )
             }
+            IconButton(onClick = onNavigationClick) {
+                Icon(
+                    imageVector = Icons.Default.Place,
+                    contentDescription = "地图定位与导航",
+                    tint = Color.White
+                )
+            }
             HudIconButton(
                 iconResId = R.drawable.genisdog_icon_setting,
                 contentDescription = "设置",
@@ -465,6 +495,13 @@ private fun OperationMode?.isMappingMode(): Boolean {
         this == OperationMode.OPERATION_MODE_MAPPING_RUNNING ||
         this == OperationMode.OPERATION_MODE_MAPPING_REVIEW ||
         this == OperationMode.OPERATION_MODE_MAPPING_SAVING
+}
+
+private fun OperationMode?.isLocalizationMode(): Boolean {
+    return this == OperationMode.OPERATION_MODE_LOCALIZATION_LOADING ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING ||
+        this == OperationMode.OPERATION_MODE_LOCALIZATION_LOST
 }
 
 @Composable
@@ -1555,6 +1592,17 @@ fun MainControlScreenPreview() {
             override fun saveMap(displayName: String) {}
             override fun discardMap() {}
             override fun requestLatestMappingMap() {}
+            override fun refreshSavedMaps() {}
+            override fun selectSavedMap(mapId: String, revision: Long) {}
+            override fun requestSavedMapPreview(mapId: String, revision: Long) {}
+            override fun switchSavedMap(mapId: String, revision: Long) {}
+            override fun stopLocalizationRuntime() {}
+            override fun editInitialPose(pose: com.helywin.leggedjoystick.mapping.MappingPose?) {}
+            override fun submitInitialPose() {}
+            override fun editNavigationTarget(pose: com.helywin.leggedjoystick.mapping.MappingPose?) {}
+            override fun requestNavigationPreview() {}
+            override fun startNavigation() {}
+            override fun cancelNavigation() {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: RobotAction) {}

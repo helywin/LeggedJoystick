@@ -20,8 +20,13 @@ import org.junit.Test
 import sar.robot_controller.v1.CommandResponse
 import sar.robot_controller.v1.CommandStage
 import sar.robot_controller.v1.ControlOwner
+import sar.robot_controller.v1.LocalizationState
+import sar.robot_controller.v1.MapIdentity
+import sar.robot_controller.v1.MapInfo
 import sar.robot_controller.v1.MappingStreamStatus
 import sar.robot_controller.v1.OperationMode
+import sar.robot_controller.v1.PathPreview
+import sar.robot_controller.v1.Pose2D
 import sar.robot_controller.v1.StateSnapshot
 
 class ControllerStateTest {
@@ -277,5 +282,61 @@ class ControllerStateTest {
         )
         assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
         assertFalse(state.isRobotModeChanging)
+    }
+
+    @Test
+    fun savedMapPlanStateFollowsSessionMapAndAuthoritativePath() {
+        val state = ControllerState()
+        val mapIdentity = MapIdentity(map_id = "map-a", revision = 7L)
+        state.updateMapSession(1L)
+        state.updateMapList(
+            listOf(
+                MapInfo(
+                    identity = mapIdentity,
+                    display_name = "地图 A",
+                    preview_hash = "sha256:${"0".repeat(64)}",
+                    resolution_m = 0.05,
+                    origin_x_m = -1.0,
+                    origin_y_m = -2.0,
+                    width_cells = 100,
+                    height_cells = 80,
+                    origin_yaw_rad = 0.625
+                )
+            )
+        )
+        state.updateControllerSnapshot(
+            StateSnapshot(
+                operation_mode = OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING,
+                current_map = MapInfo(identity = mapIdentity),
+                localization_state = LocalizationState.LOCALIZATION_STATE_TRACKING,
+                control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL
+            )
+        )
+        state.editNavigationTarget(MappingPose(3.0, 4.0, 0.5))
+        state.markPlanControllerRequest(31L, "规划路径")
+        state.completeControllerRequest(
+            31L,
+            CommandResponse(
+                stage = CommandStage.COMMAND_STAGE_ACCEPTED,
+                task_id = "plan-task"
+            )
+        )
+        state.updatePathPreview(
+            PathPreview(
+                task_id = "plan-task",
+                map = mapIdentity,
+                points = listOf(Pose2D(x = 1.0, y = 2.0), Pose2D(x = 3.0, y = 4.0)),
+                length_m = 3.0
+            )
+        )
+
+        assertEquals("map-a", state.mapNavigationState.currentMap?.mapId)
+        assertEquals(0.625, state.mapNavigationState.maps.single().coordinates.origin.yaw, 0.0)
+        assertEquals("plan-task", state.mapNavigationState.pathPreview?.token?.taskId)
+
+        state.updateMapSession(2L)
+        assertTrue(state.mapNavigationState.maps.isEmpty())
+        assertEquals(null, state.mapNavigationState.targetDraft)
+        assertEquals(null, state.mapNavigationState.pathPreview)
     }
 }

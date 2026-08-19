@@ -274,6 +274,17 @@ fun LeggedJoystickAppPreview() {
             override fun saveMap(displayName: String) {}
             override fun discardMap() {}
             override fun requestLatestMappingMap() {}
+            override fun refreshSavedMaps() {}
+            override fun selectSavedMap(mapId: String, revision: Long) {}
+            override fun requestSavedMapPreview(mapId: String, revision: Long) {}
+            override fun switchSavedMap(mapId: String, revision: Long) {}
+            override fun stopLocalizationRuntime() {}
+            override fun editInitialPose(pose: com.helywin.leggedjoystick.mapping.MappingPose?) {}
+            override fun submitInitialPose() {}
+            override fun editNavigationTarget(pose: com.helywin.leggedjoystick.mapping.MappingPose?) {}
+            override fun requestNavigationPreview() {}
+            override fun startNavigation() {}
+            override fun cancelNavigation() {}
             override fun setControlMode(controlMode: SportMode) {}
             override fun setSpeedLevel(level: SpeedLevel) {}
             override fun performAction(action: com.helywin.leggedjoystick.controller.RobotAction) {}
