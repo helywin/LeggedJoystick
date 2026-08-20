@@ -50,8 +50,10 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,6 +95,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
+import com.helywin.leggedjoystick.ui.components.OperatorAlertDialog
 import com.helywin.leggedjoystick.ui.mapping.MappingWorkspace
 import com.helywin.leggedjoystick.ui.mapping.MapNavigationWorkspace
 import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
@@ -147,8 +150,8 @@ fun MainControlScreen(
     val isSportModeChanging = settingsState.isRobotCtrlModeChanging
     val isConnected = connectionState == ConnectionState.CONNECTED
     val hasControl = settingsState.hasControl
-    val takeoverEnabled = isConnected && hasControl
-    val commandEnabled = takeoverEnabled && appMode == AppMode.APP_MODE_MANUAL
+    val manualControlReady = isConnected && hasControl
+    val commandEnabled = manualControlReady && appMode == AppMode.APP_MODE_MANUAL
     val controllerOperationMode = settingsState.controllerSnapshot?.operation_mode
 
     var modeOverlayVisible by remember { mutableStateOf(false) }
@@ -162,6 +165,7 @@ fun MainControlScreen(
     var primaryVideoSource by remember { mutableStateOf(PrimaryVideoSource.HEAD) }
     var mappingWorkspaceVisible by remember { mutableStateOf(false) }
     var navigationWorkspaceVisible by remember { mutableStateOf(false) }
+    var taskHubVisible by remember { mutableStateOf(false) }
     LaunchedEffect(controllerOperationMode) {
         if (controllerOperationMode.isMappingMode()) {
             mappingWorkspaceVisible = true
@@ -219,9 +223,6 @@ fun MainControlScreen(
                 TopHud(
                     appMode = appMode,
                     connectionState = connectionState,
-                    modeEnabled = takeoverEnabled,
-                    isModeChanging = settingsState.isRobotModeChanging,
-                    onModeClick = controller::setMode,
                     onConnectClick = {
                         when (connectionState) {
                             ConnectionState.CONNECTED -> controller.disconnect()
@@ -230,14 +231,7 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
-                    onMappingClick = {
-                        mappingWorkspaceVisible = true
-                        navigationWorkspaceVisible = false
-                    },
-                    onNavigationClick = {
-                        navigationWorkspaceVisible = true
-                        mappingWorkspaceVisible = false
-                    },
+                    onTaskHubClick = { taskHubVisible = true },
                     onSettingsClick = onSettingsClick
                 )
 
@@ -391,6 +385,22 @@ fun MainControlScreen(
             }
         }
     }
+
+    if (taskHubVisible) {
+        TaskHubDialog(
+            onDismiss = { taskHubVisible = false },
+            onMappingClick = {
+                taskHubVisible = false
+                mappingWorkspaceVisible = true
+                navigationWorkspaceVisible = false
+            },
+            onNavigationClick = {
+                taskHubVisible = false
+                navigationWorkspaceVisible = true
+                mappingWorkspaceVisible = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -434,13 +444,9 @@ private fun ControlScreenBackground(
 private fun TopHud(
     appMode: AppMode,
     connectionState: ConnectionState,
-    modeEnabled: Boolean,
-    isModeChanging: Boolean,
-    onModeClick: (AppMode) -> Unit,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
-    onMappingClick: () -> Unit,
-    onNavigationClick: () -> Unit,
+    onTaskHubClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -455,10 +461,7 @@ private fun TopHud(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             ControlModeToggle(
-                currentMode = appMode,
-                isEnabled = modeEnabled,
-                isChanging = isModeChanging,
-                onModeClick = onModeClick
+                currentMode = appMode
             )
             ConnectionButton(
                 connectionState = connectionState,
@@ -467,24 +470,104 @@ private fun TopHud(
             BatteryIconButton(
                 onClick = onBatteryClick
             )
-            IconButton(onClick = onMappingClick) {
-                Icon(
-                    imageVector = Icons.Default.Map,
-                    contentDescription = "实时建图",
-                    tint = Color.White
-                )
-            }
-            IconButton(onClick = onNavigationClick) {
-                Icon(
-                    imageVector = Icons.Default.Place,
-                    contentDescription = "地图定位与导航",
-                    tint = Color.White
-                )
-            }
+            TaskHubButton(onClick = onTaskHubClick)
             HudIconButton(
                 iconResId = R.drawable.genisdog_icon_setting,
                 contentDescription = "设置",
                 onClick = onSettingsClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskHubButton(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .width(78.dp)
+            .height(46.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(PanelBackground)
+            .noIndicationClickable(onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Map,
+            contentDescription = null,
+            tint = AccentCyan,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text("任务", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun TaskHubDialog(
+    onDismiss: () -> Unit,
+    onMappingClick: () -> Unit,
+    onNavigationClick: () -> Unit
+) {
+    OperatorAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("任务工作区") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                WorkspaceChoice(
+                    icon = Icons.Default.Map,
+                    title = "实时建图",
+                    description = "查看实时地图并完成结束、保存或放弃",
+                    onClick = onMappingClick
+                )
+                WorkspaceChoice(
+                    icon = Icons.Default.Place,
+                    title = "定位与导航",
+                    description = "选择地图、设置位姿、规划并跟踪目标",
+                    onClick = onNavigationClick
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
+}
+
+@Composable
+private fun WorkspaceChoice(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(colors.surfaceContainerHighest)
+            .border(1.dp, colors.outlineVariant, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(28.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                color = colors.onSurface,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                description,
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -1299,13 +1382,8 @@ private fun StatusRow(label: String, value: String, valueColor: Color) {
 
 @Composable
 private fun ControlModeToggle(
-    currentMode: AppMode,
-    isEnabled: Boolean,
-    isChanging: Boolean,
-    onModeClick: (AppMode) -> Unit
+    currentMode: AppMode
 ) {
-    // AUTO 只能由导航任务进入；该入口在自动导航时仅用于人工接管。
-    val canTakeOver = isEnabled && currentMode == AppMode.APP_MODE_AUTO && !isChanging
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier = Modifier
@@ -1319,16 +1397,11 @@ private fun ControlModeToggle(
                     PanelBackground
                 }
             )
-            .graphicsLayer {
-                alpha = if (canTakeOver || currentMode == AppMode.APP_MODE_MANUAL) 1f else 0.5f
-            }
-            .noIndicationClickable(enabled = canTakeOver) {
-                onModeClick(AppMode.APP_MODE_MANUAL)
-            },
+            .graphicsLayer { alpha = 1f },
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = if (currentMode == AppMode.APP_MODE_AUTO) "自动·接管" else "人工模式",
+            text = if (currentMode == AppMode.APP_MODE_AUTO) "自动导航" else "人工模式",
             color = Color.White,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,

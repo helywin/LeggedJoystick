@@ -22,6 +22,7 @@ import sar.robot_controller.v1.ErrorCode
 import sar.robot_controller.v1.MappingMapChunk
 import sar.robot_controller.v1.MapInfo
 import sar.robot_controller.v1.MapPreviewChunk
+import sar.robot_controller.v1.NavigationPath
 import sar.robot_controller.v1.PathPreview
 import sar.robot_controller.v1.StateSnapshot
 import sar.robot_controller.v1.TaskInfo
@@ -57,6 +58,7 @@ interface RobotControllerClientListener {
     fun onMapList(requestId: Long, maps: List<MapInfo>) = Unit
     fun onMapPreview(preview: MapPreviewData) = Unit
     fun onPathPreview(preview: PathPreview) = Unit
+    fun onNavigationPath(path: NavigationPath) = Unit
     fun onMapNavigationError(reason: String) = Unit
 }
 
@@ -185,10 +187,6 @@ class RobotControllerClient(
 
     fun discardMap(): Long = enqueueCommand {
         discardMap(sessionId, latestStateRevision)
-    }
-
-    fun manualTakeover(): Long = enqueueCommand {
-        manualTakeover(sessionId, latestStateRevision)
     }
 
     fun requestLatestMap(): Boolean {
@@ -482,6 +480,7 @@ class RobotControllerClient(
             listener?.onMapList(message.request_id, response.maps)
         }
         message.path_preview?.let { listener?.onPathPreview(it) }
+        message.navigation_path?.let { listener?.onNavigationPath(it) }
         message.command_response?.let { response ->
             val pending = pendingRequests.remove(message.request_id)
             if (mappingRequestId.compareAndSet(message.request_id, 0L)) {

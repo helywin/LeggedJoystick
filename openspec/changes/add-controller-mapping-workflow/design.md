@@ -32,7 +32,7 @@
 
 ### AppMode 改为任务和权威控制权闭环
 
-界面不再把驱动命令入队当作切换成功，也不提供无任务的裸 AUTO。主控快照中的 `control_owner` 是产品界面的权威来源：`REMOTE_MANUAL` 表示人工控制，`NAVIGATION_AUTO` 表示导航任务控制。人工接管通过主控命令完成取消目标、零速度和 MANUAL 确认；主控离线时仅保留直接 MANUAL 作为安全降级，禁止直接 AUTO。
+界面不再把驱动命令入队当作切换成功，也不提供无任务的裸 AUTO。主控快照中的 `control_owner` 是产品界面的权威来源：`REMOTE_MANUAL` 表示人工控制，`NAVIGATION_AUTO` 表示导航任务控制。自动导航只保留取消命令，取消负责失效旧任务、零速度和恢复 MANUAL；主控离线时仅保留直接 MANUAL 作为安全降级，禁止直接 AUTO。
 
 建图时主控同时报告 `MAPPING_RUNNING + REMOTE_MANUAL`，因此操作者可以边走边观察地图。后续导航选点切片由 `START_NAVIGATION` 进入 AUTO，不需要增加一个破坏状态机语义的模式切换接口。
 

@@ -22,7 +22,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -55,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.helywin.leggedjoystick.controller.Controller
 import com.helywin.leggedjoystick.controller.ControllerState
+import com.helywin.leggedjoystick.ui.components.OperatorAlertDialog
 import com.helywin.leggedjoystick.mapping.MappingCoordinates
 import com.helywin.leggedjoystick.mapping.MappingClock
 import com.helywin.leggedjoystick.mapping.MappingFreshness
@@ -485,7 +485,7 @@ private fun MapNameDialog(
         mutableStateOf("${prefix}-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}")
     }
     val valid = name.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*"))
-    AlertDialog(
+    OperatorAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (action == NameDialogAction.START) "开始建图" else "保存地图") },
         text = {

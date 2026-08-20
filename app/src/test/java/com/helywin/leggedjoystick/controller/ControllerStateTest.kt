@@ -5,6 +5,7 @@ import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.mapping.MappingGridFrame
 import com.helywin.leggedjoystick.mapping.MappingGridMetadataModel
 import com.helywin.leggedjoystick.mapping.MappingPose
+import com.helywin.leggedjoystick.mapping.MapIdentityModel
 import legged_driver.BatteryDataMessage
 import legged_driver.CtrlSource
 import legged_driver.FillLightStatus
@@ -30,6 +31,37 @@ import sar.robot_controller.v1.Pose2D
 import sar.robot_controller.v1.StateSnapshot
 
 class ControllerStateTest {
+    @Test
+    fun authoritativeCurrentMapSelectedByMapListRequestsItsPreview() {
+        val state = ControllerState()
+        val identity = MapIdentity(map_id = "map-a", revision = 7L)
+        state.updateMapSession(1L)
+        state.updateControllerSnapshot(
+            StateSnapshot(
+                operation_mode = OperationMode.OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE,
+                current_map = MapInfo(identity = identity)
+            )
+        )
+
+        val previewTarget = state.updateMapList(
+            listOf(
+                MapInfo(
+                    identity = identity,
+                    display_name = "地图 A",
+                    preview_hash = "sha256:${"0".repeat(64)}",
+                    resolution_m = 0.05,
+                    origin_x_m = -1.0,
+                    origin_y_m = -2.0,
+                    width_cells = 100,
+                    height_cells = 80,
+                    origin_yaw_rad = 0.625
+                )
+            )
+        )
+
+        assertEquals(MapIdentityModel("map-a", 7L), previewTarget)
+    }
+
     @Test
     fun robotControlSourceDoesNotOverrideOwnedStateAfterTakeAck() {
         val state = ControllerState()
@@ -160,65 +192,20 @@ class ControllerStateTest {
     }
 
     @Test
-    fun manualTransition_waitsForMatchingResponseAfterState() {
+    fun cancelTransitionFollowsAuthoritativeManualState() {
         val state = ControllerState()
         state.updateRobotMode(AppMode.APP_MODE_AUTO)
-        state.markManualControllerRequest(17L, "人工接管")
+        state.markControllerRequest(17L, "取消导航")
 
         state.updateControllerSnapshot(
             StateSnapshot(control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL)
         )
-        assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
-        assertTrue(state.isRobotModeChanging)
+        assertEquals(AppMode.APP_MODE_MANUAL, state.robotMode)
+        assertFalse(state.isRobotModeChanging)
 
         state.completeControllerRequest(
             17L,
             CommandResponse(stage = CommandStage.COMMAND_STAGE_ACCEPTED)
-        )
-        assertEquals(AppMode.APP_MODE_MANUAL, state.robotMode)
-        assertFalse(state.isRobotModeChanging)
-    }
-
-    @Test
-    fun manualTransition_waitsForAuthoritativeStateAfterResponse() {
-        val state = ControllerState()
-        state.updateRobotMode(AppMode.APP_MODE_AUTO)
-        state.markManualControllerRequest(18L, "人工接管")
-
-        state.completeControllerRequest(
-            18L,
-            CommandResponse(stage = CommandStage.COMMAND_STAGE_ACCEPTED)
-        )
-        assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
-        assertTrue(state.isRobotModeChanging)
-
-        state.updateControllerSnapshot(
-            StateSnapshot(control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL)
-        )
-        assertEquals(AppMode.APP_MODE_MANUAL, state.robotMode)
-        assertFalse(state.isRobotModeChanging)
-    }
-
-    @Test
-    fun manualTransition_ignoresStaleAutoStateWithoutClearingPendingRequest() {
-        val state = ControllerState()
-        state.updateRobotMode(AppMode.APP_MODE_AUTO)
-        state.markManualControllerRequest(21L, "人工接管")
-
-        state.updateControllerSnapshot(
-            StateSnapshot(control_owner = ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO)
-        )
-        assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
-        assertTrue(state.isRobotModeChanging)
-
-        state.completeControllerRequest(
-            21L,
-            CommandResponse(stage = CommandStage.COMMAND_STAGE_ACCEPTED)
-        )
-        assertTrue(state.isRobotModeChanging)
-
-        state.updateControllerSnapshot(
-            StateSnapshot(control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL)
         )
         assertEquals(AppMode.APP_MODE_MANUAL, state.robotMode)
         assertFalse(state.isRobotModeChanging)
@@ -256,32 +243,6 @@ class ControllerStateTest {
 
         assertEquals(null, state.mappingFrame)
         assertEquals("等待本轮实时地图首帧", state.mappingError)
-    }
-
-    @Test
-    fun manualTransition_ignoresWrongResponseAndClearsOnRejection() {
-        val state = ControllerState()
-        state.updateRobotMode(AppMode.APP_MODE_AUTO)
-        state.markManualControllerRequest(19L, "人工接管")
-        state.updateControllerSnapshot(
-            StateSnapshot(control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL)
-        )
-
-        state.completeControllerRequest(
-            20L,
-            CommandResponse(stage = CommandStage.COMMAND_STAGE_ACCEPTED)
-        )
-        assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
-
-        state.completeControllerRequest(
-            19L,
-            CommandResponse(
-                stage = CommandStage.COMMAND_STAGE_REJECTED,
-                error_message = "底盘未就绪"
-            )
-        )
-        assertEquals(AppMode.APP_MODE_AUTO, state.robotMode)
-        assertFalse(state.isRobotModeChanging)
     }
 
     @Test

@@ -162,14 +162,26 @@ class MapNavigationReducerTest {
     }
 
     @Test
-    fun targetEditAndManualTakeoverInvalidateNavigationConfirmation() {
-        val state = plannedState(session = 1L).copy(controlOwner = MapControlOwner.NAVIGATION_AUTO)
+    fun targetEditInvalidatesPreviewButCancelPreservesReusablePlan() {
+        val state = plannedState(session = 1L).copy(
+            controlOwner = MapControlOwner.NAVIGATION_AUTO,
+            activeTaskId = "nav-1",
+            activeNavigationTaskId = "nav-1"
+        )
+        val navigating = MapNavigationReducer.reduce(
+            state,
+            navigationPathEvent(
+                taskId = "nav-1",
+                map = checkNotNull(state.currentMap),
+                sequence = 1L
+            )
+        )
         val edited = MapNavigationReducer.reduce(
             state,
             MapNavigationEvent.EditTarget(MappingPose(9.0, 8.0, 0.2))
         )
-        val manual = MapNavigationReducer.reduce(
-            state,
+        val canceled = MapNavigationReducer.reduce(
+            navigating,
             MapNavigationEvent.AuthorityUpdated(
                 generation = 1L,
                 currentMap = state.currentMap,
@@ -182,8 +194,10 @@ class MapNavigationReducerTest {
 
         assertTrue(edited.selectionGeneration > state.selectionGeneration)
         assertNull(edited.pathPreview)
-        assertNull(manual.pathPreview)
-        assertNull(manual.pendingPlan)
+        assertEquals(state.targetDraft, canceled.targetDraft)
+        assertEquals(state.pathPreview, canceled.pathPreview)
+        assertNull(canceled.navigationPath)
+        assertNull(canceled.activeNavigationTaskId)
     }
 
     @Test
@@ -220,6 +234,136 @@ class MapNavigationReducerTest {
         assertEquals("plan-1", accepted.pathPreview!!.token.taskId)
         assertNull(accepted.pendingPlan)
     }
+
+    @Test
+    fun realtimeNavigationPathAcceptsOnlyNewerMatchingRouteAndExplicitClear() {
+        val active = baseState(session = 1L).copy(
+            controlOwner = MapControlOwner.NAVIGATION_AUTO,
+            activeTaskId = "nav-1",
+            activeNavigationTaskId = "nav-1"
+        )
+        val map = checkNotNull(active.currentMap)
+        val first = MapNavigationReducer.reduce(
+            active,
+            navigationPathEvent(taskId = "nav-1", map = map, sequence = 10L)
+        )
+        val stale = MapNavigationReducer.reduce(
+            first,
+            navigationPathEvent(taskId = "nav-1", map = map, sequence = 9L)
+        )
+        val wrongTask = MapNavigationReducer.reduce(
+            first,
+            navigationPathEvent(taskId = "nav-old", map = map, sequence = 11L)
+        )
+        val replaced = MapNavigationReducer.reduce(
+            first,
+            navigationPathEvent(
+                taskId = "nav-1",
+                map = map,
+                sequence = 11L,
+                points = listOf(MappingPose(0.0, 0.0, 0.0), MappingPose(4.0, 1.0, 0.2))
+            )
+        )
+        val cleared = MapNavigationReducer.reduce(
+            replaced,
+            navigationPathEvent(
+                taskId = "nav-1",
+                map = map,
+                sequence = 12L,
+                points = emptyList(),
+                active = false
+            )
+        )
+
+        assertEquals(10L, first.navigationPath?.pathSequence)
+        assertSame(first, stale)
+        assertSame(first, wrongTask)
+        assertEquals(11L, replaced.navigationPath?.pathSequence)
+        assertEquals(4.0, replaced.navigationPath?.points?.last()?.x ?: Double.NaN, 0.0)
+        assertNull(cleared.navigationPath)
+    }
+
+    @Test
+    fun realtimeNavigationPathClearsWhenAuthorityTaskOrSessionChanges() {
+        val active = baseState(session = 1L).copy(
+            controlOwner = MapControlOwner.NAVIGATION_AUTO,
+            activeTaskId = "nav-1",
+            activeNavigationTaskId = "nav-1"
+        )
+        val withPath = MapNavigationReducer.reduce(
+            active,
+            navigationPathEvent(
+                taskId = "nav-1",
+                map = checkNotNull(active.currentMap),
+                sequence = 1L
+            )
+        )
+        val completed = MapNavigationReducer.reduce(
+            withPath,
+            MapNavigationEvent.AuthorityUpdated(
+                generation = 1L,
+                currentMap = active.currentMap,
+                localizationStatus = MapLocalizationStatus.TRACKING,
+                controlOwner = MapControlOwner.REMOTE_MANUAL,
+                activeTaskId = null,
+                activeNavigationTaskId = null,
+                robotPose = MappingPose(1.0, 2.0, 0.0)
+            )
+        )
+        val reconnected = MapNavigationReducer.reduce(
+            withPath,
+            MapNavigationEvent.SessionChanged(2L)
+        )
+
+        assertNull(completed.navigationPath)
+        assertNull(reconnected.navigationPath)
+        assertEquals(2L, reconnected.sessionGeneration)
+    }
+
+    @Test
+    fun malformedRealtimeNavigationPathDoesNotReplaceValidRoute() {
+        val active = baseState(session = 1L).copy(
+            activeTaskId = "nav-1",
+            activeNavigationTaskId = "nav-1"
+        )
+        val map = checkNotNull(active.currentMap)
+        val valid = MapNavigationReducer.reduce(
+            active,
+            navigationPathEvent(taskId = "nav-1", map = map, sequence = 1L)
+        )
+        val malformed = MapNavigationReducer.reduce(
+            valid,
+            navigationPathEvent(
+                taskId = "nav-1",
+                map = map,
+                sequence = 2L,
+                points = listOf(MappingPose(Double.NaN, 0.0, 0.0))
+            )
+        )
+
+        assertSame(valid, malformed)
+    }
+
+    private fun navigationPathEvent(
+        taskId: String,
+        map: MapIdentityModel,
+        sequence: Long,
+        points: List<MappingPose> = listOf(
+            MappingPose(0.0, 0.0, 0.0),
+            MappingPose(2.0, 0.0, 0.0)
+        ),
+        active: Boolean = true
+    ) = MapNavigationEvent.NavigationPathReceived(
+        generation = 1L,
+        taskId = taskId,
+        map = map,
+        pathSequence = sequence,
+        sourceTimeNs = 100L + sequence,
+        frameId = "map",
+        points = points,
+        lengthM = if (active) 2.0 else 0.0,
+        active = active
+    )
 
     private fun plannedState(session: Long): MapNavigationState {
         val requested = MapNavigationReducer.reduce(

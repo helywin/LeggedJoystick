@@ -6,7 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import legged_driver.DeviceType
 import sar.robot_controller.v1.MappingGridEncoding
+import sar.robot_controller.v1.MapIdentity
 import sar.robot_controller.v1.MapInfo
+import sar.robot_controller.v1.NavigationPath
+import sar.robot_controller.v1.Pose2D
 import sar.robot_controller.v1.PoseSource
 
 class ControllerProtocolTest {
@@ -19,6 +22,18 @@ class ControllerProtocolTest {
         val encoded = MapInfo(origin_yaw_rad = 0.625).encode()
         assertEquals(0x61, encoded.first().toInt() and 0xff)
         assertEquals(0.625, MapInfo.ADAPTER.decode(encoded).origin_yaw_rad, 0.0)
+
+        val path = NavigationPath(
+            task_id = "nav-1",
+            map = MapIdentity(map_id = "map-a", revision = 7L),
+            path_sequence = 9L,
+            source_time_ns = 123L,
+            frame_id = "map",
+            points = listOf(Pose2D(x = 1.0, y = 2.0)),
+            length_m = 3.0,
+            active = true
+        )
+        assertEquals(9L, NavigationPath.ADAPTER.decode(path.encode()).path_sequence)
     }
 
     @Test
@@ -32,6 +47,7 @@ class ControllerProtocolTest {
         val message = protocol.hello("secret")
 
         assertEquals(1, message.version?.major)
+        assertEquals(1, message.version?.minor)
         assertEquals("remote-test", message.device_id)
         assertEquals(41L, message.request_id)
         assertEquals("secret", message.hello_request?.pre_shared_token)

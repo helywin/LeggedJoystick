@@ -76,11 +76,10 @@ private fun ConnectionDialogContent(
     onCancel: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null
 ) {
-    Card(
+    OperatorDialogSurface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            .padding(16.dp)
     ) {
         Column(
             modifier = Modifier

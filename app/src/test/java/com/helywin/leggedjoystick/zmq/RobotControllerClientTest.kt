@@ -24,6 +24,7 @@ import sar.robot_controller.v1.MapInfo
 import sar.robot_controller.v1.MapListResponse
 import sar.robot_controller.v1.MapPreviewChunk
 import sar.robot_controller.v1.MessageKind
+import sar.robot_controller.v1.NavigationPath
 import sar.robot_controller.v1.OperationMode
 import sar.robot_controller.v1.Pose2D
 import sar.robot_controller.v1.PathPreview
@@ -161,9 +162,11 @@ class RobotControllerClientTest {
         val mapListReceived = CountDownLatch(1)
         val previewReceived = CountDownLatch(1)
         val pathReceived = CountDownLatch(1)
+        val navigationPathReceived = CountDownLatch(1)
         var observedMaps = emptyList<MapInfo>()
         var observedPreview: MapPreviewData? = null
         var observedPath: PathPreview? = null
+        var observedNavigationPath: NavigationPath? = null
         val client = RobotControllerClient(
             endpoint = "tcp://127.0.0.1:$port",
             token = "secret",
@@ -183,6 +186,11 @@ class RobotControllerClientTest {
             override fun onPathPreview(preview: PathPreview) {
                 observedPath = preview
                 pathReceived.countDown()
+            }
+
+            override fun onNavigationPath(path: NavigationPath) {
+                observedNavigationPath = path
+                navigationPathReceived.countDown()
             }
         })
 
@@ -206,6 +214,9 @@ class RobotControllerClientTest {
             assertTrue(client.stopRuntime() > 0L)
             assertTrue(pathReceived.await(2L, TimeUnit.SECONDS))
             assertEquals("plan-task", observedPath?.task_id)
+            assertTrue(navigationPathReceived.await(2L, TimeUnit.SECONDS))
+            assertEquals("task-nav", observedNavigationPath?.task_id)
+            assertEquals(12L, observedNavigationPath?.path_sequence)
 
             val commands = generateSequence { server.commands.poll(200L, TimeUnit.MILLISECONDS) }
                 .take(6)
@@ -527,6 +538,8 @@ class RobotControllerClientTest {
                             )
                             if (message.command_request.preview_goal != null) {
                                 send(socket, identity, pathPreviewEvent(message.session_id))
+                            } else if (message.command_request.start_navigation != null) {
+                                send(socket, identity, navigationPathEvent(message.session_id))
                             }
                         }
                     }
@@ -663,6 +676,28 @@ class RobotControllerClientTest {
             )
         }
 
+        private fun navigationPathEvent(session: String): ControllerMessage {
+            return ControllerMessage(
+                version = VERSION,
+                kind = MessageKind.MESSAGE_KIND_EVENT,
+                session_id = session,
+                device_id = "sar-remote",
+                navigation_path = NavigationPath(
+                    task_id = "task-nav",
+                    map = MapIdentity(map_id = "map-a", revision = 7L),
+                    path_sequence = 12L,
+                    source_time_ns = 123_000L,
+                    frame_id = "map",
+                    points = listOf(
+                        Pose2D(x = 1.0, y = 2.0),
+                        Pose2D(x = 3.0, y = 4.0)
+                    ),
+                    length_m = 3.0,
+                    active = true
+                )
+            )
+        }
+
         private fun deflate(data: ByteArray): ByteArray {
             val deflater = Deflater(Deflater.BEST_SPEED)
             return try {
@@ -676,7 +711,7 @@ class RobotControllerClientTest {
     }
 
     private companion object {
-        val VERSION = ProtocolVersion(major = 1, minor = 0)
+        val VERSION = ProtocolVersion(major = 1, minor = 1)
 
         fun freePort(): Int = ServerSocket(0).use { it.localPort }
 

@@ -123,35 +123,41 @@ class SafetyContractTest {
     }
 
     @Test
-    fun mainScreenPlacesAuthoritativeModeAndManualTakeoverBeforeConnectionButton() {
+    fun navigationUsesOnlyCancelAndModeDisplayIsReadOnly() {
         val projectRoot = locateProjectRoot()
         val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
+        val navigationWorkspace = Files.readString(
+            projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/mapping/MapNavigationWorkspace.kt")
+        )
+        val controller = Files.readString(
+            projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt")
+        )
+        val protocol = Files.readString(projectRoot.resolve("proto/robot_controller.proto"))
         val topHud = mainScreen.substringAfter("private fun TopHud")
             .substringBefore("private fun MotionModeEntry")
 
         val modeToggleIndex = topHud.indexOf("ControlModeToggle(")
         val connectionButtonIndex = topHud.indexOf("ConnectionButton(")
         assertTrue(
-            "主控页必须把权威模式和人工接管入口放在连接按钮左侧",
+            "主控页必须把权威模式显示放在连接按钮左侧",
             modeToggleIndex >= 0 && connectionButtonIndex > modeToggleIndex
         )
         assertTrue(
-            "人工接管必须同时受连接状态、AUTO 权威状态和模式请求状态保护",
-            mainScreen.contains("isEnabled && currentMode == AppMode.APP_MODE_AUTO && !isChanging") &&
-                mainScreen.contains("modeEnabled = takeoverEnabled") &&
-                mainScreen.contains("commandEnabled = takeoverEnabled && appMode == AppMode.APP_MODE_MANUAL")
+            "权威模式显示不得再发送独立人工接管命令",
+            !mainScreen.contains("自动·接管") &&
+                !mainScreen.contains("onModeClick(AppMode.APP_MODE_MANUAL)")
         )
-        val modeToggle = mainScreen.substringAfter("private fun ControlModeToggle")
-            .substringBefore("private fun ConnectionButton")
         assertTrue(
-            "模式按钮必须直接显示权威状态，且只能发送 MANUAL 人工接管",
-            modeToggle.contains("onModeClick(AppMode.APP_MODE_MANUAL)") &&
-                modeToggle.contains("自动·接管") &&
-                modeToggle.contains("人工模式") &&
-                !modeToggle.contains("genisdog_icon_robot")
+            "导航任务只允许一个取消入口",
+            navigationWorkspace.contains("Text(\"取消导航\")") &&
+                !navigationWorkspace.contains("Text(\"人工接管\")")
         )
-        val controller = Files.readString(
-            projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt")
+        assertTrue(
+            "开发期协议和控制器不得保留人工接管任务",
+            !protocol.contains("manual_takeover") &&
+                !protocol.contains("ManualTakeoverRequest") &&
+                !controller.contains("manualTakeover") &&
+                !controller.contains("人工接管")
         )
         assertTrue(
             "App 不得绕过导航任务直接向 driver 发送 AUTO",

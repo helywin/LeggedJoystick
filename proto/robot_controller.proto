@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sar.robot_controller.v1;
 
-// 真源：sar_legged_robot/src/sar_robot_controller/proto/robot_controller.proto。
+// 主控对外协议版本。主版本不兼容时必须拒绝业务命令。
 message ProtocolVersion {
   uint32 major = 1;
   uint32 minor = 2;
@@ -61,13 +61,13 @@ enum LocalizationState {
 }
 
 enum TaskType {
+  reserved 6;
   TASK_TYPE_UNSPECIFIED = 0;
   TASK_TYPE_START_MAPPING = 1;
   TASK_TYPE_SAVE_MAP = 2;
   TASK_TYPE_LOAD_MAP = 3;
   TASK_TYPE_PLAN_PREVIEW = 4;
   TASK_TYPE_NAVIGATE_TO_POSE = 5;
-  TASK_TYPE_MANUAL_TAKEOVER = 6;
 }
 
 enum TaskState {
@@ -107,6 +107,7 @@ enum ErrorCode {
 }
 
 enum ActionCode {
+  reserved 10;
   ACTION_CODE_UNSPECIFIED = 0;
   ACTION_CODE_START_MAPPING = 1;
   ACTION_CODE_FINISH_MAPPING = 2;
@@ -117,7 +118,6 @@ enum ActionCode {
   ACTION_CODE_PREVIEW_GOAL = 7;
   ACTION_CODE_START_NAVIGATION = 8;
   ACTION_CODE_CANCEL_NAVIGATION = 9;
-  ACTION_CODE_MANUAL_TAKEOVER = 10;
   ACTION_CODE_ACKNOWLEDGE_FAULT = 11;
   ACTION_CODE_ENTER_MAINTENANCE = 12;
   ACTION_CODE_EXIT_MAINTENANCE = 13;
@@ -182,6 +182,7 @@ message TaskInfo {
   bool robot_stopped = 9;
   bool retryable = 10;
   string suggested_action = 11;
+  uint64 execution_generation = 12;
 }
 
 message HealthItem {
@@ -189,6 +190,8 @@ message HealthItem {
   HealthState state = 2;
   string reason = 3;
   double age_seconds = 4;
+  uint64 observation_generation = 5;
+  bool latched = 6;
 }
 
 message AllowedAction {
@@ -229,6 +232,7 @@ message StateSnapshot {
   int64 robot_pose_source_time_ns = 17;
   PoseSource robot_pose_source = 18;
   MappingStreamStatus mapping_stream = 19;
+  uint64 stale_task_results = 20;
 }
 
 message HelloRequest {
@@ -245,10 +249,16 @@ message HelloResponse {
   StateSnapshot snapshot = 3;
 }
 
-message Heartbeat { int64 client_utc_ns = 1; }
+message Heartbeat {
+  int64 client_utc_ns = 1;
+}
+
 message GetSnapshotRequest {}
 message ListMapsRequest {}
-message MapListResponse { repeated MapInfo maps = 1; }
+
+message MapListResponse {
+  repeated MapInfo maps = 1;
+}
 
 message GetMapPreviewRequest {
   MapIdentity map = 1;
@@ -299,11 +309,21 @@ message MappingMapChunk {
   bytes data = 4;
 }
 
-message StartMappingRequest { string draft_name = 1; }
+message StartMappingRequest {
+  string draft_name = 1;
+}
+
 message FinishMappingRequest {}
-message SaveMapRequest { string display_name = 1; }
+
+message SaveMapRequest {
+  string display_name = 1;
+}
+
 message DiscardMapRequest {}
-message SwitchMapRequest { MapIdentity map = 1; }
+
+message SwitchMapRequest {
+  MapIdentity map = 1;
+}
 
 message SetInitialPoseRequest {
   MapIdentity map = 1;
@@ -322,16 +342,37 @@ message PathPreview {
   double length_m = 4;
 }
 
-message PreviewGoalRequest { GoalPose goal = 1; }
-message StartNavigationRequest { GoalPose goal = 1; }
-message CancelNavigationRequest { string task_id = 1; }
-message ManualTakeoverRequest {}
+message NavigationPath {
+  string task_id = 1;
+  MapIdentity map = 2;
+  uint64 path_sequence = 3;
+  int64 source_time_ns = 4;
+  string frame_id = 5;
+  repeated Pose2D points = 6;
+  double length_m = 7;
+  bool active = 8;
+  string clear_reason = 9;
+}
+
+message PreviewGoalRequest {
+  GoalPose goal = 1;
+}
+
+message StartNavigationRequest {
+  GoalPose goal = 1;
+}
+
+message CancelNavigationRequest {
+  string task_id = 1;
+}
+
 message AcknowledgeFaultRequest {}
 message EnterMaintenanceRequest {}
 message ExitMaintenanceRequest {}
 message StopRuntimeRequest {}
 
 message CommandRequest {
+  reserved 19;
   uint64 expected_state_revision = 1;
   oneof command {
     StartMappingRequest start_mapping = 10;
@@ -343,7 +384,6 @@ message CommandRequest {
     PreviewGoalRequest preview_goal = 16;
     StartNavigationRequest start_navigation = 17;
     CancelNavigationRequest cancel_navigation = 18;
-    ManualTakeoverRequest manual_takeover = 19;
     AcknowledgeFaultRequest acknowledge_fault = 20;
     EnterMaintenanceRequest enter_maintenance = 21;
     ExitMaintenanceRequest exit_maintenance = 22;
@@ -362,8 +402,13 @@ message CommandResponse {
   uint64 current_state_revision = 8;
 }
 
-message TaskEvent { TaskInfo task = 1; }
-message StateEvent { StateSnapshot snapshot = 1; }
+message TaskEvent {
+  TaskInfo task = 1;
+}
+
+message StateEvent {
+  StateSnapshot snapshot = 1;
+}
 
 message TimeSyncChallenge {
   string challenge = 1;
@@ -410,5 +455,6 @@ message ControllerMessage {
     PathPreview path_preview = 36;
     GetMappingMapRequest get_mapping_map_request = 37;
     MappingMapChunk mapping_map_chunk = 38;
+    NavigationPath navigation_path = 39;
   }
 }

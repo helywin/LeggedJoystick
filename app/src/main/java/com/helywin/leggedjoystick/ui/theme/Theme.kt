@@ -1,58 +1,58 @@
 package com.helywin.leggedjoystick.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+/**
+ * 遥控器固定深色主题。
+ *
+ * 产品界面叠加在视频和地图上，不能跟随系统浅色模式或动态取色，否则 Material
+ * 默认文字、卡片和对话框会与深色工作区失去对比。
+ */
+internal val OperatorColorScheme = darkColorScheme(
+    primary = OperatorPrimary,
+    onPrimary = OperatorOnPrimary,
+    primaryContainer = OperatorPrimaryContainer,
+    onPrimaryContainer = OperatorOnPrimaryContainer,
+    inversePrimary = OperatorPrimary,
+    secondary = OperatorSecondary,
+    onSecondary = OperatorOnSecondary,
+    secondaryContainer = OperatorSecondaryContainer,
+    onSecondaryContainer = OperatorOnSecondaryContainer,
+    tertiary = OperatorWarning,
+    onTertiary = OperatorOnWarning,
+    background = OperatorBackground,
+    onBackground = OperatorOnBackground,
+    surface = OperatorSurface,
+    onSurface = OperatorOnSurface,
+    surfaceVariant = OperatorSurfaceContainer,
+    onSurfaceVariant = OperatorOnSurfaceVariant,
+    surfaceTint = Color.Transparent,
+    inverseSurface = OperatorOnSurface,
+    inverseOnSurface = OperatorBackground,
+    error = OperatorError,
+    onError = OperatorOnError,
+    errorContainer = OperatorErrorContainer,
+    onErrorContainer = OperatorOnErrorContainer,
+    outline = OperatorOutline,
+    outlineVariant = OperatorOutlineVariant,
+    scrim = Color.Black,
+    surfaceBright = OperatorSurfaceHighest,
+    surfaceDim = OperatorBackground,
+    surfaceContainer = OperatorSurfaceContainer,
+    surfaceContainerHigh = OperatorSurfaceFloating,
+    surfaceContainerHighest = OperatorSurfaceHighest,
+    surfaceContainerLow = OperatorSurfaceLow,
+    surfaceContainerLowest = OperatorBackground
 )
 
 @Composable
-fun LeggedJoystickTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun LeggedJoystickTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
+        colorScheme = OperatorColorScheme,
+        typography = OperatorTypography,
         content = content
     )
 }

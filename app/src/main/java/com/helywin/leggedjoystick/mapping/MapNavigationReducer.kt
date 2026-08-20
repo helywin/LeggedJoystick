@@ -35,6 +35,15 @@ data class MapPathPreview(
     val lengthM: Double
 )
 
+data class MapNavigationPath(
+    val taskId: String,
+    val map: MapIdentityModel,
+    val pathSequence: Long,
+    val sourceTimeNs: Long,
+    val points: List<MappingPose>,
+    val lengthM: Double
+)
+
 data class MapNavigationState(
     val sessionGeneration: Long = 0L,
     val maps: List<SavedMapDescriptor> = emptyList(),
@@ -44,12 +53,14 @@ data class MapNavigationState(
     val localizationStatus: MapLocalizationStatus = MapLocalizationStatus.UNKNOWN,
     val controlOwner: MapControlOwner = MapControlOwner.DISABLED,
     val activeTaskId: String? = null,
+    val activeNavigationTaskId: String? = null,
     val robotPose: MappingPose? = null,
     val initialPoseDraft: MappingPose? = null,
     val targetDraft: MappingPose? = null,
     val selectionGeneration: Long = 0L,
     val pendingPlan: PlanRequestToken? = null,
-    val pathPreview: MapPathPreview? = null
+    val pathPreview: MapPathPreview? = null,
+    val navigationPath: MapNavigationPath? = null
 ) {
     val initialPoseMap: MapIdentityModel?
         get() = loadingMap ?: currentMap
@@ -74,6 +85,7 @@ sealed interface MapNavigationEvent {
         val localizationStatus: MapLocalizationStatus,
         val controlOwner: MapControlOwner,
         val activeTaskId: String?,
+        val activeNavigationTaskId: String? = null,
         val robotPose: MappingPose?
     ) : MapNavigationEvent
 
@@ -88,6 +100,18 @@ sealed interface MapNavigationEvent {
         val selectionGeneration: Long,
         val points: List<MappingPose>,
         val lengthM: Double
+    ) : MapNavigationEvent
+
+    data class NavigationPathReceived(
+        val generation: Long,
+        val taskId: String,
+        val map: MapIdentityModel,
+        val pathSequence: Long,
+        val sourceTimeNs: Long,
+        val frameId: String,
+        val points: List<MappingPose>,
+        val lengthM: Double,
+        val active: Boolean
     ) : MapNavigationEvent
 }
 
@@ -107,6 +131,7 @@ object MapNavigationReducer {
             is MapNavigationEvent.EditTarget -> editTarget(state, event.pose)
             is MapNavigationEvent.PlanRequested -> requestPlan(state, event.taskId)
             is MapNavigationEvent.PathReceived -> receivePath(state, event)
+            is MapNavigationEvent.NavigationPathReceived -> receiveNavigationPath(state, event)
         }
     }
 
@@ -139,8 +164,8 @@ object MapNavigationReducer {
         val localizationStartedTracking =
             state.localizationStatus != MapLocalizationStatus.TRACKING &&
                 event.localizationStatus == MapLocalizationStatus.TRACKING
-        val manualTakeover = state.controlOwner == MapControlOwner.NAVIGATION_AUTO &&
-            event.controlOwner == MapControlOwner.REMOTE_MANUAL
+        val navigationTaskChanged =
+            state.activeNavigationTaskId != event.activeNavigationTaskId
 
         var next = state.copy(
             currentMap = event.currentMap,
@@ -148,6 +173,7 @@ object MapNavigationReducer {
             localizationStatus = event.localizationStatus,
             controlOwner = event.controlOwner,
             activeTaskId = event.activeTaskId,
+            activeNavigationTaskId = event.activeNavigationTaskId,
             robotPose = event.robotPose?.takeIf { it.isValid() }
         )
         if (!event.localizationRuntimeActive) {
@@ -158,8 +184,8 @@ object MapNavigationReducer {
             next = next.copy(initialPoseDraft = null)
         } else if (localizationLost) {
             next = clearTarget(next)
-        } else if (manualTakeover) {
-            next = next.copy(pendingPlan = null, pathPreview = null)
+        } else if (navigationTaskChanged) {
+            next = next.copy(navigationPath = null)
         }
         return next
     }
@@ -208,13 +234,47 @@ object MapNavigationReducer {
         )
     }
 
+    private fun receiveNavigationPath(
+        state: MapNavigationState,
+        event: MapNavigationEvent.NavigationPathReceived
+    ): MapNavigationState {
+        if (event.generation != state.sessionGeneration || event.taskId.isBlank() ||
+            event.taskId != state.activeNavigationTaskId ||
+            event.map != state.currentMap || event.pathSequence <= 0L
+        ) {
+            return state
+        }
+        val currentSequence = state.navigationPath?.pathSequence ?: 0L
+        if (event.pathSequence <= currentSequence) return state
+        if (!event.active) {
+            return state.copy(navigationPath = null)
+        }
+        if (event.frameId != "map" || event.sourceTimeNs <= 0L ||
+            event.lengthM < 0.0 || !event.lengthM.isFinite() ||
+            event.points.isEmpty() || event.points.any { !it.isValid() }
+        ) {
+            return state
+        }
+        return state.copy(
+            navigationPath = MapNavigationPath(
+                taskId = event.taskId,
+                map = event.map,
+                pathSequence = event.pathSequence,
+                sourceTimeNs = event.sourceTimeNs,
+                points = event.points,
+                lengthM = event.lengthM
+            )
+        )
+    }
+
     private fun clearCoordinates(state: MapNavigationState): MapNavigationState {
         return state.copy(
             initialPoseDraft = null,
             targetDraft = null,
             selectionGeneration = state.selectionGeneration + 1L,
             pendingPlan = null,
-            pathPreview = null
+            pathPreview = null,
+            navigationPath = null
         )
     }
 

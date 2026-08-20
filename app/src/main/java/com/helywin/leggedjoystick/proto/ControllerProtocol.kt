@@ -12,7 +12,6 @@ import sar.robot_controller.v1.GoalPose
 import sar.robot_controller.v1.Heartbeat
 import sar.robot_controller.v1.HelloRequest
 import sar.robot_controller.v1.ListMapsRequest
-import sar.robot_controller.v1.ManualTakeoverRequest
 import sar.robot_controller.v1.MapIdentity
 import sar.robot_controller.v1.MessageKind
 import sar.robot_controller.v1.Pose2D
@@ -203,10 +202,6 @@ class ControllerProtocol(
         return command(sessionId, stateRevision) { stop_runtime(StopRuntimeRequest()) }
     }
 
-    fun manualTakeover(sessionId: String, stateRevision: Long): ControllerMessage {
-        return command(sessionId, stateRevision) { manual_takeover(ManualTakeoverRequest()) }
-    }
-
     fun timeSyncCommit(
         sessionId: String,
         challenge: TimeSyncChallenge,
@@ -295,7 +290,7 @@ class ControllerProtocol(
     private fun nextRequestId(): Long = requestId.incrementAndGet()
 
     companion object {
-        val VERSION = ProtocolVersion(major = 1, minor = 0)
+        val VERSION = ProtocolVersion(major = 1, minor = 1)
         const val DEFAULT_MAP_CHUNK_BYTES = 128 * 1024
     }
 }

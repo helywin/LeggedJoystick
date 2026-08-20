@@ -91,6 +91,7 @@ import sar.robot_controller.v1.LocalizationState
 import sar.robot_controller.v1.MapIdentity
 import sar.robot_controller.v1.MapInfo
 import sar.robot_controller.v1.MappingStreamStatus
+import sar.robot_controller.v1.NavigationPath
 import sar.robot_controller.v1.OperationMode
 import sar.robot_controller.v1.PathPreview
 import sar.robot_controller.v1.Pose2D
@@ -241,9 +242,6 @@ class ControllerState {
     var controllerCommandMessage by mutableStateOf("")
         private set
 
-    private var pendingManualRequestId = 0L
-    private var pendingManualResponseAccepted = false
-    private var pendingManualStateObserved = false
     private var pendingPlanRequestId = 0L
 
     // 衍生状态
@@ -426,9 +424,6 @@ class ControllerState {
             controllerTask = null
             controllerTimeSync = null
             pendingControllerRequestId = 0L
-            pendingManualRequestId = 0L
-            pendingManualResponseAccepted = false
-            pendingManualStateObserved = false
             isRobotModeChanging = false
         }
     }
@@ -450,6 +445,10 @@ class ControllerState {
                 localizationStatus = snapshot.localization_state.toMapLocalizationStatus(),
                 controlOwner = snapshot.control_owner.toMapControlOwner(),
                 activeTaskId = snapshot.active_task?.task_id?.ifEmpty { null },
+                activeNavigationTaskId = snapshot.active_task
+                    ?.takeIf { it.type == TaskType.TASK_TYPE_NAVIGATE_TO_POSE }
+                    ?.task_id
+                    ?.ifEmpty { null },
                 robotPose = snapshot.robot_pose?.let { MappingPose(it.x, it.y, it.yaw) }
             )
         )
@@ -463,19 +462,10 @@ class ControllerState {
         }
         when (snapshot.control_owner) {
             ControlOwner.CONTROL_OWNER_REMOTE_MANUAL -> {
-                if (pendingManualRequestId != 0L) {
-                    pendingManualStateObserved = true
-                    completeManualTransitionIfReady()
-                } else {
-                    confirmRobotMode(AppMode.APP_MODE_MANUAL)
-                }
+                confirmRobotMode(AppMode.APP_MODE_MANUAL)
             }
             ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO -> {
-                if (pendingManualRequestId == 0L) {
-                    confirmRobotMode(AppMode.APP_MODE_AUTO)
-                } else {
-                    updateRobotMode(AppMode.APP_MODE_AUTO)
-                }
+                confirmRobotMode(AppMode.APP_MODE_AUTO)
             }
             else -> Unit
         }
@@ -508,7 +498,7 @@ class ControllerState {
         pendingPlanRequestId = 0L
     }
 
-    fun updateMapList(maps: List<MapInfo>) {
+    fun updateMapList(maps: List<MapInfo>): MapIdentityModel? {
         mapNavigationState = MapNavigationReducer.reduce(
             mapNavigationState,
             MapNavigationEvent.MapsReceived(
@@ -519,6 +509,10 @@ class ControllerState {
         mapNavigationError = ""
         if (savedMapPreview?.key?.map != mapNavigationState.selectedMap) {
             savedMapPreview = null
+        }
+        // 主控快照恢复当前地图后，地图列表会自动补全选择；该路径也必须继续拉取预览。
+        return mapNavigationState.selectedMap?.takeIf {
+            savedMapPreview?.key?.map != it
         }
     }
 
@@ -541,6 +535,24 @@ class ControllerState {
                 selectionGeneration = pending.selectionGeneration,
                 points = preview.points.map { MappingPose(it.x, it.y, it.yaw) },
                 lengthM = preview.length_m
+            )
+        )
+    }
+
+    fun updateNavigationPath(path: NavigationPath) {
+        val identity = path.map?.toIdentityModel() ?: return
+        mapNavigationState = MapNavigationReducer.reduce(
+            mapNavigationState,
+            MapNavigationEvent.NavigationPathReceived(
+                generation = mapNavigationState.sessionGeneration,
+                taskId = path.task_id,
+                map = identity,
+                pathSequence = path.path_sequence,
+                sourceTimeNs = path.source_time_ns,
+                frameId = path.frame_id,
+                points = path.points.map { MappingPose(it.x, it.y, it.yaw) },
+                lengthM = path.length_m,
+                active = path.active
             )
         )
     }
@@ -582,14 +594,6 @@ class ControllerState {
         pendingPlanRequestId = requestId
     }
 
-    fun markManualControllerRequest(requestId: Long, description: String) {
-        markControllerRequest(requestId, description)
-        pendingManualRequestId = requestId
-        pendingManualResponseAccepted = false
-        pendingManualStateObserved = false
-        isRobotModeChanging = true
-    }
-
     fun completeControllerRequest(requestId: Long, response: CommandResponse) {
         if (pendingControllerRequestId == requestId) {
             pendingControllerRequestId = 0L
@@ -612,16 +616,6 @@ class ControllerState {
                 )
             }
             pendingPlanRequestId = 0L
-        }
-        if (requestId == pendingManualRequestId) {
-            if (response.stage == CommandStage.COMMAND_STAGE_ACCEPTED) {
-                pendingManualResponseAccepted = true
-                completeManualTransitionIfReady()
-            } else if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
-                pendingManualRequestId = 0L
-                pendingManualResponseAccepted = false
-                pendingManualStateObserved = false
-            }
         }
     }
 
@@ -673,15 +667,6 @@ class ControllerState {
             ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO -> MapControlOwner.NAVIGATION_AUTO
             else -> MapControlOwner.DISABLED
         }
-    }
-
-    private fun completeManualTransitionIfReady() {
-        if (!pendingManualResponseAccepted || !pendingManualStateObserved) return
-        pendingManualRequestId = 0L
-        pendingManualResponseAccepted = false
-        pendingManualStateObserved = false
-        pendingControllerRequestId = 0L
-        confirmRobotMode(AppMode.APP_MODE_MANUAL)
     }
 
     fun setSpeedLevel(level: SpeedLevel) {
@@ -876,9 +861,6 @@ object RobotControllerImpl : Controller {
                         settingsState.updateControllerConnection(state, message)
                         if (state == RobotControllerConnectionState.CONNECTED) {
                             controllerClient.requestMapList()
-                            if (settingsState.connectionState == ConnectionState.CONNECTED) {
-                                requestManualTakeoverFromController("连接后请求人工控制")
-                            }
                         } else if (
                             (state == RobotControllerConnectionState.AUTHENTICATION_FAILED ||
                                 state == RobotControllerConnectionState.CONNECTION_FAILED) &&
@@ -924,7 +906,11 @@ object RobotControllerImpl : Controller {
                 }
 
                 override fun onMapList(requestId: Long, maps: List<MapInfo>) {
-                    scope.launch { settingsState.updateMapList(maps) }
+                    scope.launch {
+                        settingsState.updateMapList(maps)?.let { map ->
+                            requestSavedMapPreview(map.mapId, map.revision)
+                        }
+                    }
                 }
 
                 override fun onMapPreview(preview: MapPreviewData) {
@@ -946,6 +932,10 @@ object RobotControllerImpl : Controller {
 
                 override fun onPathPreview(preview: PathPreview) {
                     scope.launch { settingsState.updatePathPreview(preview) }
+                }
+
+                override fun onNavigationPath(path: NavigationPath) {
+                    scope.launch { settingsState.updateNavigationPath(path) }
                 }
 
                 override fun onMapNavigationError(reason: String) {
@@ -1200,17 +1190,17 @@ object RobotControllerImpl : Controller {
         }
         when (settingsState.controllerConnectionState) {
             RobotControllerConnectionState.CONNECTED -> {
-                requestManualTakeoverFromController("driver 接管后请求人工控制")
+                requestCancelForManualControl("driver 接管后取消自动导航")
             }
             RobotControllerConnectionState.CONNECTING -> {
-                Timber.i("[Controller] 等待主控握手后再请求人工控制，避免遗留导航目标")
+                Timber.i("[Controller] 等待主控握手后再取消自动导航，避免遗留目标")
             }
             else -> requestDriverManualFallback("主控离线，driver 接管后进入 MANUAL 安全降级")
         }
         Timber.i("[Controller] 接管后默认设置低速，模式切换由主控闭环确认")
     }
 
-    private fun requestManualTakeoverFromController(description: String) {
+    private fun requestCancelForManualControl(description: String) {
         if (settingsState.controllerSnapshot?.control_owner ==
             ControlOwner.CONTROL_OWNER_REMOTE_MANUAL
         ) {
@@ -1218,14 +1208,16 @@ object RobotControllerImpl : Controller {
             Timber.i("[Controller] 主控已确认人工控制，无需重复接管")
             return
         }
-        val requestId = controllerClient.manualTakeover()
+        val taskId = settingsState.mapNavigationState.activeNavigationTaskId.orEmpty()
+        val requestId = controllerClient.cancelNavigation(taskId)
         if (requestId == 0L) {
             settingsState.updateRobotModeChangingState(false)
-            Timber.w("[Controller] 无法向主控发送人工接管请求")
+            Timber.w("[Controller] 无法向主控发送取消导航请求")
             return
         }
-        settingsState.markManualControllerRequest(requestId, description)
-        Timber.i("[Controller] 已发送人工接管请求: request=%d", requestId)
+        settingsState.updateRobotModeChangingState(true)
+        settingsState.markControllerRequest(requestId, description)
+        Timber.i("[Controller] 已发送取消导航请求: request=%d", requestId)
     }
 
     private fun requestDriverManualFallback(description: String) {
@@ -1488,12 +1480,12 @@ object RobotControllerImpl : Controller {
         }
 
         if (isEngineeringMock()) {
-            applyMockManualTakeover()
+            applyMockCancelNavigation()
             return
         }
 
         if (settingsState.controllerConnectionState == RobotControllerConnectionState.CONNECTED) {
-            requestManualTakeoverFromController("操作者请求人工接管")
+            requestCancelForManualControl("操作者请求取消自动导航")
         } else {
             requestDriverManualFallback("主控离线，操作者请求 MANUAL 安全降级")
         }
@@ -1697,6 +1689,20 @@ object RobotControllerImpl : Controller {
                     activeTaskId = taskId
                 )
             )
+            settingsState.updateNavigationPath(
+                NavigationPath(
+                    task_id = taskId,
+                    map = MapIdentity(map_id = map.mapId, revision = map.revision),
+                    path_sequence = 1L,
+                    source_time_ns = System.currentTimeMillis() * 1_000_000L,
+                    frame_id = "map",
+                    points = preview.points.map {
+                        Pose2D(x = it.x, y = it.y, yaw = it.yaw)
+                    },
+                    length_m = preview.lengthM,
+                    active = true
+                )
+            )
             settingsState.updateLastCommand("导航", "工程 Mock 已开始：$taskId")
             return
         }
@@ -1711,8 +1717,14 @@ object RobotControllerImpl : Controller {
     }
 
     override fun cancelNavigation() {
-        val taskId = settingsState.mapNavigationState.activeTaskId
-            ?: return settingsState.updateMapNavigationError("当前没有可取消的导航任务")
+        val state = settingsState.mapNavigationState
+        val taskId = state.activeNavigationTaskId.orEmpty()
+        if (taskId.isEmpty() &&
+            state.controlOwner != MapControlOwner.NAVIGATION_AUTO
+        ) {
+            settingsState.updateMapNavigationError("当前没有可取消的导航任务")
+            return
+        }
         if (isEngineeringMock()) {
             val state = settingsState.mapNavigationState
             val map = state.currentMap
@@ -2300,7 +2312,7 @@ object RobotControllerImpl : Controller {
         }
     }
 
-    private fun applyMockManualTakeover() {
+    private fun applyMockCancelNavigation() {
         val current = settingsState.controllerSnapshot ?: mockSnapshot(OperationMode.OPERATION_MODE_STANDBY)
         settingsState.updateRobotModeChangingState(true)
         val currentMap = settingsState.mapNavigationState.currentMap
@@ -2310,7 +2322,7 @@ object RobotControllerImpl : Controller {
                     state_revision = current.state_revision + 1L,
                     control_owner = ControlOwner.CONTROL_OWNER_REMOTE_MANUAL,
                     active_task = null,
-                    recent_transition = "mock_manual_takeover"
+                    recent_transition = "mock_navigation_canceled"
                 )
             )
         } else {
@@ -2323,7 +2335,7 @@ object RobotControllerImpl : Controller {
                 )
             )
         }
-        settingsState.updateLastCommand("人工接管", "工程 Mock 已确认")
+        settingsState.updateLastCommand("取消导航", "工程 Mock 已确认并恢复 MANUAL")
     }
 
     private fun applyMockControllerState() {
@@ -2417,8 +2429,7 @@ object RobotControllerImpl : Controller {
         val map = ensureMockSavedMap().info
         val allowed = if (controlOwner == ControlOwner.CONTROL_OWNER_NAVIGATION_AUTO) {
             setOf(
-                ActionCode.ACTION_CODE_CANCEL_NAVIGATION,
-                ActionCode.ACTION_CODE_MANUAL_TAKEOVER
+                ActionCode.ACTION_CODE_CANCEL_NAVIGATION
             )
         } else {
             when (localization) {
@@ -2450,7 +2461,13 @@ object RobotControllerImpl : Controller {
                 identity = MapIdentity(map_id = identity.mapId, revision = identity.revision),
                 current = true
             ),
-            active_task = activeTaskId?.let { TaskInfo(task_id = it) },
+            active_task = activeTaskId?.let {
+                TaskInfo(
+                    task_id = it,
+                    type = TaskType.TASK_TYPE_NAVIGATE_TO_POSE,
+                    map = MapIdentity(map_id = identity.mapId, revision = identity.revision)
+                )
+            },
             robot_pose = robotPose?.let { Pose2D(x = it.x, y = it.y, yaw = it.yaw) },
             robot_pose_frame_id = if (robotPose == null) "" else "map",
             robot_pose_source_time_ns = if (robotPose == null) {
@@ -2814,7 +2831,7 @@ object RobotControllerImpl : Controller {
         }
 
         if (settingsState.robotMode != AppMode.APP_MODE_MANUAL) {
-            Timber.w("[Controller] 当前由自动导航控制，需先人工接管才能发送%s", commandName)
+            Timber.w("[Controller] 当前由自动导航控制，需先取消导航才能发送%s", commandName)
             return false
         }
 
