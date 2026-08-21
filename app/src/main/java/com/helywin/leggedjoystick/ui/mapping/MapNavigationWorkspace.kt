@@ -111,6 +111,7 @@ fun MapNavigationWorkspace(
     state: ControllerState,
     controller: Controller,
     onClose: () -> Unit,
+    onSwitchToMapping: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var fullscreen by remember { mutableStateOf(false) }
@@ -200,6 +201,7 @@ fun MapNavigationWorkspace(
                 NavigationHeader(
                     state = state,
                     onClose = onClose,
+                    onSwitchToMapping = onSwitchToMapping,
                     onOpenMaps = { mapDialogVisible = true },
                     onOpenStatus = { statusDialogVisible = true }
                 )
@@ -297,6 +299,7 @@ fun MapNavigationWorkspace(
 private fun NavigationHeader(
     state: ControllerState,
     onClose: () -> Unit,
+    onSwitchToMapping: () -> Unit,
     onOpenMaps: () -> Unit,
     onOpenStatus: () -> Unit
 ) {
@@ -350,6 +353,9 @@ private fun NavigationHeader(
             }
         )
         Spacer(Modifier.weight(1f))
+        TextButton(onClick = onSwitchToMapping) {
+            Text("切换到建图")
+        }
         TextButton(onClick = onOpenMaps) {
             Icon(Icons.Default.Map, contentDescription = null)
             Spacer(Modifier.width(4.dp))

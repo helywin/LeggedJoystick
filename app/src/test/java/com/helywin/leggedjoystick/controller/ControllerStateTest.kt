@@ -209,6 +209,27 @@ class ControllerStateTest {
         )
         assertEquals(AppMode.APP_MODE_MANUAL, state.robotMode)
         assertFalse(state.isRobotModeChanging)
+        assertEquals(17L, state.lastControllerCommandResult?.requestId)
+        assertEquals(true, state.lastControllerCommandResult?.accepted)
+    }
+
+    @Test
+    fun rejectedControllerCommandKeepsRequestIdentityAndReasonForWorkflowRecovery() {
+        val state = ControllerState()
+        state.markControllerRequest(23L, "结束建图")
+
+        state.completeControllerRequest(
+            23L,
+            CommandResponse(
+                stage = CommandStage.COMMAND_STAGE_REJECTED,
+                error_message = "当前状态不允许结束建图"
+            )
+        )
+
+        assertEquals(0L, state.pendingControllerRequestId)
+        assertEquals(23L, state.lastControllerCommandResult?.requestId)
+        assertEquals(false, state.lastControllerCommandResult?.accepted)
+        assertEquals("当前状态不允许结束建图", state.lastControllerCommandResult?.message)
     }
 
     @Test

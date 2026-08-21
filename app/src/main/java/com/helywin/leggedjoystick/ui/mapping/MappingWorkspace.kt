@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +83,7 @@ fun MappingWorkspace(
     state: ControllerState,
     controller: Controller,
     onClose: () -> Unit,
+    onSwitchToNavigation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val snapshot = state.controllerSnapshot
@@ -110,7 +112,7 @@ fun MappingWorkspace(
             )
         } else {
             Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
-                MappingHeader(state, onClose)
+                MappingHeader(state, onClose, onSwitchToNavigation)
                 Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -160,7 +162,11 @@ fun MappingWorkspace(
 }
 
 @Composable
-private fun MappingHeader(state: ControllerState, onClose: () -> Unit) {
+private fun MappingHeader(
+    state: ControllerState,
+    onClose: () -> Unit,
+    onSwitchToNavigation: () -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth().height(40.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -189,6 +195,10 @@ private fun MappingHeader(state: ControllerState, onClose: () -> Unit) {
             color = Color(0xFFB7D7D5),
             fontSize = 14.sp
         )
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = onSwitchToNavigation) {
+            Text("切换到导航")
+        }
     }
 }
 

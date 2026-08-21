@@ -111,6 +111,12 @@ import kotlin.math.roundToInt
 /**
  * 应用状态管理类
  */
+data class ControllerCommandResult(
+    val requestId: Long,
+    val accepted: Boolean,
+    val message: String
+)
+
 @Stable
 class ControllerState {
     // 连接状态
@@ -240,6 +246,9 @@ class ControllerState {
         private set
 
     var controllerCommandMessage by mutableStateOf("")
+        private set
+
+    var lastControllerCommandResult by mutableStateOf<ControllerCommandResult?>(null)
         private set
 
     private var pendingPlanRequestId = 0L
@@ -424,6 +433,7 @@ class ControllerState {
             controllerTask = null
             controllerTimeSync = null
             pendingControllerRequestId = 0L
+            lastControllerCommandResult = null
             isRobotModeChanging = false
         }
     }
@@ -587,6 +597,7 @@ class ControllerState {
     fun markControllerRequest(requestId: Long, description: String) {
         pendingControllerRequestId = requestId
         controllerCommandMessage = description
+        lastControllerCommandResult = null
     }
 
     fun markPlanControllerRequest(requestId: Long, description: String) {
@@ -603,6 +614,11 @@ class ControllerState {
         } else {
             response.error_message.ifEmpty { "命令被主控拒绝：${response.error_code}" }
         }
+        lastControllerCommandResult = ControllerCommandResult(
+            requestId = requestId,
+            accepted = response.stage == CommandStage.COMMAND_STAGE_ACCEPTED,
+            message = controllerCommandMessage
+        )
         if (response.stage == CommandStage.COMMAND_STAGE_REJECTED) {
             isRobotModeChanging = false
         }

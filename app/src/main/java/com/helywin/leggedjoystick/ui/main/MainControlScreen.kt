@@ -9,6 +9,7 @@
 
 package com.helywin.leggedjoystick.ui.main
 
+import android.os.SystemClock
 import android.view.TextureView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -36,6 +37,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -48,9 +50,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,6 +76,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -102,6 +108,7 @@ import com.helywin.leggedjoystick.ui.video.RtspVideoScaleMode
 import com.helywin.leggedjoystick.ui.video.RtspVideoSlot
 import com.helywin.leggedjoystick.ui.video.RtspVideoSurface
 import com.helywin.leggedjoystick.ui.video.captureRtspSurfaceSnapshot
+import kotlinx.coroutines.delay
 import legged_driver.AppMode
 import legged_driver.ConnectionState as DriverConnectionState
 import legged_driver.FaultLevel
@@ -109,6 +116,9 @@ import legged_driver.HeadDirection
 import legged_driver.MotionStatus
 import legged_driver.SportMode
 import sar.robot_controller.v1.OperationMode
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private enum class RightToolPanel {
     LIGHT
@@ -118,6 +128,14 @@ private enum class PrimaryVideoSource {
     HEAD,
     TAIL
 }
+
+private data class ActiveWorkflowSwitch(
+    val request: WorkflowSwitchRequest,
+    val dispatchedCommand: WorkflowSwitchCommand? = null,
+    val dispatchedRequestId: Long = 0L,
+    val dispatchedAtMs: Long = 0L,
+    val failure: String = ""
+)
 
 /**
  * 主控制界面。
@@ -166,13 +184,113 @@ fun MainControlScreen(
     var mappingWorkspaceVisible by remember { mutableStateOf(false) }
     var navigationWorkspaceVisible by remember { mutableStateOf(false) }
     var taskHubVisible by remember { mutableStateOf(false) }
-    LaunchedEffect(controllerOperationMode) {
-        if (controllerOperationMode.isMappingMode()) {
-            mappingWorkspaceVisible = true
-            navigationWorkspaceVisible = false
-        } else if (controllerOperationMode.isLocalizationMode()) {
-            navigationWorkspaceVisible = true
-            mappingWorkspaceVisible = false
+    var workflowSwitchPrompt by remember { mutableStateOf<TaskWorkspace?>(null) }
+    var activeWorkflowSwitch by remember { mutableStateOf<ActiveWorkflowSwitch?>(null) }
+
+    val openWorkspace: (TaskWorkspace) -> Unit = { target ->
+        mappingWorkspaceVisible = target == TaskWorkspace.MAPPING
+        navigationWorkspaceVisible = target == TaskWorkspace.NAVIGATION
+    }
+    val requestWorkspace: (TaskWorkspace) -> Unit = { target ->
+        val requiresSwitch = when (target) {
+            TaskWorkspace.MAPPING -> controllerOperationMode.isLocalizationMode()
+            TaskWorkspace.NAVIGATION -> controllerOperationMode.isMappingMode()
+        }
+        if (requiresSwitch) {
+            workflowSwitchPrompt = target
+        } else {
+            openWorkspace(target)
+        }
+    }
+    val switchAuthority = WorkflowSwitchAuthority(
+        sessionGeneration = settingsState.mapNavigationState.sessionGeneration,
+        connected = settingsState.controllerConnectionState ==
+            com.helywin.leggedjoystick.zmq.RobotControllerConnectionState.CONNECTED,
+        mode = controllerOperationMode ?: OperationMode.OPERATION_MODE_UNSPECIFIED,
+        allowedActions = settingsState.controllerSnapshot?.allowed_actions.orEmpty()
+            .filter { it.allowed }
+            .map { it.action }
+            .toSet(),
+        requestInFlight = settingsState.pendingControllerRequestId != 0L
+    )
+    val workflowSwitchPlan = activeWorkflowSwitch
+        ?.takeIf { it.failure.isEmpty() }
+        ?.let {
+            WorkflowSwitchPlanner.plan(
+                request = it.request,
+                authority = switchAuthority,
+                dispatched = it.dispatchedCommand
+            )
+        }
+
+    LaunchedEffect(
+        workflowSwitchPlan,
+        settingsState.controllerSnapshot?.state_revision,
+        settingsState.pendingControllerRequestId
+    ) {
+        val active = activeWorkflowSwitch ?: return@LaunchedEffect
+        when (val plan = workflowSwitchPlan) {
+            WorkflowSwitchPlan.Complete -> {
+                openWorkspace(active.request.target)
+                activeWorkflowSwitch = null
+            }
+            is WorkflowSwitchPlan.Execute -> {
+                val modeBefore = settingsState.controllerSnapshot?.operation_mode
+                when (plan.command) {
+                    WorkflowSwitchCommand.STOP_RUNTIME -> controller.stopLocalizationRuntime()
+                    WorkflowSwitchCommand.FINISH_MAPPING -> controller.finishMapping()
+                    WorkflowSwitchCommand.SAVE_MAP -> {
+                        controller.saveMap(active.request.mapDisplayName)
+                    }
+                    WorkflowSwitchCommand.DISCARD_MAP -> controller.discardMap()
+                }
+                val requestId = settingsState.pendingControllerRequestId
+                val modeAfter = settingsState.controllerSnapshot?.operation_mode
+                activeWorkflowSwitch = active.copy(
+                    dispatchedCommand = plan.command,
+                    dispatchedRequestId = requestId,
+                    dispatchedAtMs = SystemClock.elapsedRealtime(),
+                    failure = if (requestId == 0L && modeAfter == modeBefore) {
+                        settingsState.mapNavigationError
+                            .ifEmpty { settingsState.mappingError }
+                            .ifEmpty { "${plan.command.displayName()}请求未进入主控队列" }
+                    } else {
+                        ""
+                    }
+                )
+            }
+            is WorkflowSwitchPlan.Failed -> {
+                activeWorkflowSwitch = active.copy(failure = plan.message)
+            }
+            is WorkflowSwitchPlan.Wait,
+            null -> Unit
+        }
+    }
+
+    LaunchedEffect(settingsState.lastControllerCommandResult) {
+        val result = settingsState.lastControllerCommandResult ?: return@LaunchedEffect
+        val active = activeWorkflowSwitch ?: return@LaunchedEffect
+        if (active.dispatchedRequestId == result.requestId && !result.accepted) {
+            activeWorkflowSwitch = active.copy(failure = result.message)
+        }
+    }
+
+    LaunchedEffect(
+        activeWorkflowSwitch?.dispatchedCommand,
+        activeWorkflowSwitch?.dispatchedAtMs
+    ) {
+        val active = activeWorkflowSwitch ?: return@LaunchedEffect
+        val command = active.dispatchedCommand ?: return@LaunchedEffect
+        val dispatchedAtMs = active.dispatchedAtMs
+        delay(45_000L)
+        val current = activeWorkflowSwitch ?: return@LaunchedEffect
+        if (current.dispatchedCommand == command &&
+            current.dispatchedAtMs == dispatchedAtMs &&
+            current.failure.isEmpty()
+        ) {
+            activeWorkflowSwitch = current.copy(
+                failure = "等待${command.displayName()}后的权威状态更新超时，请核对当前状态后重试"
+            )
         }
     }
     val primaryVideoUrl = when (primaryVideoSource) {
@@ -221,7 +339,6 @@ fun MainControlScreen(
                     .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp)
             ) {
                 TopHud(
-                    appMode = appMode,
                     connectionState = connectionState,
                     onConnectClick = {
                         when (connectionState) {
@@ -372,6 +489,9 @@ fun MainControlScreen(
                     state = settingsState,
                     controller = controller,
                     onClose = { mappingWorkspaceVisible = false },
+                    onSwitchToNavigation = {
+                        requestWorkspace(TaskWorkspace.NAVIGATION)
+                    },
                     modifier = Modifier.matchParentSize().zIndex(30f)
                 )
             }
@@ -380,6 +500,9 @@ fun MainControlScreen(
                     state = settingsState,
                     controller = controller,
                     onClose = { navigationWorkspaceVisible = false },
+                    onSwitchToMapping = {
+                        requestWorkspace(TaskWorkspace.MAPPING)
+                    },
                     modifier = Modifier.matchParentSize().zIndex(30f)
                 )
             }
@@ -391,13 +514,46 @@ fun MainControlScreen(
             onDismiss = { taskHubVisible = false },
             onMappingClick = {
                 taskHubVisible = false
-                mappingWorkspaceVisible = true
-                navigationWorkspaceVisible = false
+                requestWorkspace(TaskWorkspace.MAPPING)
             },
             onNavigationClick = {
                 taskHubVisible = false
-                navigationWorkspaceVisible = true
-                mappingWorkspaceVisible = false
+                requestWorkspace(TaskWorkspace.NAVIGATION)
+            }
+        )
+    }
+
+    workflowSwitchPrompt?.let { target ->
+        WorkflowSwitchPromptDialog(
+            target = target,
+            operationMode = controllerOperationMode,
+            onDismiss = { workflowSwitchPrompt = null },
+            onConfirm = { exitChoice, mapName ->
+                workflowSwitchPrompt = null
+                activeWorkflowSwitch = ActiveWorkflowSwitch(
+                    request = WorkflowSwitchRequest(
+                        target = target,
+                        sessionGeneration = settingsState.mapNavigationState.sessionGeneration,
+                        mappingExitChoice = exitChoice,
+                        mapDisplayName = mapName
+                    )
+                )
+            }
+        )
+    }
+
+    activeWorkflowSwitch?.let { active ->
+        WorkflowSwitchProgressDialog(
+            active = active,
+            plan = workflowSwitchPlan,
+            operationMode = controllerOperationMode,
+            onStopFollowingSteps = { activeWorkflowSwitch = null },
+            onRetry = {
+                activeWorkflowSwitch = ActiveWorkflowSwitch(
+                    request = active.request.copy(
+                        sessionGeneration = settingsState.mapNavigationState.sessionGeneration
+                    )
+                )
             }
         )
     }
@@ -442,7 +598,6 @@ private fun ControlScreenBackground(
 
 @Composable
 private fun TopHud(
-    appMode: AppMode,
     connectionState: ConnectionState,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
@@ -460,9 +615,6 @@ private fun TopHud(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ControlModeToggle(
-                currentMode = appMode
-            )
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -538,6 +690,149 @@ private fun TaskHubDialog(
 }
 
 @Composable
+private fun WorkflowSwitchPromptDialog(
+    target: TaskWorkspace,
+    operationMode: OperationMode?,
+    onDismiss: () -> Unit,
+    onConfirm: (MappingExitChoice?, String) -> Unit
+) {
+    val defaultMapName = remember {
+        "map-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}"
+    }
+    var mapName by remember { mutableStateOf(defaultMapName) }
+    val validMapName = mapName.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*"))
+    val savingInProgress = operationMode == OperationMode.OPERATION_MODE_MAPPING_SAVING
+
+    OperatorAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (target == TaskWorkspace.MAPPING) "切换到建图" else "切换到定位导航")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (target == TaskWorkspace.MAPPING) {
+                    Text(
+                        "主控会先取消活动导航、停车并停止定位运行时；确认回到待机后只打开建图工作区，不会自动开始建图。"
+                    )
+                } else if (savingInProgress) {
+                    Text("地图正在保存。App 将等待主控回到待机，再打开定位导航工作区。")
+                } else {
+                    Text(
+                        "当前建图必须先结束，再明确保存或放弃；每一步都会等待主控权威状态，不会因退出页面丢失地图。"
+                    )
+                    OutlinedTextField(
+                        value = mapName,
+                        onValueChange = { mapName = it.trim() },
+                        label = { Text("保存后的地图名") },
+                        supportingText = { Text("仅支持字母、数字、点、下划线和连字符") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii)
+                    )
+                }
+                Text(
+                    "当前主控状态：${operationMode?.name ?: "未知"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
+        confirmButton = {
+            when {
+                target == TaskWorkspace.MAPPING -> {
+                    Button(onClick = { onConfirm(null, "") }) {
+                        Text("停止定位并切换")
+                    }
+                }
+                savingInProgress -> {
+                    Button(onClick = { onConfirm(MappingExitChoice.SAVE, mapName) }) {
+                        Text("保存完成后切换")
+                    }
+                }
+                else -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onConfirm(MappingExitChoice.DISCARD, "") }
+                        ) {
+                            Text("放弃并切换")
+                        }
+                        Button(
+                            onClick = { onConfirm(MappingExitChoice.SAVE, mapName) },
+                            enabled = validMapName
+                        ) {
+                            Text("保存并切换")
+                        }
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@Composable
+private fun WorkflowSwitchProgressDialog(
+    active: ActiveWorkflowSwitch,
+    plan: WorkflowSwitchPlan?,
+    operationMode: OperationMode?,
+    onStopFollowingSteps: () -> Unit,
+    onRetry: () -> Unit
+) {
+    val targetLabel = if (active.request.target == TaskWorkspace.MAPPING) "建图" else "定位导航"
+    val message = active.failure.ifEmpty {
+        when (plan) {
+            is WorkflowSwitchPlan.Wait -> plan.message
+            is WorkflowSwitchPlan.Execute -> "正在发送${plan.command.displayName()}命令"
+            WorkflowSwitchPlan.Complete -> "切换完成"
+            is WorkflowSwitchPlan.Failed -> plan.message
+            null -> "正在读取主控权威状态"
+        }
+    }
+    OperatorAlertDialog(
+        onDismissRequest = onStopFollowingSteps,
+        title = { Text(if (active.failure.isEmpty()) "正在切换到$targetLabel" else "任务切换未完成") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (active.failure.isEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        Text(message)
+                    }
+                } else {
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                }
+                Text(
+                    "当前主控状态：${operationMode?.name ?: "未知"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (active.failure.isEmpty()) {
+                    Text(
+                        "关闭只会停止 App 发送后续切换步骤，不会撤销主控已经接受的命令。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (active.failure.isNotEmpty()) {
+                Button(onClick = onRetry) { Text("按当前状态重试") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onStopFollowingSteps) {
+                Text(if (active.failure.isEmpty()) "停止后续切换" else "关闭")
+            }
+        }
+    )
+}
+
+@Composable
 private fun WorkspaceChoice(
     icon: ImageVector,
     title: String,
@@ -571,20 +866,6 @@ private fun WorkspaceChoice(
             )
         }
     }
-}
-
-private fun OperationMode?.isMappingMode(): Boolean {
-    return this == OperationMode.OPERATION_MODE_MAPPING_PREPARING ||
-        this == OperationMode.OPERATION_MODE_MAPPING_RUNNING ||
-        this == OperationMode.OPERATION_MODE_MAPPING_REVIEW ||
-        this == OperationMode.OPERATION_MODE_MAPPING_SAVING
-}
-
-private fun OperationMode?.isLocalizationMode(): Boolean {
-    return this == OperationMode.OPERATION_MODE_LOCALIZATION_LOADING ||
-        this == OperationMode.OPERATION_MODE_LOCALIZATION_WAITING_INITIAL_POSE ||
-        this == OperationMode.OPERATION_MODE_LOCALIZATION_TRACKING ||
-        this == OperationMode.OPERATION_MODE_LOCALIZATION_LOST
 }
 
 @Composable
@@ -1376,36 +1657,6 @@ private fun StatusRow(label: String, value: String, valueColor: Color) {
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun ControlModeToggle(
-    currentMode: AppMode
-) {
-    val shape = RoundedCornerShape(14.dp)
-    Box(
-        modifier = Modifier
-            .width(88.dp)
-            .height(46.dp)
-            .clip(shape)
-            .background(
-                if (currentMode == AppMode.APP_MODE_MANUAL) {
-                    Color(0x7A27C7C4)
-                } else {
-                    PanelBackground
-                }
-            )
-            .graphicsLayer { alpha = 1f },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = if (currentMode == AppMode.APP_MODE_AUTO) "自动导航" else "人工模式",
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1
         )
     }
 }

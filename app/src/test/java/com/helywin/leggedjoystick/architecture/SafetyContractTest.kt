@@ -123,7 +123,7 @@ class SafetyContractTest {
     }
 
     @Test
-    fun navigationUsesOnlyCancelAndModeDisplayIsReadOnly() {
+    fun navigationUsesOnlyCancelAndMainScreenHasNoModeButton() {
         val projectRoot = locateProjectRoot()
         val mainScreen = Files.readString(projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt"))
         val navigationWorkspace = Files.readString(
@@ -133,18 +133,11 @@ class SafetyContractTest {
             projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/controller/Controller.kt")
         )
         val protocol = Files.readString(projectRoot.resolve("proto/robot_controller.proto"))
-        val topHud = mainScreen.substringAfter("private fun TopHud")
-            .substringBefore("private fun MotionModeEntry")
-
-        val modeToggleIndex = topHud.indexOf("ControlModeToggle(")
-        val connectionButtonIndex = topHud.indexOf("ConnectionButton(")
         assertTrue(
-            "主控页必须把权威模式显示放在连接按钮左侧",
-            modeToggleIndex >= 0 && connectionButtonIndex > modeToggleIndex
-        )
-        assertTrue(
-            "权威模式显示不得再发送独立人工接管命令",
-            !mainScreen.contains("自动·接管") &&
+            "主屏不得再显示无操作能力的人工模式按钮",
+            !mainScreen.contains("ControlModeToggle") &&
+                !mainScreen.contains("人工模式") &&
+                !mainScreen.contains("自动·接管") &&
                 !mainScreen.contains("onModeClick(AppMode.APP_MODE_MANUAL)")
         )
         assertTrue(
@@ -162,6 +155,29 @@ class SafetyContractTest {
         assertTrue(
             "App 不得绕过导航任务直接向 driver 发送 AUTO",
             !controller.contains("zmqClient.setMode(AppMode.APP_MODE_AUTO)")
+        )
+    }
+
+    @Test
+    fun workspaceBackOnlyChangesPageVisibility() {
+        val projectRoot = locateProjectRoot()
+        val mainScreen = Files.readString(
+            projectRoot.resolve("app/src/main/java/com/helywin/leggedjoystick/ui/main/MainControlScreen.kt")
+        )
+
+        assertTrue(
+            "权威状态变化不得强制重新打开工作区",
+            !mainScreen.contains("LaunchedEffect(controllerOperationMode)")
+        )
+        assertTrue(
+            "工作区返回只能关闭页面",
+            mainScreen.contains("onClose = { mappingWorkspaceVisible = false }") &&
+                mainScreen.contains("onClose = { navigationWorkspaceVisible = false }")
+        )
+        assertTrue(
+            "建图和导航工作区都必须提供显式任务切换入口",
+            mainScreen.contains("onSwitchToNavigation") &&
+                mainScreen.contains("onSwitchToMapping")
         )
     }
 
