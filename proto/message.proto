@@ -11,6 +11,13 @@ enum DeviceType {
     DEVICE_TYPE_ROBOT_CONTROLLER = 4;  // 机器人主控端
 }
 
+// 部署产品类型，用于阻止巡检程序与救援程序同时接入同一驱动
+enum ProductType {
+    PRODUCT_TYPE_UNSPECIFIED = 0;
+    PRODUCT_TYPE_GENERAL_ROBOT = 1;
+    PRODUCT_TYPE_SAR_LEGGED_ROBOT = 2;
+}
+
 // 消息类型枚举
 enum MessageType {
     MESSAGE_TYPE_UNSPECIFIED = 0;
@@ -191,6 +198,10 @@ message HeartbeatMessage {
     bool robot_connected = 1;
     ConnectionState connection_state = 2;
     AppMode app_mode = 3;
+    ProductType product_type = 4;
+    uint32 protocol_version = 5;
+    bool admitted = 6;
+    string admission_message = 7;
 }
 
 message SubscriptionRequestMessage {

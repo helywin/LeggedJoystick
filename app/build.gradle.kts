@@ -38,6 +38,26 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    flavorDimensions += "product"
+    productFlavors {
+        create("generalRobot") {
+            dimension = "product"
+            applicationId = "com.helywin.leggedjoystick.general"
+            buildConfigField("String", "PRODUCT_TYPE", "\"GENERAL_ROBOT\"")
+            buildConfigField("boolean", "CONTROLLER_CHANNEL_ENABLED", "false")
+            buildConfigField("boolean", "APP_MODE_CONTROL_ENABLED", "true")
+            buildConfigField("boolean", "TASK_WORKSPACE_ENABLED", "false")
+        }
+        create("sarRescue") {
+            dimension = "product"
+            applicationId = "com.helywin.leggedjoystick.sar"
+            buildConfigField("String", "PRODUCT_TYPE", "\"SAR_LEGGED_ROBOT\"")
+            buildConfigField("boolean", "CONTROLLER_CHANNEL_ENABLED", "true")
+            buildConfigField("boolean", "APP_MODE_CONTROL_ENABLED", "false")
+            buildConfigField("boolean", "TASK_WORKSPACE_ENABLED", "true")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

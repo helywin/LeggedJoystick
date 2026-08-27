@@ -14,6 +14,7 @@ import legged_driver.HeartbeatMessage
 import legged_driver.HighLowStanceCommandParams
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
+import legged_driver.ProductType
 import legged_driver.MotionStatus
 import legged_driver.MoveCommandParams
 import legged_driver.SetAppModeParams
@@ -134,6 +135,10 @@ object MessageUtils {
     fun createHeartbeatMessage(
         deviceType: DeviceType,
         deviceId: String,
+        productType: ProductType,
+        protocolVersion: Int,
+        admitted: Boolean = false,
+        admissionMessage: String = "",
         robotConnected: Boolean = true,
         connectionState: ConnectionState = ConnectionState.CONNECTION_STATE_CONNECTED,
         appMode: AppMode = AppMode.APP_MODE_MANUAL
@@ -147,7 +152,11 @@ object MessageUtils {
                 HeartbeatMessage(
                     robot_connected = robotConnected,
                     connection_state = connectionState,
-                    app_mode = appMode
+                    app_mode = appMode,
+                    product_type = productType,
+                    protocol_version = protocolVersion,
+                    admitted = admitted,
+                    admission_message = admissionMessage
                 )
             )
         }

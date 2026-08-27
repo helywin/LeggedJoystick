@@ -42,6 +42,7 @@ import com.helywin.leggedjoystick.input.remote.RemoteInputSourceDescriptor
 import com.helywin.leggedjoystick.input.remote.RemoteInputSourceFactory
 import com.helywin.leggedjoystick.input.remote.RemoteInputSourceRequest
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
+import com.helywin.leggedjoystick.product.RemoteProductPolicy
 import com.helywin.leggedjoystick.input.remote.RemoteSpeedLevelRequest
 import com.helywin.leggedjoystick.input.remote.AndroidRemoteControllerIdentityReader
 import com.helywin.leggedjoystick.input.remote.mock.MockRemoteInputConfig
@@ -1204,6 +1205,10 @@ object RobotControllerImpl : Controller {
         if (settingsState.robotCtrlMode == SportMode.SPORT_MODE_UNKNOWN) {
             zmqClient.setControlMode(SportMode.SPORT_MODE_GENERAL)
         }
+        if (!RemoteProductPolicy.controllerChannelEnabled) {
+            Timber.i("[Controller] 巡检遥控器保持 driver 当前 AppMode，等待操作者显式切换")
+            return
+        }
         when (settingsState.controllerConnectionState) {
             RobotControllerConnectionState.CONNECTED -> {
                 requestCancelForManualControl("driver 接管后取消自动导航")
@@ -1237,6 +1242,10 @@ object RobotControllerImpl : Controller {
     }
 
     private fun requestDriverManualFallback(description: String) {
+        if (!RemoteProductPolicy.appModeControlEnabled) {
+            Timber.w("[Controller] 救援遥控器无 AppMode 权限，等待 NX 主控安全降级: %s", description)
+            return
+        }
         if (zmqClient.setMode(AppMode.APP_MODE_MANUAL)) {
             settingsState.updateRobotModeChangingState(true)
             settingsState.updateLastCommand("AppMode 安全降级", "MANUAL")
@@ -1310,13 +1319,17 @@ object RobotControllerImpl : Controller {
 
                 // 设置连接地址
                 zmqClient.setEndpoint(endpoint)
-                controllerClient.configure(
-                    endpoint = "tcp://${settingsState.settings.zmqIp}:${settingsState.settings.controllerPort}",
-                    token = settingsState.settings.controllerToken
-                )
+                if (RemoteProductPolicy.controllerChannelEnabled) {
+                    controllerClient.configure(
+                        endpoint = "tcp://${settingsState.settings.zmqIp}:${settingsState.settings.controllerPort}",
+                        token = settingsState.settings.controllerToken
+                    )
+                    controllerClient.connect()
+                } else {
+                    Timber.i("[Controller] 巡检 flavor 已禁用 NX 主控通道")
+                }
 
                 // 进行连接
-                controllerClient.connect()
                 zmqClient.connect()
 
 
@@ -1376,7 +1389,9 @@ object RobotControllerImpl : Controller {
         stopHeadControl()
         stopRemoteInput()
         stopMockStateLoop()
-        controllerClient.disconnect()
+        if (RemoteProductPolicy.controllerChannelEnabled) {
+            controllerClient.disconnect()
+        }
         zmqClient.disconnect()
         settingsState.updateConnectionState(ConnectionState.DISCONNECTED)
         settingsState.updateControlOwnership(ControlOwnershipState.UNKNOWN, "")
@@ -1390,7 +1405,9 @@ object RobotControllerImpl : Controller {
         connectJob?.cancel()
         connectJob = null
         if (settingsState.connectionState == ConnectionState.CONNECTING) {
-            controllerClient.disconnect()
+            if (RemoteProductPolicy.controllerChannelEnabled) {
+                controllerClient.disconnect()
+            }
             zmqClient.disconnect()
             stopRemoteInput()
             stopMockStateLoop()
@@ -1479,6 +1496,10 @@ object RobotControllerImpl : Controller {
      */
     override fun setMode(mode: AppMode) {
         ensureInitialized()
+        if (!RemoteProductPolicy.appModeControlEnabled) {
+            Timber.w("[Controller] 救援遥控器不显示也不发送 AppMode 切换，模式由 NX 主控管理")
+            return
+        }
         if (!settingsState.isConnected) {
             Timber.w("[Controller] 未连接，无法设置模式")
             return
@@ -1489,21 +1510,18 @@ object RobotControllerImpl : Controller {
             return
         }
 
-        if (mode == AppMode.APP_MODE_AUTO) {
-            settingsState.updateLastCommand("自动控制", "由导航任务接管，禁止空切 AUTO")
-            Timber.w("[Controller] 拒绝脱离导航任务直接切换 AUTO")
-            return
-        }
-
         if (isEngineeringMock()) {
-            applyMockCancelNavigation()
+            settingsState.confirmRobotMode(mode)
+            settingsState.updateLastCommand("AppMode", mode.name)
             return
         }
 
-        if (settingsState.controllerConnectionState == RobotControllerConnectionState.CONNECTED) {
-            requestCancelForManualControl("操作者请求取消自动导航")
+        if (zmqClient.setMode(mode)) {
+            settingsState.updateRobotModeChangingState(true)
+            settingsState.updateLastCommand("AppMode", mode.name)
+            Timber.i("[Controller] 巡检遥控器请求切换 AppMode: %s", mode)
         } else {
-            requestDriverManualFallback("主控离线，操作者请求 MANUAL 安全降级")
+            Timber.w("[Controller] AppMode 请求未进入发送队列: %s", mode)
         }
     }
 

@@ -100,6 +100,7 @@ import com.helywin.leggedjoystick.data.Vector3Telemetry
 import com.helywin.leggedjoystick.input.remote.RemoteInputRuntimeState
 import com.helywin.leggedjoystick.input.remote.RemoteInputStatus
 import com.helywin.leggedjoystick.proto.displayName
+import com.helywin.leggedjoystick.product.RemoteProductPolicy
 import com.helywin.leggedjoystick.ui.components.ConnectionDialog
 import com.helywin.leggedjoystick.ui.components.OperatorAlertDialog
 import com.helywin.leggedjoystick.ui.mapping.MappingWorkspace
@@ -340,6 +341,10 @@ fun MainControlScreen(
             ) {
                 TopHud(
                     connectionState = connectionState,
+                    appMode = appMode,
+                    appModeChanging = settingsState.isRobotModeChanging,
+                    showAppModeControl = RemoteProductPolicy.appModeControlEnabled,
+                    showTaskHub = RemoteProductPolicy.taskWorkspaceEnabled,
                     onConnectClick = {
                         when (connectionState) {
                             ConnectionState.CONNECTED -> controller.disconnect()
@@ -348,6 +353,15 @@ fun MainControlScreen(
                         }
                     },
                     onBatteryClick = { batteryOverlayVisible = !batteryOverlayVisible },
+                    onAppModeClick = {
+                        controller.setMode(
+                            if (appMode == AppMode.APP_MODE_AUTO) {
+                                AppMode.APP_MODE_MANUAL
+                            } else {
+                                AppMode.APP_MODE_AUTO
+                            }
+                        )
+                    },
                     onTaskHubClick = { taskHubVisible = true },
                     onSettingsClick = onSettingsClick
                 )
@@ -484,7 +498,7 @@ fun MainControlScreen(
                 )
             }
 
-            if (mappingWorkspaceVisible) {
+            if (RemoteProductPolicy.taskWorkspaceEnabled && mappingWorkspaceVisible) {
                 MappingWorkspace(
                     state = settingsState,
                     controller = controller,
@@ -495,7 +509,7 @@ fun MainControlScreen(
                     modifier = Modifier.matchParentSize().zIndex(30f)
                 )
             }
-            if (navigationWorkspaceVisible) {
+            if (RemoteProductPolicy.taskWorkspaceEnabled && navigationWorkspaceVisible) {
                 MapNavigationWorkspace(
                     state = settingsState,
                     controller = controller,
@@ -509,7 +523,7 @@ fun MainControlScreen(
         }
     }
 
-    if (taskHubVisible) {
+    if (RemoteProductPolicy.taskWorkspaceEnabled && taskHubVisible) {
         TaskHubDialog(
             onDismiss = { taskHubVisible = false },
             onMappingClick = {
@@ -599,8 +613,13 @@ private fun ControlScreenBackground(
 @Composable
 private fun TopHud(
     connectionState: ConnectionState,
+    appMode: AppMode,
+    appModeChanging: Boolean,
+    showAppModeControl: Boolean,
+    showTaskHub: Boolean,
     onConnectClick: () -> Unit,
     onBatteryClick: () -> Unit,
+    onAppModeClick: () -> Unit,
     onTaskHubClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
@@ -615,6 +634,13 @@ private fun TopHud(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (showAppModeControl) {
+                AppModeToggleButton(
+                    appMode = appMode,
+                    enabled = connectionState == ConnectionState.CONNECTED && !appModeChanging,
+                    onClick = onAppModeClick
+                )
+            }
             ConnectionButton(
                 connectionState = connectionState,
                 onClick = onConnectClick
@@ -622,13 +648,42 @@ private fun TopHud(
             BatteryIconButton(
                 onClick = onBatteryClick
             )
-            TaskHubButton(onClick = onTaskHubClick)
+            if (showTaskHub) {
+                TaskHubButton(onClick = onTaskHubClick)
+            }
             HudIconButton(
                 iconResId = R.drawable.genisdog_icon_setting,
                 contentDescription = "设置",
                 onClick = onSettingsClick
             )
         }
+    }
+}
+
+@Composable
+private fun AppModeToggleButton(
+    appMode: AppMode,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val isAuto = appMode == AppMode.APP_MODE_AUTO
+    Row(
+        modifier = Modifier
+            .width(92.dp)
+            .height(46.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (isAuto) AccentCyan.copy(alpha = 0.28f) else PanelBackground)
+            .noIndicationClickable(enabled = enabled, onClick = onClick)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.55f },
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (isAuto) "自动" else "手动",
+            color = if (isAuto) AccentCyan else Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 

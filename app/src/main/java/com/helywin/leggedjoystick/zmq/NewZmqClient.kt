@@ -1,12 +1,14 @@
 package com.helywin.leggedjoystick.zmq
 
 import com.helywin.leggedjoystick.data.ConnectionState
+import com.helywin.leggedjoystick.product.RemoteProductPolicy
 import com.helywin.leggedjoystick.proto.MessageUtils
 import legged_driver.AppMode
 import legged_driver.CommandCode
 import legged_driver.DeviceType
 import legged_driver.LeggedDriverMessage
 import legged_driver.MessageType
+import legged_driver.ProductType
 import legged_driver.RobotStateMessage
 import legged_driver.SpeedLevel
 import legged_driver.SportMode
@@ -35,6 +37,7 @@ typealias ConnectionStateCallback = (ConnectionState) -> Unit
  * 所有 ZMQ socket 读写都在同一个 I/O 线程内完成，避免跨线程复用 socket 导致偶发连接卡死。
  */
 class NewZmqClient(
+    private val productType: ProductType = RemoteProductPolicy.productType,
     private val deviceType: DeviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
     var tcpEndpoint: String = DEFAULT_TCP_ENDPOINT,
     private val heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
@@ -74,6 +77,7 @@ class NewZmqClient(
     private val lastServerMessageTime = AtomicLong(0)
     private val consecutiveFailures = AtomicInteger(0)
     private val serverConnected = AtomicBoolean(false)
+    private val admitted = AtomicBoolean(false)
     private val currentAppMode = AtomicReference(AppMode.APP_MODE_AUTO)
     private val currentSportMode = AtomicReference(SportMode.SPORT_MODE_GENERAL)
     private val batteryLevel = AtomicReference(0)
@@ -137,7 +141,9 @@ class NewZmqClient(
 
     fun getConnectionState(): ConnectionState = connectionState.get()
 
-    fun isServerConnected(): Boolean = serverConnected.get()
+    fun isAdmitted(): Boolean = admitted.get()
+
+    fun isServerConnected(): Boolean = admitted.get() && serverConnected.get()
 
     fun getLastHeartbeatTime(): Long = lastHeartbeatTime.get()
 
@@ -163,7 +169,9 @@ class NewZmqClient(
         enqueueMessage(
             MessageUtils.createHeartbeatMessage(
                 deviceType = deviceType,
-                deviceId = currentDeviceId()
+                deviceId = currentDeviceId(),
+                productType = productType,
+                protocolVersion = RemoteProductPolicy.PROTOCOL_VERSION
             )
         )
     }
@@ -178,6 +186,10 @@ class NewZmqClient(
     }
 
     fun setMode(mode: AppMode): Boolean {
+        if (!RemoteProductPolicy.appModeControlEnabled) {
+            Timber.e("[ZMQ] 当前产品禁止遥控器发送 SET_APP_MODE: %s", productType)
+            return false
+        }
         return enqueueMessage(
             MessageUtils.createSetAppModeCommand(
                 deviceType = deviceType,
@@ -346,8 +358,15 @@ class NewZmqClient(
             }
             Timber.i("[ZMQ] I/O 线程已创建 socket: %s, client=%s", endpoint, deviceIdSnapshot)
 
-            sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceIdSnapshot))
-            sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceIdSnapshot))
+            sendDirect(
+                socket,
+                MessageUtils.createHeartbeatMessage(
+                    deviceType,
+                    deviceIdSnapshot,
+                    productType,
+                    RemoteProductPolicy.PROTOCOL_VERSION
+                )
+            )
             val initialSendTime = System.currentTimeMillis()
             lastHeartbeatTime.set(initialSendTime)
             lastSubscriptionTime.set(initialSendTime)
@@ -418,12 +437,20 @@ class NewZmqClient(
     private fun sendHeartbeatIfNeeded(socket: ZMQ.Socket, now: Long, deviceIdSnapshot: String) {
         if (now - lastHeartbeatTime.get() < heartbeatIntervalMs) return
 
-        sendDirect(socket, MessageUtils.createHeartbeatMessage(deviceType, deviceIdSnapshot))
+        sendDirect(
+            socket,
+            MessageUtils.createHeartbeatMessage(
+                deviceType,
+                deviceIdSnapshot,
+                productType,
+                RemoteProductPolicy.PROTOCOL_VERSION
+            )
+        )
         lastHeartbeatTime.set(now)
     }
 
     private fun sendSubscriptionIfNeeded(socket: ZMQ.Socket, now: Long, deviceIdSnapshot: String) {
-        if (connectionState.get() != ConnectionState.CONNECTING) return
+        if (!admitted.get()) return
         if (now - lastSubscriptionTime.get() < SUBSCRIPTION_RETRY_INTERVAL_MS) return
 
         sendDirect(socket, MessageUtils.createSubscriptionRequestMessage(deviceType, deviceIdSnapshot))
@@ -471,15 +498,44 @@ class NewZmqClient(
             return
         }
 
+        if (message.message_type == MessageType.MESSAGE_TYPE_HEARTBEAT) {
+            val heartbeat = message.heartbeat
+            val admissionValid = heartbeat != null &&
+                heartbeat.product_type == productType &&
+                heartbeat.protocol_version == RemoteProductPolicy.PROTOCOL_VERSION &&
+                heartbeat.admitted
+            if (!admissionValid) {
+                admitted.set(false)
+                serverConnected.set(false)
+                Timber.e(
+                    "[ZMQ] 产品准入失败: expected=%s, actual=%s, protocol=%s, admitted=%s, reason=%s",
+                    productType,
+                    heartbeat?.product_type,
+                    heartbeat?.protocol_version,
+                    heartbeat?.admitted,
+                    heartbeat?.admission_message
+                )
+                updateConnectionState(ConnectionState.CONNECTION_FAILED)
+                running.set(false)
+                return
+            }
+            if (admitted.compareAndSet(false, true)) {
+                Timber.i("[ZMQ] 产品与协议准入成功，开始订阅驱动状态")
+                subscribeDefaultTopics()
+            }
+        } else if (!admitted.get()) {
+            Timber.w("[ZMQ] 准入完成前收到非心跳消息，已忽略: %s", message.message_type)
+            return
+        }
+
         consecutiveFailures.set(0)
         lastServerMessageTime.set(System.currentTimeMillis())
         processReceivedMessage(message)
         messageCallback?.invoke(message)
 
-        if (connectionState.get() == ConnectionState.CONNECTING) {
-            serverConnected.set(true)
+        if (connectionState.get() == ConnectionState.CONNECTING && admitted.get()) {
             updateConnectionState(ConnectionState.CONNECTED)
-            Timber.i("[ZMQ] 已收到服务端有效消息，连接验证成功")
+            Timber.i("[ZMQ] 已收到服务端准入确认，连接验证成功")
         }
     }
 
@@ -595,6 +651,7 @@ class NewZmqClient(
         lastSubscriptionTime.set(0)
         lastServerMessageTime.set(0)
         serverConnected.set(false)
+        admitted.set(false)
     }
 
     private fun stopCurrentAttemptLocked(sendClientDisconnect: Boolean = false) {

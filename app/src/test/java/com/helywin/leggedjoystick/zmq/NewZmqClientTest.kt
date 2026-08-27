@@ -2,6 +2,7 @@ package com.helywin.leggedjoystick.zmq
 
 import com.helywin.leggedjoystick.data.ConnectionState
 import com.helywin.leggedjoystick.proto.MessageUtils
+import com.helywin.leggedjoystick.product.RemoteProductPolicy
 import legged_driver.AppMode
 import legged_driver.DeviceType
 import legged_driver.LeggedDriverMessage
@@ -46,11 +47,11 @@ class NewZmqClientTest {
     }
 
     @Test
-    fun connect_whenServerOnlySendsSnapshotsAfterSubscription_stillConnects() {
+    fun connect_whenServerRejectsAdmission_failsWithoutSubscribing() {
         val port = findFreePort()
         val server = TestRouterServer(
             port = port,
-            replyToHeartbeat = false
+            admitted = false
         ).start()
         val client = NewZmqClient(
             tcpEndpoint = "tcp://127.0.0.1:$port",
@@ -60,9 +61,8 @@ class NewZmqClientTest {
         try {
             client.connect()
 
-            val subscription = server.waitForMessage(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
-            assertEquals(MessageUtils.defaultStateTopics(), subscription.subscription_request?.topics)
-            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+            assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTION_FAILED })
+            assertTrue(!client.isAdmitted())
         } finally {
             client.disconnect()
             server.close()
@@ -70,12 +70,11 @@ class NewZmqClientTest {
     }
 
     @Test
-    fun connect_whenInitialSubscriptionIsDropped_retriesSubscriptionAndConnects() {
+    fun connect_whenInitialHeartbeatIsDropped_retriesHandshakeAndConnects() {
         val port = findFreePort()
         val server = TestRouterServer(
             port = port,
-            replyToHeartbeat = false,
-            ignoredSubscriptionsBeforeReply = 1
+            ignoredHeartbeatsBeforeReply = 1
         ).start()
         val client = NewZmqClient(
             tcpEndpoint = "tcp://127.0.0.1:$port",
@@ -85,12 +84,9 @@ class NewZmqClientTest {
         try {
             client.connect()
 
-            val firstSubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
-            val retrySubscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
-
-            assertEquals(firstSubscription.identity, retrySubscription.identity)
-            assertEquals(MessageUtils.defaultStateTopics(), retrySubscription.message.subscription_request?.topics)
             assertTrue(waitUntil { client.getConnectionState() == ConnectionState.CONNECTED })
+            val subscription = server.waitForEnvelope(MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST)
+            assertEquals(MessageUtils.defaultStateTopics(), subscription.message.subscription_request?.topics)
         } finally {
             client.disconnect()
             server.close()
@@ -217,13 +213,13 @@ class NewZmqClientTest {
 
     private class TestRouterServer(
         private val port: Int,
-        private val replyToHeartbeat: Boolean = true,
-        private val ignoredSubscriptionsBeforeReply: Int = 0
+        private val admitted: Boolean = true,
+        private val ignoredHeartbeatsBeforeReply: Int = 0
     ) : AutoCloseable {
         private val running = AtomicBoolean(false)
         private val ready = CountDownLatch(1)
         private val messages = LinkedBlockingQueue<ReceivedMessage>()
-        private var remainingIgnoredSubscriptions = ignoredSubscriptionsBeforeReply
+        private var remainingIgnoredHeartbeats = ignoredHeartbeatsBeforeReply
         private var thread: Thread? = null
 
         fun start(): TestRouterServer {
@@ -279,13 +275,8 @@ class NewZmqClientTest {
                     }
                     when (message.message_type) {
                         MessageType.MESSAGE_TYPE_HEARTBEAT -> {
-                            if (replyToHeartbeat) {
-                                sendHeartbeatSnapshot(socket, identity)
-                            }
-                        }
-                        MessageType.MESSAGE_TYPE_SUBSCRIPTION_REQUEST -> {
-                            if (remainingIgnoredSubscriptions > 0) {
-                                remainingIgnoredSubscriptions -= 1
+                            if (remainingIgnoredHeartbeats > 0) {
+                                remainingIgnoredHeartbeats -= 1
                             } else {
                                 sendHeartbeatSnapshot(socket, identity)
                             }
@@ -307,6 +298,10 @@ class NewZmqClientTest {
                     MessageUtils.createHeartbeatMessage(
                         deviceType = DeviceType.DEVICE_TYPE_SERVER,
                         deviceId = "test_server",
+                        productType = RemoteProductPolicy.productType,
+                        protocolVersion = RemoteProductPolicy.PROTOCOL_VERSION,
+                        admitted = admitted,
+                        admissionMessage = if (admitted) "准入成功" else "产品不匹配",
                         robotConnected = true,
                         connectionState = DriverConnectionState.CONNECTION_STATE_CONNECTED,
                         appMode = AppMode.APP_MODE_MANUAL

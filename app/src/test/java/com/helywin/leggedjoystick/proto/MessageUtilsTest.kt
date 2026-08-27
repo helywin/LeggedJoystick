@@ -1,5 +1,6 @@
 package com.helywin.leggedjoystick.proto
 
+import com.helywin.leggedjoystick.product.RemoteProductPolicy
 import legged_driver.CommandCode
 import legged_driver.ConnectionState
 import legged_driver.DeviceType
@@ -18,6 +19,8 @@ class MessageUtilsTest {
         val message = MessageUtils.createHeartbeatMessage(
             deviceType = DeviceType.DEVICE_TYPE_REMOTE_CONTROLLER,
             deviceId = DEVICE_ID,
+            productType = RemoteProductPolicy.productType,
+            protocolVersion = RemoteProductPolicy.PROTOCOL_VERSION,
             robotConnected = true,
             connectionState = ConnectionState.CONNECTION_STATE_CONNECTED
         )
@@ -28,6 +31,7 @@ class MessageUtilsTest {
         assertTrue(MessageUtils.verifyMessage(decoded))
         assertEquals(true, decoded.heartbeat?.robot_connected)
         assertEquals(ConnectionState.CONNECTION_STATE_CONNECTED, decoded.heartbeat?.connection_state)
+        assertEquals(RemoteProductPolicy.productType, decoded.heartbeat?.product_type)
     }
 
     @Test
