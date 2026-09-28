@@ -1304,6 +1304,11 @@ object RobotControllerImpl : Controller {
             return
         }
 
+        val networkSettings = settingsManager.resolveActiveNetwork(settingsState.settings)
+        if (networkSettings != settingsState.settings) {
+            settingsState.updateSettings(networkSettings)
+        }
+
         cancelConnection() // 取消之前的连接任务
 
         settingsState.updateConnectionState(ConnectionState.CONNECTING)

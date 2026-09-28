@@ -202,7 +202,7 @@ class SettingsManager(context: Context) {
                 remoteInputHeadPitchInverted = loadHeadPitchInverted(storedSettingsVersion),
                 keepScreenOn = sharedPreferences.getBoolean(KEY_KEEP_SCREEN_ON, DEFAULT_KEEP_SCREEN_ON),
                 engineeringMockEnabled = sharedPreferences.getBoolean(KEY_ENGINEERING_MOCK_ENABLED, false)
-            ).also {
+            ).let(::resolveActiveNetwork).also {
                 if (storedSettingsVersion < CURRENT_SETTINGS_VERSION) {
                     migrateSettingsVersion(it)
                 }
@@ -215,8 +215,23 @@ class SettingsManager(context: Context) {
             }
         } catch (e: Exception) {
             Timber.e(e, "加载设置失败，使用默认设置")
-            AppSettings() // 返回默认设置
+            resolveActiveNetwork(AppSettings())
         }
+    }
+
+    /** 根据当前活动本地网段刷新标准机器人入口，保留非标准手工设置。 */
+    fun resolveActiveNetwork(settings: AppSettings): AppSettings {
+        val localAddresses = RobotNetworkAddressReader.readActiveIpv4()
+        val profile = RobotLinkProfile.fromLocalIpv4(localAddresses) ?: return settings
+        val resolved = profile.applyTo(settings)
+        if (resolved != settings) {
+            Timber.i(
+                "根据本地 IP 选择底盘入口: local=%s, robot=%s",
+                localAddresses,
+                profile.robotIp
+            )
+        }
+        return resolved
     }
 
     private fun loadHeadPitchInverted(storedSettingsVersion: Int): Boolean {

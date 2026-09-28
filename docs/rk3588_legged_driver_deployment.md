@@ -1,15 +1,17 @@
 # RK3588 上 legged_driver 部署与安卓端联调记录
 
+> 2026-09-28 更新：App 读取活动网卡本地 IPv4 决定底盘入口：`192.168.168.*` 对应 `192.168.168.168`，`192.168.144.*` 对应 `192.168.144.144`，`192.168.234.*` 对应 `192.168.234.1`；图传网段优先。控制 `33445`、救援版主控 `33446` 和头尾视频 `8554` 随标准入口一起切换，非标准手工地址保留。下文 2026-06 的热点联调是历史记录。
+
 ## 目标
 
-把 `/home/jiang/code/legged_driver` 部署到机器狗 RK3588 板子的用户目录下，并让新遥控 App 通过机器狗热点连接 `legged_driver` 的 ZMQ 服务。本文只记录服务端部署、网络入口和安卓端联调状态，不记录 UniRC 输入链路；UniRC 验证见 `docs/remote_input_device_verification.md`。
+把 `/home/jiang/code/legged_driver` 部署到机器狗 RK3588 板子的用户目录下，并让新遥控 App 通过当前网络入口连接 `legged_driver` 的 ZMQ 服务。本文只记录服务端部署、网络入口和安卓端联调状态，不记录 UniRC 输入链路；UniRC 验证见 `docs/remote_input_device_verification.md`。
 
 ## 目标设备
 
 | 项目 | 当前值 |
 | --- | --- |
 | 登录用户 | `robot` |
-| 设备地址 | `192.168.234.1` |
+| 本次图传地址 | `192.168.168.168` |
 | 板卡型号 | `Firefly AIO-3588SJD4 HDMI(Linux)` |
 | CPU 架构 | `aarch64` |
 | 内核 | `5.10.160-rt78-preempt` |
@@ -17,7 +19,7 @@
 | 可执行文件 | `/home/robot/legged_driver/bin/legged_driver` |
 | ZMQ 监听 | `0.0.0.0:33445` |
 
-## 部署结果
+## 初次部署结果（2026-06）
 
 代码已经同步到 RK3588 的 `/home/robot/legged_driver`，并在目标机器上原生构建：
 
@@ -36,6 +38,14 @@ cmake --build build --target legged_driver -j$(nproc)
 | `local_port` | `43988` |
 
 `librobot_sdk.so.0.0.6` 已通过 `/home/robot/legged_driver/lib/librobot_sdk.so.0.0.6 -> ../sdk/lib/aarch64/librobot_sdk.so.0.0.6` 解析，`ldd bin/legged_driver` 能解析 SDK 库和 `libspdlog.so.1.15`。
+
+### 2026-09-28 巡检版驱动升级
+
+本次通过笔记本的 `192.168.168.110/24` 有线接口访问底盘 `192.168.168.168`。升级前，底盘可 ping 通、TCP `33445` 可连接，但运行中的旧驱动不支持 App 使用的产品身份与协议版本 2 心跳。将当前 `/home/jiang/code/legged_driver` 源码同步到板端独立目录 `/home/robot/legged_driver_upgrade_20260928` 后，在 RK3588 原生构建并确认产物为 ARM64，动态库均可解析。
+
+先备份旧版二进制、配置、动态库和 systemd 单元至 `/home/robot/legged_driver_rollback_20260928`，再替换线上二进制与配置并重启 `legged-driver.service`。新配置保留原 SDK 地址、端口和速度限制，移除旧字段 `default_app_mode`，设置 `deployment_product=GENERAL_ROBOT`。运行中的二进制 SHA-256 为 `518fe7697d1ca280830d83c74d58a0202696242f52711bb11b22cb08e82cd0a3`。
+
+升级后服务保持 `active`，监听 `0.0.0.0:33445`，SDK 后端进入 `CONNECTED`。笔记本只发送 `REMOTE_CONTROLLER + GENERAL_ROBOT + protocol_version=2` 心跳，收到服务端 `admitted=1`、`robot_connected=1`、`准入成功`；没有发送控制或运动命令。旧 `ROBOT_CONTROLLER` 客户端仍以协议版本 0 发心跳和命令，现被拒绝准入；这是本次选择巡检版产品身份后的实际运行状态。随后用户在思翼遥控器图传网络下实测已安装巡检版 App 可以连接底盘。此项为用户真机确认；由于 USB ADB 接入时安卓以太网会断开，Codex 未独立采集安卓连接日志，也未验证运动。
 
 ## 机器狗本机 SDK 配置
 
@@ -79,7 +89,7 @@ systemctl is-active legged-driver.service
 
 结果为 `enabled` 和 `active`。`ss -ltnp` 显示 `legged_driver` 监听 `0.0.0.0:33445`，`mc_ctrl` 监听 `0.0.0.0:8081`。
 
-## 运行日志状态
+## 初次部署运行日志状态（2026-06）
 
 `legged_driver` 日志显示当前配置为 `robot=127.0.0.1:8081`，backend 为 `sdk`，并进入 `CONNECTED` 状态：
 
@@ -94,7 +104,7 @@ systemctl is-active legged-driver.service
 timeout 3 bash -lc '</dev/tcp/192.168.234.1/33445'
 ```
 
-## 机器狗热点
+## 机器狗热点（2026-06 历史记录）
 
 RK3588 上 `/tmp/hostapd.conf` 当前热点信息：
 
@@ -108,7 +118,7 @@ RK3588 上 `/tmp/hostapd.conf` 当前热点信息：
 
 ## 安卓端默认连接参数
 
-新遥控 App 的真实联调默认参数应保持为：
+以下是 2026-06 热点联调时的参数；当前入口选择规则见文首更新：
 
 | 设置项 | 当前值 |
 | --- | --- |
@@ -121,7 +131,7 @@ RK3588 上 `/tmp/hostapd.conf` 当前热点信息：
 
 App 连接到 `legged_driver` 后不自动接管；只有用户手动点击接管后才允许发送接管命令和移动命令。
 
-## 当前安卓设备测试状态
+## 安卓设备热点测试状态（2026-06 历史记录）
 
 当前连接的 ADB 设备：
 
